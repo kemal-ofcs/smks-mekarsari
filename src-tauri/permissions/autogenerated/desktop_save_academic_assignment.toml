@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-save-academic-assignment"
+description = "Enables the desktop_save_academic_assignment command without any pre-configured scope."
+commands.allow = ["desktop_save_academic_assignment"]
+
+[[permission]]
+identifier = "deny-desktop-save-academic-assignment"
+description = "Denies the desktop_save_academic_assignment command without any pre-configured scope."
+commands.deny = ["desktop_save_academic_assignment"]

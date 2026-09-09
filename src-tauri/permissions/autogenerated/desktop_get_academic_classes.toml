@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-get-academic-classes"
+description = "Enables the desktop_get_academic_classes command without any pre-configured scope."
+commands.allow = ["desktop_get_academic_classes"]
+
+[[permission]]
+identifier = "deny-desktop-get-academic-classes"
+description = "Denies the desktop_get_academic_classes command without any pre-configured scope."
+commands.deny = ["desktop_get_academic_classes"]

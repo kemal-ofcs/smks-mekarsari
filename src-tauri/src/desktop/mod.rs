@@ -1,0 +1,24 @@
+mod administration;
+pub mod commands;
+pub mod config;
+pub mod models;
+mod operational;
+mod payroll_seed;
+pub mod remote;
+mod scanner;
+pub mod secrets;
+pub mod sql_backend;
+pub mod storage;
+pub mod sync;
+mod time_policy;
+pub mod turso;
+
+pub mod academic;
+pub mod attendance_dashboard;
+pub mod attendance_ledger;
+pub mod class_attendance;
+pub mod payroll;
+pub mod portability;
+pub mod teaching_journal;
+pub mod wa_notification;
+pub use config::DesktopState;

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-get-wa-config"
+description = "Enables the desktop_get_wa_config command without any pre-configured scope."
+commands.allow = ["desktop_get_wa_config"]
+
+[[permission]]
+identifier = "deny-desktop-get-wa-config"
+description = "Denies the desktop_get_wa_config command without any pre-configured scope."
+commands.deny = ["desktop_get_wa_config"]

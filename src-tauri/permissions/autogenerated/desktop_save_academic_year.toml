@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-save-academic-year"
+description = "Enables the desktop_save_academic_year command without any pre-configured scope."
+commands.allow = ["desktop_save_academic_year"]
+
+[[permission]]
+identifier = "deny-desktop-save-academic-year"
+description = "Denies the desktop_save_academic_year command without any pre-configured scope."
+commands.deny = ["desktop_save_academic_year"]

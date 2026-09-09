@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-delete-frozen-ledger"
+description = "Enables the desktop_delete_frozen_ledger command without any pre-configured scope."
+commands.allow = ["desktop_delete_frozen_ledger"]
+
+[[permission]]
+identifier = "deny-desktop-delete-frozen-ledger"
+description = "Denies the desktop_delete_frozen_ledger command without any pre-configured scope."
+commands.deny = ["desktop_delete_frozen_ledger"]

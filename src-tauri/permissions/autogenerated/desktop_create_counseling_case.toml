@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-create-counseling-case"
+description = "Enables the desktop_create_counseling_case command without any pre-configured scope."
+commands.allow = ["desktop_create_counseling_case"]
+
+[[permission]]
+identifier = "deny-desktop-create-counseling-case"
+description = "Denies the desktop_create_counseling_case command without any pre-configured scope."
+commands.deny = ["desktop_create_counseling_case"]

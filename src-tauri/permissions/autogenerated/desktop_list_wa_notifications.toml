@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-list-wa-notifications"
+description = "Enables the desktop_list_wa_notifications command without any pre-configured scope."
+commands.allow = ["desktop_list_wa_notifications"]
+
+[[permission]]
+identifier = "deny-desktop-list-wa-notifications"
+description = "Denies the desktop_list_wa_notifications command without any pre-configured scope."
+commands.deny = ["desktop_list_wa_notifications"]
