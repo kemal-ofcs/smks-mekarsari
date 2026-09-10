@@ -218,7 +218,7 @@ impl DesktopState {
                 .map_err(|error| error.message)?
         };
 
-        Ok(Self {
+        let state = Self {
             server_origin: std::sync::RwLock::new(server_origin),
             offline_max_age_hours,
             data_dir,
@@ -226,7 +226,35 @@ impl DesktopState {
             turso_config: std::sync::RwLock::new(resolved_config),
             session: std::sync::Mutex::new(None),
             vault_lock: std::sync::Mutex::new(()),
-        })
+        };
+        state.seed_client_identity();
+        Ok(state)
+    }
+
+    /// Lahirkan identitas klien SEKARANG, selagi belum ada transaksi terbuka.
+    ///
+    /// `sync::ensure_client_id` membuka koneksi SQLite KEDUA dan menyisipkan
+    /// barisnya bila belum ada. Tiga puluh lima operasi memanggilnya dari DALAM
+    /// transaksi tulis mereka sendiri — seluruh simpan/hapus akademik, seluruh
+    /// konfigurasi payroll, pembuatan payroll run, simpan/hapus presensi kelas,
+    /// dan Generate Alfa. Pada perangkat yang belum punya identitas untuk
+    /// `server_origin` saat ini, penyisipan itu berebut kunci tulis dengan
+    /// transaksi pemanggilnya: SQLite menunggu selama `busy_timeout` (5 detik)
+    /// lalu menyerah, dan pemanggilnya hanya melihat "Data lokal Desktop tidak
+    /// dapat diproses". Untuk Generate Alfa kegagalannya bahkan tak terlihat —
+    /// `AutoAlfaRunner` menelannya menjadi `console.warn`.
+    ///
+    /// Setelah barisnya ada, ketiga puluh lima pemanggilan itu hanya MEMBACA,
+    /// dan membaca dari koneksi kedua aman di WAL meski ada transaksi tulis
+    /// yang sedang terbuka. Karena itu identitas disemai di setiap titik yang
+    /// bisa membuatnya hilang: saat aplikasi disiapkan, dan setiap kali
+    /// `server_origin` berubah — kuncinya memang origin, sehingga berpindah
+    /// server atau database menghasilkan kunci baru yang belum punya baris.
+    ///
+    /// Kegagalannya sengaja diabaikan: bila database belum siap di titik ini,
+    /// perilakunya sekadar kembali seperti sebelum penyemaian ada.
+    fn seed_client_identity(&self) {
+        let _ = super::sync::ensure_client_id(self);
     }
 
     pub fn server_origin(&self) -> String {
@@ -393,6 +421,10 @@ impl DesktopState {
             .write()
             .map_err(|_| CommandError::internal())? = origin.clone();
 
+        // Origin baru berarti kunci identitas baru. Disemai di sini, selagi
+        // belum ada transaksi terbuka (lihat `seed_client_identity`).
+        self.seed_client_identity();
+
         Ok(origin)
     }
 
@@ -404,6 +436,8 @@ impl DesktopState {
             .server_origin
             .write()
             .map_err(|_| CommandError::internal())? = origin.clone();
+        // Origin baru berarti kunci identitas baru (lihat `seed_client_identity`).
+        self.seed_client_identity();
         Ok(origin)
     }
 }

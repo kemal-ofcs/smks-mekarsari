@@ -90,3 +90,57 @@ describe("readOperationalSnapshot", () => {
     expect(snapshot.scanLogs).toEqual([]);
   });
 });
+
+/** Klien tiruan: 33 hasil batch kosong, plus `execute` yang bisa diatur. */
+function clientDenganExecute(
+  execute: (arg: { sql: string; args: unknown[] }) => Promise<ResultSet>,
+) {
+  return {
+    batch: async () => [
+      ...Array.from({ length: 32 }, () => result()),
+      result([{ revision: 5 }]),
+    ],
+    execute,
+  } as unknown as Client;
+}
+
+describe("tombstone pada jalur server aplikasi", () => {
+  test("mengembalikan penghapusan sejak kursor dan memajukan kursornya", async () => {
+    const { readOperationalSnapshot } = await import("./snapshot");
+    let sinceDiterima: unknown;
+    const client = clientDenganExecute(async ({ sql, args }) => {
+      expect(sql).toContain("FROM sync_tombstone");
+      sinceDiterima = args[0];
+      return result([
+        { id: 8, table_name: "akademik_rombel", entity_key: "rb-1" },
+        { id: 11, table_name: "jurnal_mengajar", entity_key: "jrn-9" },
+        // Baris cacat diabaikan, bukan diteruskan sebagai penghapusan.
+        { id: 12, table_name: "", entity_key: "" },
+      ]);
+    });
+
+    const snapshot = await readOperationalSnapshot(client, 4);
+
+    expect(sinceDiterima).toBe(4);
+    expect(snapshot.tombstones).toEqual([
+      { table: "akademik_rombel", entityKey: "rb-1" },
+      { table: "jurnal_mengajar", entityKey: "jrn-9" },
+    ]);
+    expect(snapshot.tombstoneCursor).toBe(12);
+  });
+
+  test("database tanpa tabel sync_tombstone tidak mematikan snapshot", async () => {
+    const { readOperationalSnapshot } = await import("./snapshot");
+    const client = clientDenganExecute(async () => {
+      throw new Error("no such table: sync_tombstone");
+    });
+
+    const snapshot = await readOperationalSnapshot(client, 4);
+
+    // Snapshot tetap terkirim, dan kursornya TIDAK maju: perangkat mencoba
+    // lagi siklus berikutnya alih-alih melompati penghapusan yang belum terbaca.
+    expect(snapshot.revision).toBe(5);
+    expect(snapshot.tombstones).toEqual([]);
+    expect(snapshot.tombstoneCursor).toBe(4);
+  });
+});

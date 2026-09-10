@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/context/AuthContext";
 import {
   type BootstrapStatus,
   getBootstrapStatus,
+  getWebProvisioningHint,
 } from "@/lib/gateways/bootstrap";
 import { useAppName } from "@/lib/hooks/useAppName";
 import { useCompanyName } from "@/lib/hooks/useCompanyName";
@@ -56,6 +57,17 @@ export default function LoginPage() {
   useEffect(() => {
     refreshBootstrapStatus();
   }, [refreshBootstrapStatus]);
+
+  // Khusus Web: `false` berarti database belum punya satu akun pun. Tanpa
+  // petunjuk ini, database yang baru dibuat membuat halaman ini jalan buntu —
+  // form login tampil, tidak ada akun untuk dipakai, dan tidak ada tanda harus
+  // berbuat apa. `null` (tidak diketahui, atau bukan Web) sengaja diam.
+  const [webProvisioningHint, setWebProvisioningHint] = useState<
+    boolean | null
+  >(null);
+  useEffect(() => {
+    void getWebProvisioningHint().then(setWebProvisioningHint);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,6 +198,36 @@ export default function LoginPage() {
             >
               Konfigurasi ulang database
             </button>
+          </div>
+        ) : null}
+
+        {/* Database Web yang belum punya akun sama sekali. Hanya MENUNJUK ke
+            jalan provisioning — tidak ada cara membuat akun dari browser, dan
+            tidak boleh ada: aplikasi Web terbuka ke internet, jadi layar
+            "buat Superadmin pertama" di sini berarti siapa pun yang pertama
+            membuka URL-nya bisa mengklaim seluruh sistem.
+
+            Kelasnya sengaja hanya yang sudah punya pasangan mode terang di
+            globals.css (`bg-amber-950/50`, `text-amber-100`, `text-amber-300`);
+            varian ber-opasitas seperti `text-amber-200/90` belum punya, dan
+            akan menjadi teks terang di atas latar terang. */}
+        {webProvisioningHint === false ? (
+          <div className="p-3.5 bg-amber-950/50 border border-white/10 rounded-2xl text-amber-100 text-xs space-y-1.5">
+            <p className="font-bold text-amber-300">
+              Database ini belum punya akun
+            </p>
+            <p>
+              Belum ada satu pun akun untuk login. Buat Superadmin pertama lewat
+              aplikasi Desktop — layar provisioning akan muncul dengan
+              sendirinya — lalu akun yang sama langsung bisa dipakai di sini.
+            </p>
+            <p>
+              Untuk server tanpa Desktop, jalankan{" "}
+              <code className="font-mono font-bold text-amber-300">
+                bun run bootstrap:superadmin
+              </code>{" "}
+              di server.
+            </p>
           </div>
         ) : null}
 

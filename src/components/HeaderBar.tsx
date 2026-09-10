@@ -145,6 +145,51 @@ const PRIMARY_AREAS = new Set<AppArea>([
 ]);
 const MOBILE_FIXED_AREAS = new Set<AppArea>(["home", "scanner", "dashboard"]);
 
+/**
+ * Pengelompokan isi menu "Kelola".
+ *
+ * Dua puluh halaman dalam satu daftar datar memaksa orang membaca seluruhnya
+ * untuk menemukan satu, dan gulirannya tidak memberi tahu apa pun tentang sudah
+ * sampai di mana. Kelompok berjudul mengubahnya menjadi lima blok berisi 3-7
+ * yang bisa dilewati sekaligus.
+ *
+ * Pengelompokan ini MURNI TAMPILAN. Tidak ada rute yang berubah, tidak ada
+ * halaman yang digabung, dan hak aksesnya tetap ditentukan `canAccessArea` per
+ * item seperti sebelumnya — kelompok yang seluruh isinya tidak boleh diakses
+ * pengguna ini tidak dirender sama sekali, judulnya sekalian.
+ *
+ * `Operator` masuk SISTEM, bukan KEPEGAWAIAN: yang dikelola di sana adalah akun
+ * aplikasi beserta role-nya, satu urusan dengan Riwayat Reset dan Pengaturan —
+ * bukan data orang seperti Karyawan.
+ */
+const MANAGEMENT_GROUPS: ReadonlyArray<{
+  label: string;
+  areas: readonly AppArea[];
+}> = [
+  { label: "Kepegawaian", areas: ["karyawan", "idcards", "shift"] },
+  {
+    label: "Akademik",
+    areas: [
+      "akademik",
+      "guru",
+      "siswa",
+      "presensi_kelas",
+      "jurnal_mengajar",
+      "leger_kehadiran",
+      "bimbingan_konseling",
+    ],
+  },
+  {
+    label: "Kehadiran",
+    areas: ["dasbor_kehadiran", "audit", "attendance_photo", "holidays"],
+  },
+  {
+    label: "Operasional",
+    areas: ["operational", "payroll", "notifikasi_wa"],
+  },
+  { label: "Sistem", areas: ["operators", "password_reset", "settings"] },
+];
+
 function routeIsActive(pathname: string, href: string) {
   return href === "/"
     ? pathname === href
@@ -225,6 +270,25 @@ export function HeaderBar() {
   );
   const activeManagementItem = managementNavigation.find((item) =>
     routeIsActive(pathname, item.href),
+  );
+
+  // Kelompok yang benar-benar punya isi untuk pengguna ini. Kelompok yang
+  // seluruh halamannya di luar haknya tidak dirender, judulnya sekalian.
+  const managementGroups = MANAGEMENT_GROUPS.map((group) => ({
+    label: group.label,
+    items: group.areas
+      .map((area) => managementNavigation.find((item) => item.area === area))
+      .filter((item): item is NavigationItem => Boolean(item)),
+  })).filter((group) => group.items.length > 0);
+
+  // Jaring pengaman: halaman baru yang lupa dimasukkan ke `MANAGEMENT_GROUPS`
+  // TETAP TAMPIL, bukan hilang diam-diam. Menu yang menelan halaman tanpa suara
+  // jauh lebih buruk daripada menu yang sedikit tidak rapi, dan hilangnya tidak
+  // akan tertangkap gerbang mana pun — `audit:page-guard` memeriksa izin, bukan
+  // apakah halamannya bisa dicapai dari navigasi.
+  const groupedAreas = new Set(MANAGEMENT_GROUPS.flatMap((g) => g.areas));
+  const ungroupedItems = managementNavigation.filter(
+    (item) => !groupedAreas.has(item.area),
   );
 
   const mobileNavigation = visibleNavigation.filter((item) =>
@@ -324,19 +388,49 @@ export function HeaderBar() {
                   {desktopMenuOpen ? (
                     <div
                       id="desktop-management-menu"
-                      className="absolute left-0 top-[calc(100%+0.65rem)] z-50 w-64 rounded-2xl border border-white/10 bg-slate-900/98 p-2 shadow-2xl shadow-slate-950/70 backdrop-blur-xl"
+                      // `max-h` + guliran sendiri: panel ini tumbuh mengikuti
+                      // jumlah halaman yang boleh diakses, dan tanpa batas ia
+                      // memanjang melewati tepi layar pada laptop pendek —
+                      // item terakhir tidak akan pernah bisa diklik.
+                      className="absolute left-0 top-[calc(100%+0.65rem)] z-50 max-h-[70vh] w-64 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-slate-900/98 p-2 shadow-2xl shadow-slate-950/70 backdrop-blur-xl"
                     >
-                      <p className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                        Manajemen aplikasi
-                      </p>
-                      {managementNavigation.map((item) => (
-                        <NavigationLink
-                          key={item.href}
-                          item={item}
-                          pathname={pathname}
-                          onNavigate={() => setDesktopMenuOpen(false)}
-                        />
+                      {managementGroups.map((group, index) => (
+                        <div
+                          key={group.label}
+                          className={
+                            index > 0
+                              ? "mt-1 border-t border-white/10 pt-1"
+                              : undefined
+                          }
+                        >
+                          <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                            {group.label}
+                          </p>
+                          {group.items.map((item) => (
+                            <NavigationLink
+                              key={item.href}
+                              item={item}
+                              pathname={pathname}
+                              onNavigate={() => setDesktopMenuOpen(false)}
+                            />
+                          ))}
+                        </div>
                       ))}
+                      {ungroupedItems.length > 0 ? (
+                        <div className="mt-1 border-t border-white/10 pt-1">
+                          <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                            Lainnya
+                          </p>
+                          {ungroupedItems.map((item) => (
+                            <NavigationLink
+                              key={item.href}
+                              item={item}
+                              pathname={pathname}
+                              onNavigate={() => setDesktopMenuOpen(false)}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

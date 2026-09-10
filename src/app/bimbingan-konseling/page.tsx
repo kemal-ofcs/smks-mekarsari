@@ -152,12 +152,17 @@ export default function BimbinganKonselingPage() {
         }
       }
     } catch (err) {
+      // `bk_kasus`/`bk_sesi` sengaja TIDAK pernah ada di SQLite lokal — catatan
+      // kedisiplinan seorang anak tidak boleh tersimpan di terminal pemindai di
+      // lobi sekolah. Konsekuensinya halaman ini menuntut jaringan, dan itu
+      // harus dikatakan: daftar kosong yang sebenarnya kegagalan tidak bisa
+      // dibedakan dari "belum ada kasus".
       setFeedback({
         tone: "error",
         message:
           err instanceof Error
-            ? err.message
-            : "Gagal memuat data Bimbingan Konseling.",
+            ? `${err.message} — data Bimbingan Konseling dibaca dari cloud, jadi halaman ini membutuhkan koneksi.`
+            : "Gagal memuat data Bimbingan Konseling. Halaman ini membutuhkan koneksi jaringan.",
       });
     } finally {
       setLoading(false);

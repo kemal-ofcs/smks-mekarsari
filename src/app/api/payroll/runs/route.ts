@@ -102,6 +102,13 @@ export async function PUT(request: NextRequest) {
       return noStoreJson({ data: existing.rows[0] });
     }
 
+    // Awalan `est_` pada baris rekap berarti "estimasi" HANYA selama ia
+    // ditampilkan sebagai pratinjau. Begitu sampai di sini, nilainya DIBEKUKAN
+    // apa adanya menjadi `payroll_items` — inilah slip gaji yang dibayarkan,
+    // bukan perkiraan. Jangan tergoda memperlakukannya sebagai angka kasar
+    // yang boleh dihitung ulang dengan cara lain di titik ini: dua cara hitung
+    // untuk satu periode adalah persis cacat yang membuat angka yang disetujui
+    // berbeda dari angka yang dibayarkan.
     const recap = await computePayrollRecap(
       client,
       body.periodStart,

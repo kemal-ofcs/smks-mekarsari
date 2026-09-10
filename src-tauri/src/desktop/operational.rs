@@ -2040,6 +2040,27 @@ pub fn delete_holiday_whitelist(state: &DesktopState, id: &str) -> Result<Value,
     Ok(json!({ "sukses": true }))
 }
 
+/// Sakelar Generate Alfa. Kunci yang belum ada berarti MENYALA.
+///
+/// Ini SATU-SATUNYA sakelar di repo ini yang bawaannya menyala, dan itu
+/// disengaja — jangan "dirapikan" menjadi seragam dengan yang lain.
+///
+/// `scan_photo_enabled`, `scan_ip_restriction_enabled`, dan keempat
+/// `wa_notify_*` bawaannya MATI karena ketiganya fitur BARU: pemasangan yang
+/// sudah berjalan tidak boleh tiba-tiba menuntut foto atau membanjiri antrean
+/// pesan hanya karena aplikasinya diperbarui. Generate Alfa bukan fitur baru,
+/// melainkan perilaku dasar sistem absensi. Bawaan mati berarti pemasangan baru
+/// diam-diam tidak pernah mencatat ketidakhadiran siapa pun — dan ketiadaan
+/// baris `absensi_harian` tidak terlihat sebagai kesalahan di mana pun, ia
+/// hanya membuat orang yang bolos tampak seperti orang yang tidak dijadwalkan.
+///
+/// Nilai `true` di sini adalah CERMIN LOKAL dari seed cloud: `ensure_schema` di
+/// `turso.rs` menanam `('auto_alfa_aktif', 'true')` — pada daftar yang sama
+/// yang menanam `('geofence_enabled', 'false')`, jadi perbedaan bawaan
+/// antar-sakelar memang ditentukan satu per satu. SQLite lokal tidak menyemai
+/// kunci ini, sehingga default di bawahlah yang berlaku sampai sinkronisasi
+/// pertama menariknya. Keduanya harus tetap sepakat: menurunkan yang satu tanpa
+/// yang lain membuat perangkat berperilaku berbeda sebelum dan sesudah sync.
 pub fn get_alfa_settings(state: &DesktopState) -> Result<Value, CommandError> {
     let connection = storage::database(&state.data_dir)?;
     let val: Option<String> = connection
@@ -2119,7 +2140,10 @@ pub fn generate_alfa_harian(
         .transaction()
         .map_err(|_| CommandError::internal())?;
 
-    // 1. Cek Setting
+    // 1. Cek Setting — kunci yang belum ada berarti MENYALA.
+    //    Alasan lengkapnya ada di `get_alfa_settings`; keduanya wajib memakai
+    //    bawaan yang sama, kalau tidak layar Pengaturan akan menampilkan status
+    //    yang berbeda dari yang benar-benar dijalankan.
     let is_active_val: Option<String> = transaction
         .query_row(
             "SELECT value FROM setting_gex_system WHERE key = 'auto_alfa_aktif' LIMIT 1;",
@@ -2319,8 +2343,38 @@ pub fn generate_alfa_harian(
             .unwrap_or(None)
             .unwrap_or(false);
         if holiday_check {
-            libur += 1;
-            continue;
+            // Hari libur tidak lagi berarti "tidak ada yang di-Alfa-kan".
+            //
+            // Sejak `hari_libur_whitelist` ada, sebagian orang justru
+            // DIJADWALKAN masuk pada tanggal libur — Satpam, Keamanan,
+            // Maintenance. Scanner sudah tahu siapa mereka; Generate Alfa
+            // dulu tidak, sehingga ketidakhadiran mereka pada hari itu tidak
+            // pernah dinilai sama sekali.
+            //
+            // Penilaiannya MEMAKAI ULANG `scanner::evaluate_holiday_scan`,
+            // bukan salinan aturan di sini. Cakupan whitelist disimpan sebagai
+            // `kode_shift` dan NAMA divisi, dengan `tanggal_libur` NULL berarti
+            // semua hari libur — aturan yang sudah dieja dua kali (Rust dan
+            // `holiday-whitelist.ts`) dan diuji dengan vektor yang sama. Ejaan
+            // ketiga hanya akan menambah tempat untuk drift.
+            //
+            // Daftar KOSONG tetap berarti MENOLAK, seperti di scanner: tidak
+            // ada yang dijadwalkan, jadi tidak ada yang di-Alfa-kan. Pemasangan
+            // yang belum memakai whitelist karena itu tidak berubah perilakunya
+            // sama sekali.
+            let whitelist = super::scanner::load_holiday_whitelist(&transaction, &work_date)?;
+            let kode_shift = super::scanner::load_kode_shift(&transaction, id_shift);
+            let dijadwalkan = super::scanner::evaluate_holiday_scan(
+                &whitelist,
+                &work_date,
+                &divisi,
+                kode_shift,
+            )
+            .is_some();
+            if !dijadwalkan {
+                libur += 1;
+                continue;
+            }
         }
 
         // Alfa baru boleh dibuat setelah jendela scan pulang benar-benar tertutup
@@ -3952,4 +4006,131 @@ pub fn force_enqueue_settings(state: &DesktopState) -> Result<Value, CommandErro
         "jumlahDienqueue": enqueued,
         "pesan": format!("{enqueued} data master (Shift, Template ID Card, Instansi, Libur, Pengaturan) berhasil dijadwalkan untuk sinkronisasi ke cloud."),
     }))
+}
+
+#[cfg(test)]
+mod tests_generate_alfa_hari_libur {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn fixture() -> (tempfile::TempDir, DesktopState) {
+        let dir = tempdir().expect("tempdir");
+        storage::initialize(dir.path()).expect("init db");
+        let state = DesktopState {
+            server_origin: std::sync::RwLock::new("http://localhost:3000".to_string()),
+            offline_max_age_hours: 24,
+            data_dir: dir.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            turso_config: std::sync::RwLock::new(None),
+            session: std::sync::Mutex::new(None),
+            vault_lock: std::sync::Mutex::new(()),
+        };
+        (dir, state)
+    }
+
+    /// Hari libur: yang DIJADWALKAN masuk tetap di-Alfa, yang libur tidak.
+    ///
+    /// Sebelum ini, tanggal libur membuat SELURUH orang dilewati. Aturan itu
+    /// benar ketika hari libur berarti tidak ada yang bekerja — tetapi sejak
+    /// `hari_libur_whitelist` ada, Satpam dan Keamanan justru dijadwalkan
+    /// masuk, dan ketidakhadiran mereka tidak pernah dinilai sama sekali.
+    ///
+    /// Penilaiannya memakai ulang `scanner::evaluate_holiday_scan`, sehingga
+    /// tes ini sekaligus menjaga agar aturan cakupannya tidak bercabang.
+    #[test]
+    fn hari_libur_hanya_mengalfakan_yang_masuk_whitelist() {
+        let (_dir, state) = fixture();
+        let conn = storage::database(&state.data_dir).expect("db");
+        conn.execute_batch(
+            r#"
+            INSERT INTO tbl_shift (id_shift, kode_shift, nama_shift, jam_masuk, jam_pulang,
+              jam_kerja_normal_menit, istirahat_menit, batas_pulang_menit,
+              buffer_shift_malam_menit, offset_generate_alfa)
+            VALUES (1, 1, 'Pagi', '07:00', '15:00', 480, 60, 240, 120, 180);
+
+            INSERT INTO master_data (id_unik, nama, divisi, id_shift, status_aktif)
+            VALUES ('EMP-SATPAM', 'Satpam Satu', 'Keamanan', 1, 'Aktif'),
+                   ('EMP-GURU',   'Guru Satu',   'Akademik', 1, 'Aktif');
+
+            INSERT INTO tbl_hari_libur (tanggal, nama_libur, status_aktif)
+            VALUES ('2026-03-17', 'Hari Raya', 1);
+
+            -- Divisi Keamanan dijadwalkan masuk pada SEMUA hari libur
+            -- (`tanggal_libur` NULL).
+            INSERT INTO hari_libur_whitelist (id, scope_type, scope_value, tanggal_libur,
+              status_aktif, created_at, updated_at)
+            VALUES ('hlw-1', 'DIVISI', 'Keamanan', NULL, 1, '2026-01-01', '2026-01-01');
+            "#,
+        )
+        .expect("seed");
+
+        // Menggantikan `DesktopState::seed_client_identity`.
+        //
+        // Di aplikasi sungguhan identitas klien disemai saat state disiapkan,
+        // sehingga `sync::ensure_client_id` di dalam transaksi Generate Alfa
+        // hanya membaca. Fixture di sini membangun `DesktopState` langsung dari
+        // struct-nya dan melewati `initialize`, jadi penyemaian itu dilakukan
+        // manual — kalau tidak, tes di bawah gagal karena sebab yang tidak ada
+        // hubungannya dengan hari libur. Perilaku yang dijamin penyemaian itu
+        // sendiri diuji di `sync::tests_identitas_klien`.
+        sync::ensure_client_id(&state).expect("identitas klien");
+        // Jauh setelah jendela scan pulang tertutup pada tanggal libur itu.
+        let ringkasan =
+            generate_alfa_harian(&state, Some("2026-03-17 23:30:00".to_string())).expect("alfa");
+
+        let alfa: Vec<String> = conn
+            .prepare("SELECT id_karyawan FROM absensi_harian WHERE tanggal = '2026-03-17' ORDER BY id_karyawan;")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .filter_map(Result::ok)
+            .collect();
+
+        assert_eq!(
+            alfa,
+            vec!["EMP-SATPAM".to_string()],
+            "hanya personel yang dijadwalkan masuk pada hari libur yang boleh kena Alfa"
+        );
+        assert_eq!(
+            ringkasan["jumlahLibur"], 1,
+            "yang benar-benar libur tetap terhitung sebagai dilewati"
+        );
+    }
+
+    /// Whitelist KOSONG tetap berarti MENOLAK — tidak ada yang di-Alfa-kan.
+    ///
+    /// Ini yang membuat pemasangan yang belum memakai whitelist tidak berubah
+    /// perilakunya sama sekali, dan ia sengaja kebalikan dari
+    /// `scan_ip_allowlist` yang kosong berarti "belum diatur".
+    #[test]
+    fn hari_libur_tanpa_whitelist_tidak_mengalfakan_siapa_pun() {
+        let (_dir, state) = fixture();
+        let conn = storage::database(&state.data_dir).expect("db");
+        conn.execute_batch(
+            r#"
+            INSERT INTO tbl_shift (id_shift, kode_shift, nama_shift, jam_masuk, jam_pulang,
+              jam_kerja_normal_menit, istirahat_menit, batas_pulang_menit,
+              buffer_shift_malam_menit, offset_generate_alfa)
+            VALUES (1, 1, 'Pagi', '07:00', '15:00', 480, 60, 240, 120, 180);
+
+            INSERT INTO master_data (id_unik, nama, divisi, id_shift, status_aktif)
+            VALUES ('EMP-SATPAM', 'Satpam Satu', 'Keamanan', 1, 'Aktif');
+
+            INSERT INTO tbl_hari_libur (tanggal, nama_libur, status_aktif)
+            VALUES ('2026-03-17', 'Hari Raya', 1);
+            "#,
+        )
+        .expect("seed");
+
+        generate_alfa_harian(&state, Some("2026-03-17 23:30:00".to_string())).expect("alfa");
+
+        let jumlah: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM absensi_harian WHERE tanggal = '2026-03-17';",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(jumlah, 0, "daftar kosong berarti tidak ada yang dijadwalkan");
+    }
 }

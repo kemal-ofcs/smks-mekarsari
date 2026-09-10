@@ -1,5 +1,6 @@
 "use client";
 
+import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop } from "@/lib/runtime/desktop-commands";
 import type { DatabaseProvider } from "@/lib/validations/database-endpoint";
@@ -33,6 +34,34 @@ export type BootstrapDraft = {
   provider?: DatabaseProvider;
   allowInsecureTransport?: boolean;
 };
+
+/**
+ * Apakah database Web sudah punya setidaknya satu akun? Khusus Web.
+ *
+ * `false` = database memang belum diprovisioning; halaman login menunjuk ke
+ * jalan provisioning. `null` = tidak diketahui (bukan Web, atau database tidak
+ * terjangkau) — dan pada `null` halaman login WAJIB diam, supaya kegagalan
+ * jaringan sesaat tidak menyuruh orang memprovisioning database yang sebenarnya
+ * sudah berisi.
+ *
+ * Desktop dan Mobile tidak memanggil ini sama sekali: keduanya punya layar
+ * provisioning sendiri lewat `getBootstrapStatus`, dan endpoint yang dipanggil
+ * di bawah tidak ada pada static export.
+ */
+export async function getWebProvisioningHint(): Promise<boolean | null> {
+  if (isDesktopRuntime()) return null;
+  try {
+    const response = await requestWebApi<{ hasOperator: boolean | null }>(
+      "/api/auth/provisioning-status",
+      "POST",
+    );
+    return response.hasOperator;
+  } catch {
+    // Petunjuk ini pelengkap, bukan syarat untuk login. Endpoint yang gagal
+    // cukup berarti "tidak diketahui" — halaman login tetap berfungsi penuh.
+    return null;
+  }
+}
 
 export async function getBootstrapStatus(): Promise<BootstrapStatus | null> {
   if (!isDesktopRuntime()) return null;

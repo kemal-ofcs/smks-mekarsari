@@ -4,7 +4,7 @@ use std::{
     time::SystemTime,
 };
 
-use rusqlite::{params, types::Value as SqlValue, OptionalExtension, Transaction};
+use rusqlite::{params, types::Value as SqlValue, Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -67,7 +67,7 @@ async fn assert_cloud_schema_compatible(turso: &TursoClient) -> Result<(), Comma
     Ok(())
 }
 
-struct SnapshotTable {
+pub struct SnapshotTable {
     payload_key: &'static str,
     domain: &'static str,
     table: &'static str,
@@ -850,6 +850,25 @@ pub fn is_device_local_setting(key: &str) -> bool {
     DEVICE_LOCAL_SETTING_KEYS.contains(&key)
 }
 
+/// Definisi snapshot untuk sebuah nama tabel.
+///
+/// `turso.rs` memakainya untuk menyusun trigger tombstone: trigger itu perlu
+/// tahu KOLOM IDENTITAS tiap tabel, dan satu-satunya tempat yang tahu adalah
+/// `SNAPSHOT_TABLES`. Mengejanya ulang di sisi cloud akan menciptakan sumber
+/// kebenaran kedua yang pasti drift — dan drift pada kolom identitas berarti
+/// tombstone menunjuk baris yang salah, atau tidak menunjuk apa pun.
+pub fn snapshot_table_by_name(table: &str) -> Option<&'static SnapshotTable> {
+    SNAPSHOT_TABLES
+        .iter()
+        .find(|definition| definition.table == table)
+}
+
+impl SnapshotTable {
+    pub fn entity_column(&self) -> &'static str {
+        self.entity_column
+    }
+}
+
 fn sql_value(value: Option<&Value>) -> SqlValue {
     match value {
         None | Some(Value::Null) => SqlValue::Null,
@@ -1060,6 +1079,80 @@ fn row_payload_hash(table: &str, row: &Value) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Terapkan penghapusan yang terjadi di cloud ke SQLite lokal.
+///
+/// Ini yang membuat penghapusan menyebar untuk 25 tabel snapshot yang
+/// `delete_missing`-nya mati. `delete_missing` menyimpulkan penghapusan dari
+/// KETIDAKHADIRAN baris, dan itu hanya sah bila payload-nya utuh; tombstone
+/// menyatakannya secara langsung, sehingga sah pada payload apa pun.
+///
+/// Tiga penjagaan, dan ketiganya perlu:
+///
+/// 1. Entitas yang MASIH ADA di payload snapshot dilewati. Baris yang dihapus
+///    lalu dibuat ulang membawa tombstone lama yang, kalau diterapkan, akan
+///    menghapus baris barunya.
+/// 2. Entitas yang outbox-nya masih menggantung dilewati — perangkat ini
+///    mungkin membuatnya ulang saat offline, dan perubahan itu belum terkirim.
+/// 3. Nama tabel dicocokkan ke `SNAPSHOT_TABLES`; tombstone bertabel asing
+///    diabaikan, bukan dipakai menyusun SQL.
+fn apply_tombstones(
+    transaction: &Transaction<'_>,
+    guard: &PendingGuard,
+    hashes: &mut HashMap<String, String>,
+    snapshot: &Value,
+) -> Result<usize, CommandError> {
+    let Some(tombstones) = snapshot.get("tombstones").and_then(Value::as_array) else {
+        return Ok(0);
+    };
+    let mut dihapus = 0usize;
+    for tombstone in tombstones {
+        let (Some(table), Some(kunci)) = (
+            tombstone.get("table").and_then(Value::as_str),
+            tombstone.get("entityKey").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if kunci.is_empty() {
+            continue;
+        }
+        let Some(definition) = snapshot_table_by_name(table) else {
+            continue;
+        };
+        if guard.has(definition.domain, kunci) {
+            continue;
+        }
+        // Masih dikirim server pada siklus ini berarti baris itu hidup lagi.
+        let masih_ada = snapshot
+            .get(definition.payload_key)
+            .and_then(Value::as_array)
+            .is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| entity_key(row, definition.entity_column) == kunci)
+            });
+        if masih_ada {
+            continue;
+        }
+        let terhapus = transaction
+            .execute(
+                &format!(
+                    "DELETE FROM {} WHERE CAST({} AS TEXT) = ?;",
+                    definition.table, definition.entity_column
+                ),
+                [kunci],
+            )
+            .map_err(|err| sync_table_error(definition.table, err))?;
+        transaction
+            .execute(
+                "DELETE FROM desktop_entity_revision WHERE domain = ? AND entity_key = ?;",
+                params![definition.domain, kunci],
+            )
+            .map_err(|_| CommandError::internal())?;
+        hashes.remove(&guard_key(definition.domain, kunci));
+        dihapus += terhapus;
+    }
+    Ok(dihapus)
+}
+
 fn apply_table(
     transaction: &Transaction<'_>,
     guard: &PendingGuard,
@@ -1067,6 +1160,8 @@ fn apply_table(
     snapshot: &Value,
     definition: &SnapshotTable,
     revision: i64,
+    partial_keys: &HashSet<String>,
+    windows: &HashMap<String, (String, String)>,
 ) -> Result<usize, CommandError> {
     // Kunci payload yang tidak dikirim server berarti "tabel ini tidak berubah"
     // pada pull inkremental — bukan "tabel ini kosong". Berhenti lebih awal agar
@@ -1186,16 +1281,55 @@ fn apply_table(
             written += 1;
         }
     }
-    if definition.delete_missing {
-        let select = format!(
-            "SELECT CAST({} AS TEXT) FROM {};",
-            definition.entity_column, definition.table
-        );
+    // Server boleh menyatakan sebuah kunci payload TIDAK utuh — `snapshot.ts`
+    // membatasi `attendance`, `scanLogs`, `corrections`, `imports`, dan
+    // `backups` dengan jendela 31 hari, dan `scanLogs` ditambah LIMIT 5000.
+    //
+    // Pada payload seperti itu "baris tidak muncul" TIDAK berarti "baris sudah
+    // dihapus di server", jadi `delete_missing` harus diam. Sebelum penjagaan
+    // ini, setiap pull lewat jalur server aplikasi menghapus seluruh
+    // `absensi_harian` lokal di luar 31 hari dan memangkas `log_scan` lokal ke
+    // 5.000 baris yang sempat terkirim: baris itu memang dulu datang dari
+    // server, sehingga ia punya jejak `desktop_entity_revision` — dan justru
+    // jejak itu yang membuatnya lolos ke perintah DELETE di bawah.
+    //
+    // Jalur Turso langsung mengirim tabel utuh dan tidak menyatakan apa pun,
+    // sehingga daftarnya kosong dan perilakunya di sana tidak berubah.
+    //
+    // JENDELA adalah bentuk ketiga, dan lebih baik daripada sekadar "diam".
+    // Bila server menyatakan payload ini dibatasi rentang tanggal — dan
+    // dibatasi HANYA oleh itu, tanpa LIMIT — maka di DALAM rentang tersebut
+    // ketiadaan sebuah baris tetap merupakan bukti bahwa ia sudah dihapus.
+    // Penghapusan karenanya tetap menyebar untuk data yang praktis satu-satunya
+    // yang pernah dihapus orang, sementara riwayat lama tidak tersentuh.
+    let payload_is_partial = partial_keys.contains(definition.payload_key);
+    let window = windows.get(definition.payload_key);
+    if definition.delete_missing && (!payload_is_partial || window.is_some()) {
+        // Kolom jendela berasal dari `SNAPSHOT_WINDOWS` di `turso.rs`, bukan
+        // dari data pengguna; tetap dijepit ke kolom yang benar-benar dimiliki
+        // definisi ini supaya payload asing tidak bisa menyusun SQL.
+        let window = window.filter(|(column, _)| definition.columns.contains(&column.as_str()));
+        let select = match &window {
+            Some((column, _)) => format!(
+                "SELECT CAST({} AS TEXT) FROM {} WHERE date({}) >= ?;",
+                definition.entity_column, definition.table, column
+            ),
+            None => format!(
+                "SELECT CAST({} AS TEXT) FROM {};",
+                definition.entity_column, definition.table
+            ),
+        };
+        let window_args: Vec<String> = match &window {
+            Some((_, since)) => vec![since.clone()],
+            None => Vec::new(),
+        };
         let mut statement = transaction
             .prepare(&select)
             .map_err(|_| CommandError::internal())?;
         let local_keys = statement
-            .query_map([], |row| row.get::<_, String>(0))
+            .query_map(rusqlite::params_from_iter(window_args.iter()), |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(|_| CommandError::internal())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| CommandError::internal())?;
@@ -1501,10 +1635,55 @@ pub fn apply_snapshot_with_pulse(
         ));
     }
 
+    // Kunci payload yang server nyatakan TIDAK utuh (lihat
+    // `PARTIAL_SNAPSHOT_KEYS` di `snapshot.ts`). Dihitung sekali, lalu dipakai
+    // setiap tabel untuk memutuskan apakah `delete_missing` boleh berjalan.
+    //
+    // Server yang tidak menyatakan apa pun — jalur Turso langsung, dan server
+    // aplikasi versi lama — menghasilkan himpunan kosong, yaitu perilaku lama
+    // persis. Penjagaan ini hanya bisa MEMBATALKAN penghapusan, tidak pernah
+    // menambahnya, sehingga tidak ada jalur yang menjadi lebih agresif.
+    let partial_keys = snapshot
+        .get("partialKeys")
+        .and_then(Value::as_array)
+        .map(|keys| {
+            keys.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<HashSet<String>>()
+        })
+        .unwrap_or_default();
+
+    // Jendela waktu yang dinyatakan server: kunci payload -> (kolom, batas).
+    //
+    // Jalur Turso langsung membatasi tabel yang tumbuh harian dengan rentang
+    // 31 hari (lihat `SNAPSHOT_WINDOWS` di `turso.rs`). Batasnya dihitung jam
+    // SERVER, tidak pernah jam perangkat: dua perangkat dengan jam berbeda
+    // harus menyimpulkan batas yang sama persis, kalau tidak yang jamnya maju
+    // akan menghapus baris yang masih di dalam jendela milik yang lain.
+    let windows = snapshot
+        .get("windows")
+        .and_then(Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|(key, value)| {
+                    let column = value.get("column").and_then(Value::as_str)?;
+                    let since = value.get("since").and_then(Value::as_str)?;
+                    if column.is_empty() || since.is_empty() {
+                        return None;
+                    }
+                    Some((key.clone(), (column.to_owned(), since.to_owned())))
+                })
+                .collect::<HashMap<String, (String, String)>>()
+        })
+        .unwrap_or_default();
+
     let guard = PendingGuard::load(&transaction)?;
     let mut hashes = load_revision_hashes(&transaction)?;
     reconcile_shift_ids(&transaction, &guard, snapshot)?;
     let mut written = 0usize;
+    written += apply_tombstones(&transaction, &guard, &mut hashes, snapshot)?;
     for definition in SNAPSHOT_TABLES {
         written += apply_table(
             &transaction,
@@ -1513,6 +1692,8 @@ pub fn apply_snapshot_with_pulse(
             snapshot,
             definition,
             revision,
+            &partial_keys,
+            &windows,
         )?;
     }
 
@@ -1565,6 +1746,25 @@ pub fn apply_snapshot_with_pulse(
         );
     }
 
+    // Kursor tombstone maju DI DALAM transaksi yang sama dengan penerapannya.
+    // Kalau ia disimpan terpisah dan transaksinya gagal, perangkat akan
+    // menganggap penghapusan sudah diterapkan padahal barisnya masih ada — dan
+    // tidak akan pernah menariknya lagi.
+    if let Some(cursor) = snapshot.get("tombstoneCursor").and_then(Value::as_i64) {
+        transaction
+            .execute(
+                r#"
+      INSERT INTO desktop_sync_cursor (domain, last_revision, updated_at)
+      VALUES ('tombstone', ?, ?)
+      ON CONFLICT(domain) DO UPDATE SET
+        last_revision = MAX(desktop_sync_cursor.last_revision, excluded.last_revision),
+        updated_at = excluded.updated_at;
+      "#,
+                params![cursor, storage::now_epoch_seconds()],
+            )
+            .map_err(|_| CommandError::internal())?;
+    }
+
     transaction
         .execute(
             r#"
@@ -1581,6 +1781,78 @@ pub fn apply_snapshot_with_pulse(
         .commit()
         .map_err(|_| CommandError::internal())
         .map(|()| written)
+}
+
+/// Berapa lama entri outbox yang SUDAH terkirim tetap disimpan.
+///
+/// Outbox adalah tabel yang tumbuh paling cepat di perangkat: satu terminal
+/// pemindai sekolah 800 siswa menghasilkan ±1.600 baris per hari, masing-masing
+/// membawa `payload_json` utuh — ±580.000 baris setahun, di ponsel. Antrean
+/// WhatsApp sudah punya retensi sejak awal; outbox yang tumbuh jauh lebih cepat
+/// tidak pernah punya.
+pub const SYNC_OUTBOX_RETENTION_DAYS: i64 = 30;
+
+/// Buang entri outbox yang sudah tuntas dan melewati masa retensi.
+///
+/// Hanya baris yang benar-benar DITERIMA cloud yang dibuang, ditandai
+/// `server_revision IS NOT NULL`. Entri yang statusnya `synced` karena operator
+/// menekan "bersihkan yang gagal" TIDAK punya revisi server, dan sengaja
+/// dibiarkan: membuangnya membuat `ensure_unsynced_payroll_data_enqueued`
+/// menganggap barisnya belum pernah diantre lalu mendorongnya lagi ke cloud —
+/// menghidupkan kembali push yang justru baru saja dibatalkan operatornya.
+///
+/// Baris konflik dihapus lebih dulu karena `desktop_sync_conflict.event_id`
+/// menunjuk ke sini lewat foreign key, dan `PRAGMA foreign_keys` menyala.
+fn prune_settled_outbox(connection: &mut Connection) -> Result<usize, CommandError> {
+    let cutoff = storage::now_epoch_seconds() - SYNC_OUTBOX_RETENTION_DAYS * 86_400;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| CommandError::internal())?;
+    transaction
+        .execute(
+            r#"
+      DELETE FROM desktop_sync_conflict
+      WHERE resolved_at IS NOT NULL
+        AND event_id IN (
+          SELECT event_id FROM desktop_sync_outbox
+          WHERE status = 'synced' AND server_revision IS NOT NULL AND updated_at < ?
+        );
+      "#,
+            [cutoff],
+        )
+        .map_err(|_| CommandError::internal())?;
+    let dibuang = transaction
+        .execute(
+            r#"
+      DELETE FROM desktop_sync_outbox
+      WHERE status = 'synced' AND server_revision IS NOT NULL AND updated_at < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM desktop_sync_conflict c WHERE c.event_id = desktop_sync_outbox.event_id
+        );
+      "#,
+            [cutoff],
+        )
+        .map_err(|_| CommandError::internal())?;
+    transaction
+        .commit()
+        .map_err(|_| CommandError::internal())
+        .map(|()| dibuang)
+}
+
+/// Tombstone terakhir yang sudah diterapkan perangkat ini.
+///
+/// Dipakai kedua jalur pull — Turso langsung maupun server aplikasi — supaya
+/// keduanya meminta himpunan penghapusan yang sama. Nol berarti perangkat ini
+/// belum pernah menerapkan tombstone apa pun.
+fn load_tombstone_cursor(state: &DesktopState) -> Result<i64, CommandError> {
+    let connection = storage::database(&state.data_dir)?;
+    Ok(connection
+        .query_row(
+            "SELECT last_revision FROM desktop_sync_cursor WHERE domain = 'tombstone';",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0))
 }
 
 pub async fn pull_snapshot(
@@ -1623,8 +1895,9 @@ pub async fn pull_snapshot(
             None => None,
         };
 
+        let tombstone_cursor = load_tombstone_cursor(state)?;
         let payload = turso
-            .pull_snapshot_tables(last_rev, wanted.as_ref())
+            .pull_snapshot_tables(last_rev, wanted.as_ref(), tombstone_cursor)
             .await?;
         let applied_pulse = pulse.as_ref().map(|pulse| {
             pulse
@@ -1643,11 +1916,15 @@ pub async fn pull_snapshot(
     }
 
     if !token.is_empty() {
+        // Kursor tombstone ikut dikirim supaya jalur server aplikasi menerima
+        // penghapusan yang sama dengan jalur Turso langsung. Server versi lama
+        // mengabaikan kunci ini dan tidak mengembalikan tombstone apa pun —
+        // perilakunya persis seperti sebelum fitur ini ada, bukan error.
         let payload = remote::authorized_json(
             state,
             reqwest::Method::POST,
             "/api/sync/snapshot",
-            None,
+            Some(json!({ "tombstoneSince": load_tombstone_cursor(state)? })),
             token,
         )
         .await?;
@@ -1911,6 +2188,17 @@ fn apply_push_results(
                 } else {
                     entity_key.clone()
                 };
+                // Hash ini SENGAJA berada di ruang yang berbeda dari milik
+                // `apply_table`, yang meng-hash `nama_tabel || 0x00 || baris`.
+                // Respons push tidak memuat baris snapshot, jadi tidak ada
+                // yang bisa dipakai menghitung hash yang setara.
+                //
+                // Akibatnya entitas yang baru saja di-push selalu ditulis
+                // ulang sekali pada pull berikutnya. Itu bukan cacat: server
+                // yang berwenang, dan menulis ulang dari server justru bentuk
+                // yang benar. Yang dilarang adalah kebalikannya — menaruh nilai
+                // yang KEBETULAN bisa sama, karena baris yang berbeda di server
+                // akan dilewati dan perbedaannya tidak pernah sampai.
                 let mut hasher = Sha256::new();
                 hasher.update(local_payload.as_bytes());
                 transaction
@@ -2626,8 +2914,14 @@ pub async fn synchronize(
     // push supaya baris yang baru saja diantre sempat terkirim lebih dulu, dan
     // sengaja tidak mengembalikan error: gagal memangkas adalah urusan
     // penyimpanan, bukan alasan menjatuhkan sinkronisasi yang sudah berhasil.
-    if let Ok(connection) = storage::database(&state.data_dir) {
+    if let Ok(mut connection) = storage::database(&state.data_dir) {
         let _ = super::wa_notification::purge_expired_notifications(&connection);
+        // Salinan lokal foto absensi: tabel yang tumbuh paling cepat dalam
+        // ukuran byte, bukan jumlah baris. Dijalankan SETELAH push supaya foto
+        // yang baru diambil sempat terkirim lebih dulu; yang belum terkirim
+        // dilindungi penjaga outbox di dalam fungsinya sendiri.
+        let _ = super::scanner::purge_local_scan_photos(&connection);
+        let _ = prune_settled_outbox(&mut connection);
     }
 
     match pulled {
@@ -2941,7 +3235,8 @@ mod tests {
 
     use super::{
         apply_push_results, apply_snapshot, enqueue, ensure_client_id, is_client_schema_outdated,
-        pending_events, storage, DesktopState, CLIENT_SCHEMA_VERSION,
+        pending_events, prune_settled_outbox, storage, DesktopState, SnapshotTable,
+        CLIENT_SCHEMA_VERSION, SNAPSHOT_TABLES, SYNC_OUTBOX_RETENTION_DAYS,
     };
 
     #[test]
@@ -3778,6 +4073,409 @@ mod tests {
         );
     }
 
+    /// Satu baris absensi untuk snapshot uji.
+    fn attendance_row(id_sesi: &str, tanggal: &str) -> Value {
+        json!({
+            "tanggal": tanggal,
+            "id_karyawan": "EMP-1",
+            "nama": "Pegawai Satu",
+            "kelas_divisi": "Umum",
+            "jam_masuk": "07:00",
+            "jam_pulang": "15:00",
+            "status_kehadiran": "Hadir",
+            "status_absen": "Tepat Waktu",
+            "sumber": "Scanner",
+            "update_terakhir": "2026-01-01 08:00:00",
+            "id_shift": 1,
+            "bulan": &tanggal[0..7],
+            "tahun": 2026,
+            "id_sesi": id_sesi,
+        })
+    }
+
+    /// Snapshot yang barisnya SENGAJA dipotong tidak boleh menghapus riwayat lokal.
+    ///
+    /// `snapshot.ts` membatasi `attendance` dengan jendela 31 hari dan `scanLogs`
+    /// dengan LIMIT 5000, sementara keduanya `delete_missing`. Tanpa penanda
+    /// `partialKeys`, setiap pull lewat jalur server aplikasi menghapus seluruh
+    /// absensi lokal di luar jendela — justru baris yang sudah pernah ditarik
+    /// dari server, karena jejak `desktop_entity_revision`-nya yang membuatnya
+    /// dianggap "pernah ada di server, sekarang hilang, berarti dihapus".
+    ///
+    /// Bagian kedua tes ini sengaja mengirim snapshot yang sama TANPA penanda
+    /// itu dan menuntut barisnya benar-benar terhapus: tanpa itu, tes ini tetap
+    /// hijau seandainya `delete_missing` mati total.
+    #[test]
+    fn snapshot_berkunci_partial_tidak_menghapus_riwayat_di_luar_jendela() {
+        let (_directory, state) = fixture();
+
+        let penuh = json!({ "snapshot": {
+            "revision": 20,
+            "attendance": [
+                attendance_row("sesi-lama", "2026-01-05"),
+                attendance_row("sesi-baru", "2026-03-01"),
+            ],
+        }});
+        apply_snapshot(&state, &penuh).expect("snapshot penuh");
+
+        let connection = storage::database(&state.data_dir).expect("local database");
+        let awal: i64 = connection
+            .query_row("SELECT COUNT(*) FROM absensi_harian;", [], |row| row.get(0))
+            .expect("hitung absensi");
+        assert_eq!(awal, 2, "kedua baris server harus masuk lebih dulu");
+
+        // Pull berikutnya lewat server aplikasi: hanya baris dalam jendela yang
+        // ikut, dan server menyatakan payload-nya memang tidak utuh.
+        let sebagian = json!({ "snapshot": {
+            "revision": 21,
+            "partialKeys": ["attendance"],
+            "attendance": [attendance_row("sesi-baru", "2026-03-01")],
+        }});
+        apply_snapshot(&state, &sebagian).expect("snapshot sebagian");
+
+        let sesudah: i64 = connection
+            .query_row("SELECT COUNT(*) FROM absensi_harian;", [], |row| row.get(0))
+            .expect("hitung absensi");
+        assert_eq!(
+            sesudah, 2,
+            "baris di luar jendela snapshot tidak boleh dihapus"
+        );
+
+        // Payload yang TIDAK menyatakan dirinya terpotong tetap menghapus baris
+        // yang benar-benar hilang di server — jaminan bahwa penjagaan di atas
+        // hanya mempersempit, bukan mematikan `delete_missing`.
+        let utuh = json!({ "snapshot": {
+            "revision": 22,
+            "attendance": [attendance_row("sesi-baru", "2026-03-01")],
+        }});
+        apply_snapshot(&state, &utuh).expect("snapshot utuh");
+
+        let akhir: i64 = connection
+            .query_row("SELECT COUNT(*) FROM absensi_harian;", [], |row| row.get(0))
+            .expect("hitung absensi");
+        assert_eq!(
+            akhir, 1,
+            "payload utuh tetap harus menghapus baris yang hilang di server"
+        );
+    }
+
+    /// Snapshot berjendela menghapus DI DALAM jendela, dan hanya di sana.
+    ///
+    /// Ini yang membedakan jendela dari sekadar "payload tidak utuh". Pada
+    /// payload yang dibatasi rentang tanggal — dan hanya oleh itu, tanpa LIMIT
+    /// — ketiadaan sebuah baris DI DALAM rentang tetap membuktikan baris itu
+    /// sudah dihapus di server. Kalau penghapusan dimatikan seluruhnya, absensi
+    /// yang dihapus admin akan hidup terus di setiap perangkat lain.
+    ///
+    /// Batasnya berasal dari jam SERVER dan dikirim di dalam snapshot, bukan
+    /// dihitung ulang perangkat: dua perangkat dengan jam berbeda harus
+    /// menyimpulkan batas yang sama persis.
+    #[test]
+    fn snapshot_berjendela_menghapus_di_dalam_jendela_saja() {
+        let (_directory, state) = fixture();
+
+        let penuh = json!({ "snapshot": {
+            "revision": 30,
+            "attendance": [
+                attendance_row("sesi-lama", "2026-01-05"),
+                attendance_row("sesi-jendela-a", "2026-03-01"),
+                attendance_row("sesi-jendela-b", "2026-03-02"),
+            ],
+        }});
+        apply_snapshot(&state, &penuh).expect("snapshot penuh");
+
+        // Pull berjendela: server hanya mengirim sejak 2026-02-20, dan di dalam
+        // rentang itu `sesi-jendela-b` sudah tidak ada lagi — admin menghapusnya.
+        let berjendela = json!({ "snapshot": {
+            "revision": 31,
+            "windows": { "attendance": { "column": "tanggal", "since": "2026-02-20" } },
+            "attendance": [attendance_row("sesi-jendela-a", "2026-03-01")],
+        }});
+        apply_snapshot(&state, &berjendela).expect("snapshot berjendela");
+
+        let connection = storage::database(&state.data_dir).expect("local database");
+        let tersisa: Vec<String> = connection
+            .prepare("SELECT id_sesi FROM absensi_harian ORDER BY id_sesi;")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            tersisa,
+            vec!["sesi-jendela-a".to_string(), "sesi-lama".to_string()],
+            "baris yang hilang DI DALAM jendela harus terhapus, yang di luar jendela harus utuh"
+        );
+    }
+
+    /// Tombstone menyebarkan penghapusan ke tabel yang `delete_missing`-nya mati.
+    ///
+    /// `akademik_rombel` dihapus KERAS di cloud tetapi `delete_missing`-nya
+    /// `false`, sehingga sebelum ada tombstone barisnya hidup selamanya di
+    /// setiap perangkat selain yang menghapusnya. Ketiga penjagaannya ikut
+    /// diuji di sini: baris yang dibuat ulang tidak boleh ikut terhapus, dan
+    /// tabel asing harus diabaikan alih-alih dipakai menyusun SQL.
+    #[test]
+    fn tombstone_menghapus_baris_yang_delete_missing_nya_mati() {
+        let (_directory, state) = fixture();
+        let connection = storage::database(&state.data_dir).expect("local database");
+        connection
+            .execute_batch(
+                "INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel)
+                   VALUES ('rb-hapus', 'ta-1', 10, 'X IPA 1');
+                 INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel)
+                   VALUES ('rb-hidup', 'ta-1', 10, 'X IPA 2');
+                 INSERT INTO desktop_entity_revision (domain, entity_key, server_revision, payload_hash, updated_at)
+                   VALUES ('academic-class', 'rb-hapus', 1, 'x', 0),
+                          ('academic-class', 'rb-hidup', 1, 'y', 0);",
+            )
+            .expect("seed rombel");
+
+        let payload = json!({ "snapshot": {
+            "revision": 40,
+            "tombstoneCursor": 7,
+            "tombstones": [
+                { "table": "akademik_rombel", "entityKey": "rb-hapus" },
+                // Dihapus lalu DIBUAT ULANG: masih dikirim server di bawah,
+                // jadi tombstone lamanya tidak boleh menghapusnya.
+                { "table": "akademik_rombel", "entityKey": "rb-hidup" },
+                // Tabel asing: diabaikan, bukan dipakai menyusun SQL.
+                { "table": "tabel_yang_tidak_ada", "entityKey": "apa pun" },
+            ],
+            "akademikRombel": [
+                { "id_rombel": "rb-hidup", "id_tahun_ajaran": "ta-1", "tingkat": 10, "nama_rombel": "X IPA 2", "kapasitas": 36, "is_aktif": 1 }
+            ],
+        }});
+        apply_snapshot(&state, &payload).expect("snapshot dengan tombstone");
+
+        let tersisa: Vec<String> = connection
+            .prepare("SELECT id_rombel FROM akademik_rombel ORDER BY id_rombel;")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            tersisa,
+            vec!["rb-hidup".to_string()],
+            "tombstone harus menghapus baris yang dihapus di cloud, dan hanya itu"
+        );
+
+        let cursor: i64 = connection
+            .query_row(
+                "SELECT last_revision FROM desktop_sync_cursor WHERE domain = 'tombstone';",
+                [],
+                |row| row.get(0),
+            )
+            .expect("kursor tombstone");
+        assert_eq!(cursor, 7, "kursor tombstone harus maju bersama penerapannya");
+    }
+
+    /// Tombstone tidak boleh menghapus baris yang perubahannya belum terkirim.
+    ///
+    /// Perangkat bisa membuat ulang entitas itu saat offline. Menghapusnya di
+    /// sini berarti membuang pekerjaan yang bahkan belum sempat sampai ke cloud.
+    #[test]
+    fn tombstone_melewati_entitas_yang_outbox_nya_menggantung() {
+        let (_directory, state) = fixture();
+        let mut connection = storage::database(&state.data_dir).expect("local database");
+        connection
+            .execute(
+                "INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel)
+                   VALUES ('rb-lokal', 'ta-1', 11, 'XI IPS 1');",
+                [],
+            )
+            .expect("seed rombel lokal");
+        let client_id = ensure_client_id(&state).expect("client id");
+        let transaction = connection.transaction().expect("transaction");
+        enqueue(
+            &transaction,
+            &client_id,
+            "academic-class",
+            "update",
+            "rb-lokal",
+            &json!({ "id_rombel": "rb-lokal", "id_tahun_ajaran": "ta-1", "tingkat": 11, "nama_rombel": "XI IPS 1" }),
+            None,
+        )
+        .expect("enqueue");
+        transaction.commit().expect("commit");
+
+        let payload = json!({ "snapshot": {
+            "revision": 41,
+            "tombstoneCursor": 3,
+            "tombstones": [{ "table": "akademik_rombel", "entityKey": "rb-lokal" }],
+        }});
+        apply_snapshot(&state, &payload).expect("snapshot dengan tombstone");
+
+        let tersisa: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM akademik_rombel WHERE id_rombel = 'rb-lokal';",
+                [],
+                |row| row.get(0),
+            )
+            .expect("hitung");
+        assert_eq!(
+            tersisa, 1,
+            "baris dengan outbox menggantung tidak boleh dihapus tombstone"
+        );
+    }
+
+    /// Pemangkasan outbox hanya menyentuh yang benar-benar diterima cloud.
+    ///
+    /// Tiga baris yang TIDAK boleh hilang diuji sekaligus: yang masih menunggu,
+    /// yang baru saja terkirim, dan yang statusnya `synced` tanpa revisi server
+    /// — bentuk yang dihasilkan "bersihkan yang gagal". Yang terakhir itu yang
+    /// paling halus: membuangnya membuat backfill payroll mendorong ulang push
+    /// yang baru saja dibatalkan operatornya.
+    #[test]
+    fn pemangkasan_outbox_hanya_membuang_yang_sudah_diterima_cloud() {
+        let (_directory, state) = fixture();
+        let mut connection = storage::database(&state.data_dir).expect("local database");
+        let lama = storage::now_epoch_seconds() - (SYNC_OUTBOX_RETENTION_DAYS + 5) * 86_400;
+        let baru = storage::now_epoch_seconds();
+        connection
+            .execute_batch(&format!(
+                r#"
+        INSERT INTO desktop_sync_outbox (event_id, client_id, domain, operation, entity_key,
+          payload_json, status, attempt_count, server_revision, created_at, updated_at)
+        VALUES
+          ('ev-lama-terkirim', 'c', 'shift', 'update', 'k1', '{{}}', 'synced', 0, 11, {lama}, {lama}),
+          ('ev-baru-terkirim', 'c', 'shift', 'update', 'k2', '{{}}', 'synced', 0, 12, {baru}, {baru}),
+          ('ev-lama-dibersihkan', 'c', 'payroll', 'salary-config', 'sc-9', '{{}}', 'synced', 0, NULL, {lama}, {lama}),
+          ('ev-lama-menunggu', 'c', 'shift', 'update', 'k4', '{{}}', 'pending', 0, NULL, {lama}, {lama});
+        "#
+            ))
+            .expect("seed outbox");
+
+        let dibuang = prune_settled_outbox(&mut connection).expect("prune");
+        assert_eq!(dibuang, 1, "hanya satu baris yang memenuhi syarat");
+
+        let tersisa: Vec<String> = connection
+            .prepare("SELECT event_id FROM desktop_sync_outbox ORDER BY event_id;")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            tersisa,
+            vec![
+                "ev-baru-terkirim".to_string(),
+                "ev-lama-dibersihkan".to_string(),
+                "ev-lama-menunggu".to_string(),
+            ],
+        );
+    }
+
+    /// Kunci `(domain, entity_key)` dipakai bersama oleh beberapa tabel.
+    ///
+    /// Delapan tabel payroll berbagi `domain: "payroll"` dengan
+    /// `entity_column: "id"`, sementara `PendingGuard`, cache `hashes`, dan
+    /// `desktop_entity_revision` semuanya berkunci `(domain, entity_key)` —
+    /// bukan `(tabel, entity_key)`. Hari ini aman karena id-nya berprefiks
+    /// berbeda (`sc-`, `ot-`, `tax-`, `bpjs-`, `PR-`, `audit-`), tetapi itu
+    /// konvensi penamaan yang tidak ditegakkan apa pun.
+    ///
+    /// Yang BISA ditegakkan secara struktural adalah kombinasi yang mengubah
+    /// tabrakan id dari "baris terlewat" menjadi "baris terhapus": dua tabel
+    /// se-domain yang salah satunya `delete_missing`. Pada kombinasi itu,
+    /// `came_from_server` — yang membaca cache ber-kunci domain — bisa menilai
+    /// baris milik tabel LAIN sebagai bukti bahwa baris ini pernah ada di
+    /// server, lalu menghapusnya.
+    ///
+    /// Tes ini juga mematok jumlah domain yang dipakai lebih dari satu tabel,
+    /// sehingga menambah satu lagi menuntut keputusan sadar, bukan kebetulan.
+    #[test]
+    fn domain_yang_dipakai_banyak_tabel_tidak_boleh_menghapus_baris() {
+        use std::collections::BTreeMap;
+
+        let mut per_domain: BTreeMap<&str, Vec<&SnapshotTable>> = BTreeMap::new();
+        for definition in SNAPSHOT_TABLES {
+            per_domain.entry(definition.domain).or_default().push(definition);
+        }
+
+        let bersama: Vec<_> = per_domain
+            .iter()
+            .filter(|(_, tabel)| tabel.len() > 1)
+            .collect();
+
+        for (domain, tabel) in &bersama {
+            let penghapus: Vec<&str> = tabel
+                .iter()
+                .filter(|definition| definition.delete_missing)
+                .map(|definition| definition.table)
+                .collect();
+            assert!(
+                penghapus.is_empty(),
+                "domain '{domain}' dipakai {} tabel sekaligus, dan {penghapus:?} memakai delete_missing. \
+                 Cache asal-usul baris berkunci (domain, entity_key), sehingga satu id yang sama di dua \
+                 tabel akan membuat baris tabel lain ikut terhapus.",
+                tabel.len()
+            );
+        }
+
+        assert_eq!(
+            bersama.len(),
+            1,
+            "hanya domain 'payroll' yang boleh dipakai lebih dari satu tabel; menambah yang kedua \
+             menuntut keputusan sadar karena seluruh kunci cache dan revisi berbasis domain. \
+             Domain bersama saat ini: {:?}",
+            bersama.iter().map(|(domain, _)| *domain).collect::<Vec<_>>()
+        );
+    }
+
+    /// Retensi foto lokal tidak boleh memusnahkan bukti yang belum terkirim.
+    ///
+    /// Foto yang event scan-nya masih menggantung di outbox hanya ada di
+    /// perangkat ini — cloud belum pernah melihatnya. Membuangnya berarti
+    /// memusnahkan satu-satunya salinan bukti kehadiran seseorang.
+    #[test]
+    fn retensi_foto_lokal_melindungi_bukti_yang_belum_terkirim() {
+        let (_directory, state) = fixture();
+        let connection = storage::database(&state.data_dir).expect("local database");
+        let lama = format!(
+            "-{} days",
+            super::super::scanner::SCAN_PHOTO_LOCAL_RETENTION_DAYS + 5
+        );
+        connection
+            .execute_batch(&format!(
+                r#"
+        INSERT INTO absensi_foto (id_foto, id_sesi, tanggal_kerja, id_karyawan, nama,
+          jenis_scan, timestamp_scan, foto_base64, created_at)
+        VALUES
+          ('f-terkirim', 'sesi-a', date('now','+7 hours','{lama}'), 'E1', 'Satu',
+           'masuk', '2026-01-01 07:00:00', 'xxx', '2026-01-01 07:00:00'),
+          ('f-menggantung', 'sesi-b', date('now','+7 hours','{lama}'), 'E2', 'Dua',
+           'masuk', '2026-01-01 07:00:00', 'yyy', '2026-01-01 07:00:00'),
+          ('f-baru', 'sesi-c', date('now','+7 hours'), 'E3', 'Tiga',
+           'masuk', '2026-01-01 07:00:00', 'zzz', '2026-01-01 07:00:00');
+
+        INSERT INTO desktop_sync_outbox (event_id, client_id, domain, operation, entity_key,
+          payload_json, status, attempt_count, created_at, updated_at)
+        VALUES ('ev-gantung', 'c', 'attendance', 'scan', 'scan:-1',
+          '{{"attendance":{{"id_sesi":"sesi-b"}}}}', 'pending', 0, 0, 0);
+        "#
+            ))
+            .expect("seed foto");
+
+        let dibuang =
+            super::super::scanner::purge_local_scan_photos(&connection).expect("purge foto");
+        assert_eq!(dibuang, 1, "hanya foto lama yang sudah terkirim yang dibuang");
+
+        let tersisa: Vec<String> = connection
+            .prepare("SELECT id_foto FROM absensi_foto ORDER BY id_foto;")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            tersisa,
+            vec!["f-baru".to_string(), "f-menggantung".to_string()],
+            "foto yang outbox-nya menggantung dan foto yang masih baru harus utuh"
+        );
+    }
+
     #[test]
     fn snapshot_requires_monotonic_revision_and_only_removes_server_tracked_shift() {
         let (_directory, state) = fixture();
@@ -3970,5 +4668,80 @@ mod tests {
             )
             .expect("failed count");
         assert_eq!(failed_count, 0);
+    }
+}
+
+#[cfg(test)]
+mod tests_identitas_klien {
+    use super::{ensure_client_id, storage, DesktopState};
+    use std::sync::{Mutex, RwLock};
+
+    fn fixture() -> (tempfile::TempDir, DesktopState) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        storage::initialize(dir.path()).expect("init db");
+        let state = DesktopState {
+            server_origin: RwLock::new("http://localhost:3000".to_string()),
+            offline_max_age_hours: 24,
+            data_dir: dir.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            turso_config: RwLock::new(None),
+            session: Mutex::new(None),
+            vault_lock: Mutex::new(()),
+        };
+        (dir, state)
+    }
+
+    /// Tanpa identitas yang sudah tersemai, panggilan DI DALAM transaksi tulis
+    /// gagal — dan ini yang menjatuhkan 35 operasi di perangkat baru.
+    ///
+    /// `ensure_client_id` membuka koneksi SQLite kedua dan menyisipkan barisnya
+    /// bila belum ada. Transaksi pemanggil sudah memegang kunci tulis, sehingga
+    /// penyisipan itu menunggu selama `busy_timeout` lalu menyerah. Tes ini
+    /// karena itu memang lambat beberapa detik; kelambatannya justru bagian
+    /// dari yang dibuktikan.
+    #[test]
+    fn tanpa_semai_gagal_di_dalam_transaksi_tulis() {
+        let (_dir, state) = fixture();
+        let mut connection = storage::database(&state.data_dir).expect("db");
+        let transaction = connection.transaction().expect("transaction");
+        transaction
+            .execute(
+                "INSERT INTO setting_gex_system (key, value) VALUES ('penanda', '1');",
+                [],
+            )
+            .expect("ambil kunci tulis");
+
+        assert!(
+            ensure_client_id(&state).is_err(),
+            "penyisipan identitas dari koneksi kedua tidak mungkin berhasil \
+             selagi transaksi pemanggil memegang kunci tulis"
+        );
+    }
+
+    /// Setelah disemai di luar transaksi, panggilan yang sama aman.
+    ///
+    /// Inilah yang dijamin `DesktopState::seed_client_identity`: barisnya sudah
+    /// ada, sehingga ke-35 pemanggilan di dalam transaksi hanya MEMBACA — dan
+    /// membaca dari koneksi kedua aman di WAL meski ada transaksi tulis
+    /// terbuka.
+    #[test]
+    fn setelah_disemai_aman_di_dalam_transaksi_tulis() {
+        let (_dir, state) = fixture();
+        let disemai = ensure_client_id(&state).expect("semai di luar transaksi");
+
+        let mut connection = storage::database(&state.data_dir).expect("db");
+        let transaction = connection.transaction().expect("transaction");
+        transaction
+            .execute(
+                "INSERT INTO setting_gex_system (key, value) VALUES ('penanda', '1');",
+                [],
+            )
+            .expect("ambil kunci tulis");
+
+        assert_eq!(
+            ensure_client_id(&state).expect("baca identitas"),
+            disemai,
+            "identitasnya harus sama, dan dibaca tanpa menulis apa pun"
+        );
     }
 }

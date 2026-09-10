@@ -703,6 +703,45 @@ struct SnapshotSource {
     sql: &'static str,
 }
 
+/// Batas jendela snapshot, dihitung SERVER dan dipakai apa adanya oleh klien.
+///
+/// WAJIB `+7 hours`: penentuan tanggal operasional memakai WIB, bukan UTC.
+/// Antara 00:00-07:00 WIB sebuah batas UTC menunjuk hari sebelumnya.
+///
+/// Nilainya dibaca sekali per pull lalu DIIKAT sebagai parameter ke setiap
+/// query berjendela DAN diumumkan ke klien. Satu sumber, satu nilai: kalau
+/// batas query dan batas yang diumumkan boleh berbeda, klien akan menghapus
+/// baris yang sebenarnya hanya berada di luar jendela query.
+const SNAPSHOT_WINDOW_SINCE_SQL: &str =
+    "SELECT date('now','+7 hours','-31 days') AS since;";
+
+/// Tabel snapshot yang ditarik dengan jendela waktu, beserta kolom tanggalnya.
+///
+/// Hanya tabel yang bertambah setiap hari operasional yang masuk sini. Tanpa
+/// jendela, satu pemindaian menaikkan `sync_pulse` `absensi_harian` sehingga
+/// SETIAP perangkat mengunduh ulang SELURUH riwayat absensi — setelah setahun
+/// ±300.000 baris, tiap siklus, di ponsel. Sinkronisasinya inkremental pada
+/// tingkat tabel tetapi dump penuh pada tingkat baris.
+///
+/// Kolomnya ikut diumumkan ke klien supaya `delete_missing` bisa dijalankan
+/// TERBATAS di dalam jendela: baris dalam jendela yang tidak ada di snapshot
+/// memang benar-benar sudah dihapus, sementara baris di luar jendela tidak
+/// boleh disimpulkan apa-apa.
+const SNAPSHOT_WINDOWS: &[(&str, &str)] = &[
+    // (nama tabel, kolom tanggal yang dibatasi)
+    ("absensi_harian", "tanggal"),
+    ("log_scan", "tanggal_kerja"),
+    ("koreksi_admin", "tanggal"),
+    ("import_offline", "timestamp_input"),
+];
+
+fn snapshot_window_column(table: &str) -> Option<&'static str> {
+    SNAPSHOT_WINDOWS
+        .iter()
+        .find(|(nama, _)| *nama == table)
+        .map(|(_, kolom)| *kolom)
+}
+
 const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
     SnapshotSource {
         payload_key: "employees",
@@ -747,22 +786,22 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
     SnapshotSource {
         payload_key: "corrections",
         table: "koreksi_admin",
-        sql: "SELECT * FROM koreksi_admin;",
+        sql: "SELECT * FROM koreksi_admin WHERE date(tanggal) >= ?;",
     },
     SnapshotSource {
         payload_key: "imports",
         table: "import_offline",
-        sql: "SELECT * FROM import_offline;",
+        sql: "SELECT * FROM import_offline WHERE date(timestamp_input) >= ?;",
     },
     SnapshotSource {
         payload_key: "attendance",
         table: "absensi_harian",
-        sql: "SELECT * FROM absensi_harian;",
+        sql: "SELECT * FROM absensi_harian WHERE date(tanggal) >= ?\n-- sengaja-utuh: sudah dibatasi jendela 31 hari lewat parameter di atas. LIMIT tetap DILARANG: memotong di tengah jendela membuat perangkat menarik sebagian lalu menganggapnya lengkap, dan kegagalan itu tidak meninggalkan jejak.\n;",
     },
     SnapshotSource {
         payload_key: "scanLogs",
         table: "log_scan",
-        sql: "SELECT * FROM log_scan ORDER BY timestamp_scan;",
+        sql: "SELECT * FROM log_scan WHERE date(tanggal_kerja) >= ? ORDER BY timestamp_scan\n-- sengaja-utuh: sudah dibatasi jendela 31 hari lewat parameter di atas. TIDAK memakai LIMIT seperti snapshot.ts: LIMIT memotong di tengah jendela, sehingga baris yang hilang tidak bisa dibedakan dari baris yang dihapus.\n;",
     },
     SnapshotSource {
         payload_key: "salaryConfigs",
@@ -797,7 +836,7 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
     SnapshotSource {
         payload_key: "payrollItems",
         table: "payroll_items",
-        sql: "SELECT * FROM payroll_items ORDER BY created_at;",
+        sql: "SELECT * FROM payroll_items ORDER BY created_at\n-- sengaja-utuh: slip gaji yang hilang dari snapshot akan dianggap belum pernah dibuat; tumbuh per periode gaji, bukan per hari.\n;",
     },
     SnapshotSource {
         payload_key: "payrollAuditLogs",
@@ -856,23 +895,22 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
     SnapshotSource {
         payload_key: "presensiMapel",
         table: "presensi_mapel",
-        sql: "SELECT * FROM presensi_mapel ORDER BY tanggal DESC, jam_ke ASC;",
+        sql: "SELECT * FROM presensi_mapel ORDER BY tanggal DESC, jam_ke ASC\n-- sengaja-utuh: header sesi presensi harus utuh; memotongnya membuat total_* pada header tidak punya pasangan detail di perangkat lain.\n;",
     },
     SnapshotSource {
         payload_key: "presensiMapelDetail",
         table: "presensi_mapel_detail",
-        sql: "SELECT * FROM presensi_mapel_detail ORDER BY id_presensi_mapel, id_siswa;",
+        sql: "SELECT * FROM presensi_mapel_detail ORDER BY id_presensi_mapel, id_siswa\n-- sengaja-utuh: tabel yang tumbuh PALING cepat di daftar ini (satu baris per siswa per jam pelajaran) dan tetap tanpa jendela waktu sama sekali; memotongnya menghasilkan rekonsiliasi palsu.\n;",
     },
     SnapshotSource {
         payload_key: "jurnalMengajar",
         table: "jurnal_mengajar",
-        sql: "SELECT * FROM jurnal_mengajar ORDER BY updated_at DESC;",
+        sql: "SELECT * FROM jurnal_mengajar ORDER BY updated_at DESC\n-- sengaja-utuh: jurnal yang hilang dari snapshot akan tampak belum pernah ditulis, dan guru akan menulisnya dua kali.\n;",
     },
     SnapshotSource {
         payload_key: "legerKehadiran",
         table: "leger_kehadiran",
-        sql:
-            "SELECT * FROM leger_kehadiran ORDER BY id_tahun_ajaran, semester, id_rombel, id_siswa;",
+        sql: "SELECT * FROM leger_kehadiran ORDER BY id_tahun_ajaran, semester, id_rombel, id_siswa\n-- sengaja-utuh: nilai resmi rapor yang sudah dibekukan; baris yang hilang akan dibekukan ulang dengan angka berbeda.\n;",
     },
 ];
 
@@ -1444,6 +1482,19 @@ impl TursoClient {
                     verified_at TEXT,
                     sent_at TEXT,
                     used_at TEXT,
+                    -- Siapa yang menyetujui permintaan ini, dan kapan.
+                    --
+                    -- `password_reset.approve` masuk SENSITIVE_MUTATION_PERMISSIONS
+                    -- karena menyetujui berarti menyerahkan kendali sebuah akun
+                    -- kepada orang yang sedang berdiri di depan layar. Jejaknya
+                    -- menempel pada permintaan yang disetujui, bukan di tabel lain:
+                    -- sebelumnya kedua penulis meng-INSERT ke `role_permission_audit`
+                    -- dengan empat kolom yang tidak pernah ada di sana, errornya
+                    -- dibuang diam-diam, dan catatan itu tidak pernah tertulis
+                    -- sekalipun. NULL berarti belum disetujui, atau baris lama dari
+                    -- sebelum kolom ini ada.
+                    approved_by INTEGER,
+                    approved_at TEXT,
                     expires_at TEXT NOT NULL,
                     request_ip_hash TEXT,
                     user_agent_hash TEXT,
@@ -2500,6 +2551,11 @@ impl TursoClient {
             ("sync_operation_receipt", "actor_operator_id", "ALTER TABLE sync_operation_receipt ADD COLUMN actor_operator_id INTEGER;"),
             ("sync_operation_receipt", "receipt_json", "ALTER TABLE sync_operation_receipt ADD COLUMN receipt_json TEXT NOT NULL DEFAULT '{}';"),
             ("sync_operation_receipt", "processed_at", "ALTER TABLE sync_operation_receipt ADD COLUMN processed_at TEXT;"),
+            // Jejak persetujuan "Lupa Password". Database yang sudah terlanjur
+            // dibuat sebelum kolom ini ada tetap disembuhkan oleh klien mana pun
+            // yang menyentuhnya, Web maupun Desktop/Mobile.
+            ("password_reset_request", "approved_by", "ALTER TABLE password_reset_request ADD COLUMN approved_by INTEGER;"),
+            ("password_reset_request", "approved_at", "ALTER TABLE password_reset_request ADD COLUMN approved_at TEXT;"),
             // Kolom berikut hanya dibuat jalur provisioning Rust, sehingga
             // database yang lahir dari jalur Web tidak memilikinya. Ditambahkan
             // di sini supaya klien mana pun bisa menyembuhkannya. Nullable:
@@ -2751,14 +2807,51 @@ impl TursoClient {
     /// route handler Web yang menulis langsung ke Turso, maupun perubahan manual.
     /// Client cukup membandingkan angka ini untuk tahu tabel mana yang basi.
     async fn ensure_sync_pulse(&self) -> Result<(), CommandError> {
-        let mut statements = vec![Statement::new(
-            r#"CREATE TABLE IF NOT EXISTS sync_pulse (
+        let mut statements = vec![
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS sync_pulse (
                     table_name TEXT PRIMARY KEY,
                     revision INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 );"#,
-            vec![],
-        )];
+                vec![],
+            ),
+            // Jejak baris yang DIHAPUS di cloud.
+            //
+            // Tanpa ini, penghapusan tidak pernah sampai ke perangkat lain untuk
+            // 25 dari 32 tabel snapshot: `apply_table` hanya menyimpulkan
+            // penghapusan dari KETIDAKHADIRAN baris di snapshot, dan itu hanya
+            // menyala pada tabel ber-`delete_missing`. Rombel, mapel, jurnal
+            // mengajar, detail presensi, dan leger yang dihapus admin tetap
+            // hidup selamanya di setiap perangkat lain.
+            //
+            // Digerakkan TRIGGER, sama seperti `sync_pulse`, dan itulah yang
+            // membuatnya benar: jalur Web menulis langsung ke database yang
+            // sama, sehingga penghapusan dari Web ikut tercatat tanpa satu baris
+            // kode pun di sisi Web. Sebuah changelog aplikasi tidak bisa begitu
+            // — `sync_changelog` hanya memuat event yang lewat push Rust, dan
+            // `sync_change_log` hanya yang lewat jalur Web.
+            //
+            // TIDAK dipangkas dengan sengaja. Barisnya kecil (tiga kolom) dan
+            // hanya lahir saat ada penghapusan, sementara memangkasnya
+            // menciptakan tebing: perangkat yang kursornya lebih tua daripada
+            // baris terlama akan melewatkan penghapusan tanpa cara apa pun
+            // untuk mengetahuinya. Tabel ini juga tidak pernah ikut snapshot,
+            // jadi ukurannya tidak menyentuh penyimpanan perangkat.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS sync_tombstone (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    table_name TEXT NOT NULL,
+                    entity_key TEXT NOT NULL,
+                    deleted_at TEXT NOT NULL
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                "CREATE INDEX IF NOT EXISTS idx_sync_tombstone_id ON sync_tombstone(id);",
+                vec![],
+            ),
+        ];
         for source in SNAPSHOT_SOURCES {
             let table = source.table;
             // Diseed pada revisi 1 supaya client yang sudah sinkron penuh punya
@@ -2780,6 +2873,26 @@ impl TursoClient {
                           ON CONFLICT(table_name) DO UPDATE SET
                             revision = revision + 1,
                             updated_at = datetime('now');
+                        END;"#
+                    ),
+                    vec![],
+                ));
+            }
+
+            // Trigger tombstone. Kolom identitasnya diambil dari
+            // `SNAPSHOT_TABLES` — satu-satunya tempat yang tahu — bukan dieja
+            // ulang di sini: kolom yang salah membuat tombstone menunjuk baris
+            // yang keliru, dan tidak ada yang akan menyadarinya.
+            if let Some(entity_column) =
+                sync::snapshot_table_by_name(table).map(sync::SnapshotTable::entity_column)
+            {
+                statements.push(Statement::new(
+                    format!(
+                        r#"CREATE TRIGGER IF NOT EXISTS trg_sync_tombstone_{table}
+                        AFTER DELETE ON {table}
+                        BEGIN
+                          INSERT INTO sync_tombstone (table_name, entity_key, deleted_at)
+                          VALUES ('{table}', CAST(OLD.{entity_column} AS TEXT), datetime('now'));
                         END;"#
                     ),
                     vec![],
@@ -3582,6 +3695,55 @@ impl TursoClient {
         Ok(Some(pulse))
     }
 
+    /// Baris yang dihapus di cloud sejak `cursor`, beserta kursor barunya.
+    ///
+    /// Mengembalikan daftar kosong dan kursor lama bila tabelnya belum ada —
+    /// database cloud yang belum pernah disentuh klien versi ini. Perangkat
+    /// akan mencobanya lagi siklus berikutnya, setelah `ensure_schema`
+    /// memasang tabel dan trigger-nya.
+    async fn fetch_tombstones(&self, cursor: i64) -> (Vec<Value>, i64) {
+        let Ok(result) = self
+            .query_one(
+                "SELECT id, table_name, entity_key FROM sync_tombstone WHERE id > ? ORDER BY id\n-- batas: hanya tombstone yang belum diterapkan perangkat ini, dan kursornya maju tiap siklus sehingga himpunan ini mengecil ke nol.\n;",
+                vec![json!(cursor)],
+            )
+            .await
+        else {
+            return (Vec::new(), cursor);
+        };
+        let mut tertinggi = cursor;
+        let mut rows = Vec::new();
+        for row in result.to_objects() {
+            let id = row
+                .get("id")
+                .and_then(|value| {
+                    value
+                        .as_i64()
+                        .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+                })
+                .unwrap_or(0);
+            // Kursor maju untuk SETIAP baris yang terbaca, termasuk yang
+            // dilewati. Kalau baris cacat tidak ikut memajukannya, kursor
+            // berhenti tepat sebelum baris itu dan perangkat membacanya ulang
+            // setiap siklus, selamanya — sekaligus tidak pernah sampai ke
+            // tombstone sesudahnya.
+            if id > tertinggi {
+                tertinggi = id;
+            }
+            let (Some(table), Some(entity_key)) = (
+                row.get("table_name").and_then(Value::as_str),
+                row.get("entity_key").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if table.is_empty() || entity_key.is_empty() {
+                continue;
+            }
+            rows.push(json!({ "table": table, "entityKey": entity_key }));
+        }
+        (rows, tertinggi)
+    }
+
     /// Menarik snapshot cloud. Bila `wanted` diisi, hanya tabel di dalamnya yang
     /// dibaca — kunci payload tabel lain sengaja tidak dimunculkan sama sekali
     /// agar `sync::apply_table` memperlakukannya sebagai "tidak dikirim" dan
@@ -3590,6 +3752,7 @@ impl TursoClient {
         &self,
         last_revision: i64,
         wanted: Option<&HashSet<String>>,
+        tombstone_cursor: i64,
     ) -> Result<Value, CommandError> {
         self.ensure_schema_current().await?;
         let sources: Vec<&SnapshotSource> = SNAPSHOT_SOURCES
@@ -3604,9 +3767,44 @@ impl TursoClient {
         let mut max_rev = last_revision;
 
         if !sources.is_empty() {
+            // Batas jendela dibaca SEKALI dari jam server, lalu dipakai untuk
+            // dua hal sekaligus: mengikat setiap query berjendela, dan
+            // diumumkan ke klien. Satu nilai, sehingga batas pengambilan dan
+            // batas penghapusan tidak mungkin berbeda.
+            let window_since = if sources
+                .iter()
+                .any(|source| snapshot_window_column(source.table).is_some())
+            {
+                self.query_one(SNAPSHOT_WINDOW_SINCE_SQL, vec![])
+                    .await?
+                    .to_objects()
+                    .into_iter()
+                    .next()
+                    .and_then(|row| row.get("since").and_then(Value::as_str).map(str::to_owned))
+            } else {
+                None
+            };
+
+            let mut windows = serde_json::Map::new();
             let mut statements: Vec<Statement> = sources
                 .iter()
-                .map(|source| Statement::new(source.sql, vec![]))
+                .map(|source| {
+                    match (snapshot_window_column(source.table), window_since.as_ref()) {
+                        (Some(column), Some(since)) => {
+                            windows.insert(
+                                source.payload_key.to_owned(),
+                                json!({ "column": column, "since": since }),
+                            );
+                            Statement::new(source.sql, vec![json!(since)])
+                        }
+                        // Tanpa batas yang terbaca, jendelanya tidak diumumkan
+                        // dan query-nya tidak bisa diikat: lebih baik gagal di
+                        // sini daripada mengirim query berparameter tanpa
+                        // parameternya.
+                        (Some(_), None) => Statement::new(source.sql, vec![json!(Value::Null)]),
+                        (None, _) => Statement::new(source.sql, vec![]),
+                    }
+                })
                 .collect();
             statements.push(Statement::new(
                 "SELECT COALESCE(MAX(id), 0) AS max_rev FROM sync_changelog;",
@@ -3635,7 +3833,25 @@ impl TursoClient {
                     res.to_objects().into_iter().map(|map| json!(map)).collect();
                 snapshot[source.payload_key] = json!(rows_json);
             }
+
+            // Diumumkan HANYA untuk tabel yang benar-benar ikut ditarik siklus
+            // ini. `sync::apply_table` memakainya untuk menjalankan
+            // `delete_missing` terbatas di dalam jendela.
+            if !windows.is_empty() {
+                snapshot["windows"] = Value::Object(windows);
+            }
         }
+
+        // Tombstone dibaca TERPISAH dan kegagalannya tidak mematikan pull.
+        // Database cloud lama belum punya tabelnya, dan sebuah pipeline yang
+        // salah satu statement-nya gagal akan menggagalkan seluruh tarikan —
+        // menukar "penghapusan belum menyebar" dengan "tidak ada data sama
+        // sekali yang menyebar". Pola yang sama dipakai `fetch_sync_pulse`.
+        let (tombstones, tombstone_cursor_baru) = self.fetch_tombstones(tombstone_cursor).await;
+        if !tombstones.is_empty() {
+            snapshot["tombstones"] = json!(tombstones);
+        }
+        snapshot["tombstoneCursor"] = json!(tombstone_cursor_baru);
 
         snapshot["revision"] = json!(max_rev);
         Ok(json!({ "snapshot": snapshot }))
@@ -3749,7 +3965,7 @@ impl TursoClient {
             let result = self
                 .query_one(
                     format!(
-                        "SELECT id_sesi, sumber, update_terakhir, COALESCE(jam_masuk, '') AS jam_masuk, COALESCE(jam_pulang, '') AS jam_pulang, COALESCE(status_kehadiran, '') AS status_kehadiran FROM absensi_harian WHERE id_sesi IN ({placeholders});"
+                        "SELECT id_sesi, sumber, update_terakhir, COALESCE(jam_masuk, '') AS jam_masuk, COALESCE(jam_pulang, '') AS jam_pulang, COALESCE(status_kehadiran, '') AS status_kehadiran FROM absensi_harian WHERE id_sesi IN ({placeholders})\n-- batas: satu baris per id_sesi dalam batch ini, dan push_events menolak batch di atas 50 event. Jumlah placeholder-nya karena itu tidak pernah melebihi 50.\n;"
                     ),
                     guarded_sessions.iter().map(|id| json!(id)).collect(),
                 )
@@ -9045,7 +9261,10 @@ impl TursoClient {
         }
         let result = self
             .query_one(
-                "DELETE FROM absensi_foto WHERE tanggal_kerja <= date('now', ?);",
+                // `tanggal_kerja` adalah tanggal operasional WIB, jadi batasnya
+                // wajib WIB juga. `date('now')` UTC memangkas satu hari lebih
+                // sedikit antara pukul 00:00-07:00 WIB.
+                "DELETE FROM absensi_foto WHERE tanggal_kerja <= date('now','+7 hours', ?);",
                 vec![json!(format!("-{days} days"))],
             )
             .await?;
@@ -9627,17 +9846,28 @@ impl TursoClient {
         }
 
         let reset_token = random_reset_token();
+        // `approved_by`/`approved_at` ikut di dalam UPDATE yang sama, bukan di
+        // pernyataan terpisah: persetujuan dan catatan siapa yang menyetujuinya
+        // harus lahir atau gagal bersama. Bentuk sebelumnya adalah INSERT
+        // terpisah ke `role_permission_audit` dengan empat kolom yang tidak
+        // pernah ada di tabel itu, dan errornya dibuang `.ok()` — sehingga
+        // catatan persetujuan tidak pernah tertulis satu kali pun.
         let update_sql = format!(
             r#"UPDATE password_reset_request
                SET token_hash = ?, status = 'Terkirim', delivery_status = 'Disetujui',
                    delivery_error = NULL, sent_at = datetime('now'),
+                   approved_by = ?, approved_at = datetime('now'),
                    expires_at = datetime('now', '+{RESET_TOKEN_TTL_MINUTES} minutes')
                WHERE id = ? AND status = 'Menunggu Verifikasi';"#
         );
         let applied = self
             .query_one(
                 update_sql,
-                vec![json!(sha256_hex(&reset_token)), json!(request_id)],
+                vec![
+                    json!(sha256_hex(&reset_token)),
+                    json!(actor_id),
+                    json!(request_id),
+                ],
             )
             .await?;
         if applied.rows_affected == 0 {
@@ -9646,13 +9876,6 @@ impl TursoClient {
                 "Permintaan ini sudah diproses oleh orang lain.",
             ));
         }
-
-        self.query_one(
-            "INSERT INTO role_permission_audit (actor_operator_id, action, detail, created_at) VALUES (?, 'password-reset-approve', ?, datetime('now'));",
-            vec![json!(actor_id), json!(request_id)],
-        )
-        .await
-        .ok();
 
         Ok(json!({
             "sukses": true,

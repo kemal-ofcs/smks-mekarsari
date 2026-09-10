@@ -80,12 +80,17 @@ export default function NotifikasiWaPage() {
         setConfig(configRes);
       }
     } catch (err) {
+      // Antreannya dibaca dari cloud (`notifikasi_wa` di luar SNAPSHOT_TABLES,
+      // sehingga tabel lokal perangkat yang bukan terminal selalu kosong), jadi
+      // kegagalan di sini nyaris selalu berarti koneksi. Menyebutkan sebabnya
+      // membedakan "jaringan putus" dari "antreannya memang sedikit" — kalimat
+      // yang sama sudah dipakai halaman Mobile.
       setFeedback({
         tone: "error",
         message:
           err instanceof Error
-            ? err.message
-            : "Gagal memuat antrean notifikasi WhatsApp.",
+            ? `${err.message} — antrean dibaca dari cloud, jadi tinjauan ini membutuhkan koneksi.`
+            : "Gagal memuat antrean notifikasi WhatsApp. Tinjauan antrean membutuhkan koneksi jaringan.",
       });
     } finally {
       setLoading(false);

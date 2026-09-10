@@ -954,8 +954,8 @@ pub async fn desktop_get_payroll_recap(
     // siapa pun — seluruh lembur selalu dihitung dengan tarif HARI_KERJA.
     let holiday_tiers = load_overtime_tiers(&conn, "HARI_LIBUR")?;
     let components = load_payroll_components(&conn)?;
-    let tax_rules = load_tax_rules(&conn)?;
-    let bpjs_rules = load_bpjs_rules(&conn)?;
+    let tax_rules = load_tax_rules(&conn, &period_end)?;
+    let bpjs_rules = load_bpjs_rules(&conn, &period_end)?;
 
     let mut stmt = conn
         .prepare(
@@ -1038,8 +1038,8 @@ pub async fn desktop_get_payroll_recap(
             let ot_index = PayrollCalculator::calculate_overtime_index(ot_hours, &overtime_tiers);
             let holiday_index =
                 PayrollCalculator::calculate_overtime_index(holiday_hours, &holiday_tiers);
-            let basic_salary = (reg_hours * rate_dec)
-                .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
+            let basic_salary =
+                PayrollCalculator::wage_from_minutes(agg.jam_kerja_menit, agg.rate_per_hour);
             let overtime_salary = ((ot_index + holiday_index) * rate_dec)
                 .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
 
@@ -1061,6 +1061,12 @@ pub async fn desktop_get_payroll_recap(
                 ptkp_status: agg.ptkp_status,
                 total_hadir: agg.total_hadir,
                 total_terlambat_menit: agg.total_terlambat,
+                // Menit mentah ikut dibawa supaya pembekuan bisa menurunkan
+                // jamnya dengan cara yang sama persis seperti di sini, alih-alih
+                // membaca ulang `f64` di bawah yang presisinya sudah hilang.
+                total_regular_minutes: agg.jam_kerja_menit,
+                total_overtime_minutes: agg.lembur_menit,
+                total_holiday_minutes: agg.libur_menit,
                 total_regular_hours: reg_hours.to_f64().unwrap_or(0.0),
                 total_overtime_hours: ot_hours.to_f64().unwrap_or(0.0),
                 total_overtime_index: ot_index.to_f64().unwrap_or(0.0),
@@ -1131,8 +1137,8 @@ pub async fn desktop_create_payroll_run(
     let overtime_tiers = load_overtime_tiers(&conn, "HARI_KERJA")?;
     let holiday_tiers = load_overtime_tiers(&conn, "HARI_LIBUR")?;
     let components = load_payroll_components(&conn)?;
-    let tax_rules = load_tax_rules(&conn)?;
-    let bpjs_rules = load_bpjs_rules(&conn)?;
+    let tax_rules = load_tax_rules(&conn, &period_end)?;
+    let bpjs_rules = load_bpjs_rules(&conn, &period_end)?;
 
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
@@ -1150,17 +1156,29 @@ pub async fn desktop_create_payroll_run(
 
     for row in &recap {
         let item_id = format!("{}-{}", run_id, row.id_karyawan);
-        let reg_hours = Decimal::from_f64_retain(row.total_regular_hours).unwrap_or(Decimal::ZERO);
-        let ot_hours = Decimal::from_f64_retain(row.total_overtime_hours).unwrap_or(Decimal::ZERO);
-        let holiday_hours =
-            Decimal::from_f64_retain(row.total_holiday_hours).unwrap_or(Decimal::ZERO);
+        // Jam diturunkan dari MENIT MENTAH, sama persis seperti di
+        // `desktop_get_payroll_recap`. Bentuk sebelumnya membaca ulang
+        // `total_regular_hours` yang bertipe `f64`, dan `from_f64_retain` tidak
+        // mengembalikan presisi yang sudah hilang saat pembagian: pratinjau
+        // menghitung 11/60 secara eksak sehingga 11 menit pada tarif
+        // 18.750/jam menjadi 3.437,5 tepat lalu dibulatkan ke 3.438, sementara
+        // pembekuan mendapat 3.437,4999… dan membekukan 3.437.
+        //
+        // Selisihnya satu rupiah per baris, tetapi ia mengalir ke gross,
+        // komponen, BPJS, PPh 21, dan net — dan yang lebih buruk, angka yang
+        // DISETUJUI admin bukan angka yang DIBAYARKAN.
+        // Jam reguler tidak lagi diturunkan di sini: upahnya dihitung langsung
+        // dari menit lewat `wage_from_minutes`. Jam lembur masih diperlukan
+        // karena jenjangnya memang dinyatakan dalam jam.
+        let ot_hours = Decimal::from(row.total_overtime_minutes) / Decimal::from(60);
+        let holiday_hours = Decimal::from(row.total_holiday_minutes) / Decimal::from(60);
         let rate_dec = Decimal::from(row.rate_per_hour);
 
         let ot_index = PayrollCalculator::calculate_overtime_index(ot_hours, &overtime_tiers);
         let holiday_index =
             PayrollCalculator::calculate_overtime_index(holiday_hours, &holiday_tiers);
-        let basic_salary = (reg_hours * rate_dec)
-            .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
+        let basic_salary =
+            PayrollCalculator::wage_from_minutes(row.total_regular_minutes, row.rate_per_hour);
         let overtime_salary = ((ot_index + holiday_index) * rate_dec)
             .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
 
@@ -1779,19 +1797,41 @@ fn load_payroll_components(conn: &Connection) -> Result<Vec<PayrollComponent>, C
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-fn load_tax_rules(conn: &Connection) -> Result<Vec<TaxRule>, CommandError> {
+/// Tarif yang BERLAKU pada akhir periode, bukan seluruh isi tabelnya.
+///
+/// `effective_date` sudah ada di skema sejak awal dan didokumentasikan sebagai
+/// kunci generasi tarif, tetapi tidak pernah dipakai menyaring: tabelnya dibaca
+/// utuh, lalu `calculate_pph21_ter` memakai `.find()` — bracket PERTAMA yang
+/// cocok. Begitu admin menambahkan tabel TER tahun depan, periode berjalan
+/// memakai bracket yang urutannya tidak ditentukan siapa pun, karena dua baris
+/// dengan `bracket_min` sama diurutkan sembarang oleh SQLite.
+///
+/// Bahkan tanpa generasi ganda ini tetap perlu: tarif yang `effective_date`-nya
+/// masih di MASA DEPAN pun ikut terpakai pada periode hari ini.
+///
+/// Polanya disalin dari `salary_configs` di query rekap — generasi terbaru yang
+/// sudah berlaku, per kategori. `COALESCE` ke generasi terawal menjaga periode
+/// yang lebih tua daripada seluruh tarif tetap punya tarif, alih-alih diam-diam
+/// menghasilkan potongan nol.
+fn load_tax_rules(conn: &Connection, period_end: &str) -> Result<Vec<TaxRule>, CommandError> {
     let mut stmt = conn
         .prepare(
             r#"
             SELECT id, category, bracket_min, bracket_max, rate_percentage, effective_date
             FROM tax_rules
+            WHERE effective_date = COALESCE(
+                (SELECT MAX(t2.effective_date) FROM tax_rules t2
+                  WHERE t2.category = tax_rules.category AND t2.effective_date <= ?1),
+                (SELECT MIN(t3.effective_date) FROM tax_rules t3
+                  WHERE t3.category = tax_rules.category)
+            )
             ORDER BY category, bracket_min ASC;
             "#,
         )
         .map_err(|_| CommandError::internal())?;
 
     let rows = stmt
-        .query_map([], |row| {
+        .query_map([period_end], |row| {
             Ok(TaxRule {
                 id: row.get(0)?,
                 category: row.get(1)?,
@@ -1806,19 +1846,31 @@ fn load_tax_rules(conn: &Connection) -> Result<Vec<TaxRule>, CommandError> {
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-fn load_bpjs_rules(conn: &Connection) -> Result<Vec<BpjsRule>, CommandError> {
+/// Iuran BPJS yang BERLAKU pada akhir periode.
+///
+/// Alasannya sama dengan `load_tax_rules`. `component_code` memang UNIQUE
+/// sehingga generasi historis belum mungkin ada hari ini — tetapi tanpa
+/// penyaring ini, tarif yang `effective_date`-nya masih di masa depan tetap
+/// dipakai pada periode berjalan, dan itu sudah cukup untuk salah potong.
+fn load_bpjs_rules(conn: &Connection, period_end: &str) -> Result<Vec<BpjsRule>, CommandError> {
     let mut stmt = conn
         .prepare(
             r#"
             SELECT id, component_code, component_name, rate_percentage, wage_cap, effective_date
             FROM bpjs_rules
+            WHERE effective_date = COALESCE(
+                (SELECT MAX(b2.effective_date) FROM bpjs_rules b2
+                  WHERE b2.component_code = bpjs_rules.component_code AND b2.effective_date <= ?1),
+                (SELECT MIN(b3.effective_date) FROM bpjs_rules b3
+                  WHERE b3.component_code = bpjs_rules.component_code)
+            )
             ORDER BY component_code ASC;
             "#,
         )
         .map_err(|_| CommandError::internal())?;
 
     let rows = stmt
-        .query_map([], |row| {
+        .query_map([period_end], |row| {
             Ok(BpjsRule {
                 id: row.get(0)?,
                 component_code: row.get(1)?,

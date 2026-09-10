@@ -699,6 +699,37 @@ html.light .text-amber-300 {
   color: #b45309 !important;
 }
 
+/* Varian BEROPASITAS dari kelas teks amber di atas.
+ *
+ * `text-amber-200/90` adalah kelas Tailwind yang berbeda dari `text-amber-200`
+ * — selektor `.text-amber-200` tidak menangkapnya sama sekali. Tanpa blok ini,
+ * varian itu mempertahankan warna mode gelapnya: kuning muda di atas latar
+ * `#fef3c7`, dan teksnya praktis hilang.
+ *
+ * Aturan `color: inherit` di atas TIDAK menyelamatkannya untuk semua kontainer:
+ * ia hanya berlaku bagi turunan `.bg-amber-950` dan `.bg-amber-950/80`, bukan
+ * `/50` — dan justru `/50` yang dipakai banner "Database cloud tidak dapat
+ * dihubungi" di halaman login.
+ *
+ * Setiap varian dipetakan ke warna yang SAMA dengan kelas dasarnya (200 ke
+ * #92400e, 300 dan 400 ke #b45309), bukan ke warna baru, supaya hierarki
+ * teksnya tetap mengikuti keputusan yang sudah diambil untuk mode terang.
+ * Kelas beropasitas baru yang dipakai di JSX wajib ditambahkan ke sini. */
+html[data-theme="light"] .text-amber-200\/70,
+html[data-theme="light"] .text-amber-200\/80,
+html[data-theme="light"] .text-amber-200\/90,
+html.light .text-amber-200\/70,
+html.light .text-amber-200\/80,
+html.light .text-amber-200\/90 {
+  color: #92400e !important;
+}
+html[data-theme="light"] .text-amber-300\/90,
+html[data-theme="light"] .text-amber-400\/80,
+html.light .text-amber-300\/90,
+html.light .text-amber-400\/80 {
+  color: #b45309 !important;
+}
+
 /* VIOLET / PURPLE TONE (Operator, Superadmin, RBAC) */
 html[data-theme="light"] .bg-violet-950,
 html[data-theme="light"] .bg-violet-950\/80,

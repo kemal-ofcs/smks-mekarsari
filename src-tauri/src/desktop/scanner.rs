@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, UdpSocket};
 
-use rusqlite::{params, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -105,6 +105,54 @@ pub const IP_ALLOWLIST_SETTING_KEY: &str = "scan_ip_allowlist";
 /// Angka yang sama dipakai validator Zod `sync-schema.ts`. Foto yang lolos di
 /// perangkat tetapi ditolak di batas sync akan macet selamanya di outbox.
 pub const MAX_SCAN_PHOTO_BASE64: usize = 2_000_000;
+
+/// Berapa lama SALINAN LOKAL foto absensi disimpan setelah diterima cloud.
+///
+/// Foto lokal adalah tempat singgah, bukan arsip: `/foto-absensi` sengaja
+/// membacanya dari cloud supaya peninjau melihat bukti dari SEMUA terminal,
+/// sehingga setelah terkirim baris lokalnya tidak punya satu pun pembaca.
+/// Sebelum ada retensi ini ia juga tidak punya satu pun pemangkas otomatis —
+/// pada 800 siswa (~1.600 scan/hari, ~40 KB per foto) itu ±64 MB per hari dan
+/// ±1,9 GB per bulan, di perangkat paling lemah yang memakai aplikasi ini.
+///
+/// Tujuh hari, bukan satu, semata untuk menyisakan ruang penelusuran masalah;
+/// yang menjaga bukti bukan angka ini melainkan syarat "sudah diterima cloud"
+/// di `purge_local_scan_photos`.
+pub const SCAN_PHOTO_LOCAL_RETENTION_DAYS: i64 = 7;
+
+/// Buang salinan lokal foto absensi yang sudah tuntas dan lewat masa retensi.
+///
+/// Baris yang event `attendance/scan`-nya MASIH menggantung di outbox tidak
+/// pernah ikut terbuang — fotonya belum ada di mana pun selain perangkat ini,
+/// dan membuangnya berarti memusnahkan satu-satunya salinan bukti. Pencocokan
+/// sesinya meniru `PendingGuard` di `sync.rs`, yang membaca `id_sesi` dari
+/// dalam payload karena `entity_key` outbox absensi berbentuk `scan:<id_log>`.
+///
+/// Batas tanggal memakai `+7 hours`: `tanggal_kerja` adalah tanggal operasional
+/// WIB, dan batas UTC memangkas sehari lebih sedikit antara 00:00-07:00 WIB.
+pub fn purge_local_scan_photos(connection: &Connection) -> Result<usize, CommandError> {
+    let batas = format!("-{SCAN_PHOTO_LOCAL_RETENTION_DAYS} days");
+    connection
+        .execute(
+            r#"
+      DELETE FROM absensi_foto
+      WHERE tanggal_kerja < date('now','+7 hours', ?1)
+        AND NOT EXISTS (
+              SELECT 1 FROM desktop_sync_outbox o
+              WHERE o.domain = 'attendance'
+                AND o.status IN ('pending', 'failed', 'conflict')
+                AND json_extract(o.payload_json, '$.attendance.id_sesi') = absensi_foto.id_sesi
+        );
+      "#,
+            params![batas],
+        )
+        .map_err(|_| {
+            CommandError::new(
+                "SCAN_PHOTO_PURGE_FAILED",
+                "Salinan lokal foto absensi tidak dapat dipangkas.",
+            )
+        })
+}
 
 /// Sakelar keamanan absensi milik role operator yang sedang memegang sesi.
 ///

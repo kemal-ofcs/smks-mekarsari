@@ -499,15 +499,22 @@ export async function approvePasswordReset(
   }
 
   const resetToken = createOpaqueSessionToken();
+  // `approved_by`/`approved_at` ikut di dalam UPDATE yang sama, bukan di
+  // pernyataan terpisah: persetujuan dan catatan siapa yang menyetujuinya harus
+  // lahir atau gagal bersama. Bentuk sebelumnya adalah INSERT terpisah ke
+  // role_permission_audit dengan empat kolom yang tidak pernah ada di tabel itu,
+  // dan errornya dibuang `.catch(() => undefined)` — sehingga catatan
+  // persetujuan sebuah aksi SENSITIVE_MUTATION tidak pernah tertulis sekalipun.
   const applied = await client.execute({
     sql: `
       UPDATE password_reset_request
       SET token_hash = ?, status = 'Terkirim', delivery_status = 'Disetujui',
           delivery_error = NULL, sent_at = ${NOW_SQL},
+          approved_by = ?, approved_at = ${NOW_SQL},
           expires_at = ${expirySql(RESET_TOKEN_TTL_MINUTES)}
       WHERE id = ? AND status = 'Menunggu Verifikasi';
     `,
-    args: [await hashSessionToken(resetToken), requestId.trim()],
+    args: [await hashSessionToken(resetToken), actorId, requestId.trim()],
   });
   if (Number(applied.rowsAffected ?? 0) === 0) {
     throw new PasswordResetError(
@@ -515,13 +522,6 @@ export async function approvePasswordReset(
       409,
     );
   }
-
-  await client
-    .execute({
-      sql: `INSERT INTO role_permission_audit (actor_operator_id, action, detail, created_at) VALUES (?, 'password-reset-approve', ?, ${NOW_SQL});`,
-      args: [actorId, requestId.trim()],
-    })
-    .catch(() => undefined);
 
   return {
     token: resetToken,

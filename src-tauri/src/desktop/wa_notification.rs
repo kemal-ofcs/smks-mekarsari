@@ -369,6 +369,16 @@ pub fn cancel_wa_notification(
     Ok(json!({ "sukses": true }))
 }
 
+/// Antrean WhatsApp dari SQLite lokal.
+///
+/// `only_unsynced` membatasi hasilnya pada baris yang event outbox-nya masih
+/// menggantung — yaitu baris yang BELUM ada di cloud. Mode itu dipakai
+/// `desktop_list_wa_notifications`, yang membaca cloud sebagai sumber utama
+/// lalu menambahkan baris-baris ini di atasnya, supaya terminal pemindai yang
+/// sedang offline tetap melihat antrean buatannya sendiri.
+///
+/// Tanpa penyaring itu, penggabungannya akan menghidupkan kembali baris yang
+/// sudah dipangkas retensi di cloud.
 pub fn list_wa_notifications(
     state: &DesktopState,
     status_filter: Option<&str>,
@@ -376,6 +386,7 @@ pub fn list_wa_notifications(
     id_siswa_filter: Option<&str>,
     tanggal_filter: Option<&str>,
     limit: Option<i64>,
+    only_unsynced: bool,
 ) -> Result<Value, CommandError> {
     let conn = storage::database(&state.data_dir)?;
     let mut query = String::from(
@@ -410,6 +421,17 @@ pub fn list_wa_notifications(
     if let Some(tanggal) = tanggal_filter.filter(|t| !t.trim().is_empty()) {
         query.push_str(" AND n.created_at LIKE ?");
         param_values.push(format!("{}%", tanggal.trim()));
+    }
+
+    if only_unsynced {
+        query.push_str(
+            r#" AND EXISTS (
+                SELECT 1 FROM desktop_sync_outbox o
+                WHERE o.domain = 'wa-notification'
+                  AND o.entity_key = n.id_notifikasi
+                  AND o.status IN ('pending', 'failed', 'conflict')
+            )"#,
+        );
     }
 
     query.push_str(" ORDER BY n.created_at DESC");
@@ -658,7 +680,7 @@ mod tests {
         let id = res["id_notifikasi"].as_str().expect("id string");
         assert!(id.starts_with("wa_"));
 
-        let list = list_wa_notifications(&state, None, None, None, None, None)
+        let list = list_wa_notifications(&state, None, None, None, None, None, false)
             .expect("list notifications");
         let items = list["items"].as_array().expect("array");
         assert_eq!(items.len(), 1);
@@ -669,7 +691,7 @@ mod tests {
             .expect("cancel notification");
         assert_eq!(cancel_res["sukses"], true);
 
-        let list_after = list_wa_notifications(&state, None, None, None, None, None)
+        let list_after = list_wa_notifications(&state, None, None, None, None, None, false)
             .expect("list notifications");
         let items_after = list_after["items"].as_array().expect("array");
         assert_eq!(items_after[0]["status"], "Dibatalkan");

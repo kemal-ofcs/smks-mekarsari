@@ -1446,16 +1446,37 @@ pub async fn desktop_purge_attendance_photos(
     older_than_days: i64,
 ) -> Result<Value, CommandError> {
     require_permission(&state, "attendance_photo.delete")?;
-    let result = state
-        .get_turso_client()?
-        .purge_attendance_photos(older_than_days)
-        .await?;
+
+    // Penghapusan LOKAL dijalankan lebih dulu, dan kegagalan cloud tidak
+    // membatalkannya. Bentuk sebelumnya menaruh `get_turso_client()?` dan
+    // `.await?` di depan, sehingga tanpa jaringan command berhenti sebelum
+    // menyentuh SQLite — ruang lokal tidak pernah bisa direbut kembali, justru
+    // di terminal pemindai yang paling mungkin kehabisan ruang DAN paling
+    // mungkin sedang offline.
+    //
+    // `date('now','+7 hours')`: `tanggal_kerja` adalah tanggal operasional WIB.
+    // Batas UTC menunjuk sehari lebih awal antara pukul 00:00-07:00 WIB.
     let connection = storage::database(&state.data_dir)?;
-    let _ = connection.execute(
-        "DELETE FROM absensi_foto WHERE tanggal_kerja < date('now', ?);",
-        rusqlite::params![format!("-{} day", older_than_days.max(0))],
-    );
-    Ok(result)
+    let dihapus_lokal = connection
+        .execute(
+            "DELETE FROM absensi_foto WHERE tanggal_kerja < date('now','+7 hours', ?);",
+            rusqlite::params![format!("-{} day", older_than_days.max(0))],
+        )
+        .unwrap_or(0);
+
+    match state.get_turso_client() {
+        Ok(turso) => {
+            let result = turso.purge_attendance_photos(older_than_days).await?;
+            Ok(result)
+        }
+        // Belum ada database cloud yang terkonfigurasi. Yang lokal sudah
+        // terpangkas, dan itu yang dilaporkan — bukan kegagalan.
+        Err(_) => Ok(json!({
+            "sukses": true,
+            "deleted": dihapus_lokal,
+            "hanyaLokal": true,
+        })),
+    }
 }
 
 /// Pengaturan keamanan absensi: sakelar induk fitur + daftar IP.
@@ -2001,12 +2022,55 @@ pub async fn desktop_save_alfa_settings(
     Ok(res)
 }
 
+
+/// Bolehkah waktu simulasi ini dipakai?
+///
+/// Dipisahkan menjadi fungsi murni supaya cabang RILIS-nya benar-benar bisa
+/// diuji: tes berjalan pada build debug, sehingga `cfg!(debug_assertions)` di
+/// tempat pemakaian tidak akan pernah menunjukkan perilaku rilis kepada satu
+/// tes pun. Pola yang sama dipakai `parse_offline_hours_value` di `config.rs`.
+fn resolve_simulated_time(
+    simulated_time: Option<String>,
+    debug_build: bool,
+) -> Result<Option<String>, CommandError> {
+    let diminta = simulated_time.filter(|t| !t.trim().is_empty());
+    match (diminta, debug_build) {
+        (Some(_), false) => Err(CommandError::new(
+            "ALFA_SIMULATED_TIME_FORBIDDEN",
+            "Waktu simulasi hanya tersedia pada build pengembangan.",
+        )),
+        (nilai, _) => Ok(nilai),
+    }
+}
+
 #[tauri::command]
 pub fn desktop_trigger_generate_alfa(
     state: State<'_, DesktopState>,
     simulated_time: Option<String>,
 ) -> Result<Value, CommandError> {
     require_permission(&state, "alfa.trigger")?;
+
+    // Waktu simulasi hanya untuk pengujian, dan pada build rilis ia DITOLAK.
+    //
+    // `generate_alfa_harian` memakai nilai ini menggantikan jam database
+    // sepenuhnya, sehingga seluruh gerbang di dalamnya ikut bergeser: hari
+    // kerja yang dinilai, pemeriksaan hari libur, dan cutoff `alfa_generation_minute`.
+    // Dengan waktu pilihan sendiri, pemanggil bisa membuat baris `absensi_harian`
+    // untuk tanggal lampau MAUPUN tanggal yang belum terjadi — bertanda
+    // `sumber = 'Generate Sistem'` sehingga tidak bisa dibedakan dari hasil
+    // otomatis yang sah, lalu ikut terdorong ke cloud lewat outbox. Alfa berarti
+    // nol jam kerja, dan nol jam kerja mengalir ke payroll.
+    //
+    // Kedua pemanggil nyata — halaman Pengaturan dan `AutoAlfaRunner` —
+    // memanggilnya TANPA argumen. Ini bukan fitur yang dipakai, melainkan
+    // permukaan yang kebetulan terbuka.
+    //
+    // Izinnya sendiri sengaja TIDAK dipindahkan ke `SENSITIVE_MUTATION_PERMISSIONS`:
+    // itu akan mencabut `alfa.trigger` dari paket bawaan Admin, sehingga
+    // `AutoAlfaRunner` berhenti bekerja bagi mereka — dan kegagalannya hanya
+    // muncul sebagai `console.warn`, bukan di layar. Yang berbahaya bukan
+    // aksinya, melainkan waktunya yang bisa dipilih.
+    let simulated_time = resolve_simulated_time(simulated_time, cfg!(debug_assertions))?;
     operational::generate_alfa_harian(&state, simulated_time)
 }
 
@@ -2723,9 +2787,44 @@ pub fn desktop_cancel_wa_notification(
     wa_notification::cancel_wa_notification(&state, &id_notifikasi, alasan.as_deref())
 }
 
-/// Menampilkan daftar antrean notifikasi WhatsApp lokal dengan filter.
+/// Satukan antrean lokal yang belum terkirim dengan antrean cloud.
+///
+/// Baris lokal ditaruh lebih dulu — ia yang paling baru menurut konstruksinya,
+/// karena satu-satunya alasan ia belum ada di cloud adalah belum sempat
+/// terkirim. Duplikat dibuang berdasarkan `id_notifikasi`: sebuah baris bisa
+/// muncul di keduanya bila push-nya berhasil tepat di antara dua bacaan, dan
+/// menampilkannya dua kali akan terbaca sebagai dua pesan ke nomor wali yang
+/// sama.
+fn gabung_antrean_wa(lokal: &Value, cloud: &Value) -> Value {
+    let ambil = |sumber: &Value| -> Vec<Value> {
+        sumber
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let mut terlihat = std::collections::HashSet::new();
+    let mut gabungan = Vec::new();
+    for baris in ambil(lokal).into_iter().chain(ambil(cloud)) {
+        let kunci = baris
+            .get("id_notifikasi")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        // Baris tanpa id tidak bisa dibedakan dari baris lain, jadi ia selalu
+        // ikut apa adanya alih-alih saling menelan lewat kunci kosong.
+        if !kunci.is_empty() && !terlihat.insert(kunci) {
+            continue;
+        }
+        gabungan.push(baris);
+    }
+    json!({ "items": gabungan })
+}
+
+/// Antrean notifikasi WhatsApp: cloud sebagai sumber utama, ditambah baris
+/// lokal yang belum sempat terkirim.
 #[tauri::command]
-pub fn desktop_list_wa_notifications(
+pub async fn desktop_list_wa_notifications(
     state: State<'_, DesktopState>,
     status: Option<String>,
     jenis: Option<String>,
@@ -2734,14 +2833,64 @@ pub fn desktop_list_wa_notifications(
     limit: Option<i64>,
 ) -> Result<Value, CommandError> {
     require_permission(&state, "notification.view")?;
-    wa_notification::list_wa_notifications(
+
+    // Cloud adalah sumber utama, lalu baris lokal yang BELUM terkirim
+    // ditambahkan di atasnya.
+    //
+    // Bentuk sebelumnya membaca SQLite lokal saja. Itu benar untuk terminal
+    // pemindai yang ingin melihat antrean buatannya sendiri, tetapi
+    // `notifikasi_wa` berada di luar `SNAPSHOT_TABLES`: barisnya didorong ke
+    // cloud dan TIDAK pernah ditarik kembali. Desktop yang bukan terminal —
+    // yaitu mesin admin, tempat halaman ini sebenarnya dibuka — karena itu
+    // selalu melihat tabel kosong, sementara Web menampilkan antrean penuh
+    // untuk organisasi yang sama. Halaman yang tampak sehat sambil berbohong
+    // lebih buruk daripada halaman yang berkata tidak tersedia.
+    //
+    // Membaca cloud SAJA — seperti `mobile_list_wa_notifications` — tidak cukup
+    // di sini, karena Desktop juga MENGANTRE. Baris yang baru dibuat terminal
+    // offline akan lenyap dari layar mesin yang membuatnya, justru pada saat
+    // outbox-nya macet dan orang paling perlu melihatnya. Karena itu keduanya
+    // digabung, dan penggabungannya dibatasi pada baris yang event outbox-nya
+    // masih menggantung supaya tidak ada baris cloud yang terhidup kembali.
+    let lokal_belum_terkirim = wa_notification::list_wa_notifications(
         &state,
         status.as_deref(),
         jenis.as_deref(),
         id_siswa.as_deref(),
         tanggal.as_deref(),
         limit,
-    )
+        true,
+    )?;
+
+    let turso = match state.get_turso_client() {
+        Ok(turso) => turso,
+        // Belum ada database cloud yang terkonfigurasi: yang lokal adalah
+        // satu-satunya yang ada, dan dikembalikan utuh (bukan hanya yang
+        // belum terkirim).
+        Err(_) => {
+            return wa_notification::list_wa_notifications(
+                &state,
+                status.as_deref(),
+                jenis.as_deref(),
+                id_siswa.as_deref(),
+                tanggal.as_deref(),
+                limit,
+                false,
+            );
+        }
+    };
+
+    let cloud = turso
+        .list_wa_notifications_cloud(
+            status.as_deref(),
+            jenis.as_deref(),
+            id_siswa.as_deref(),
+            tanggal.as_deref(),
+            limit,
+        )
+        .await?;
+
+    Ok(gabung_antrean_wa(&lokal_belum_terkirim, &cloud))
 }
 
 /// Membaca konfigurasi gateway WhatsApp (Cloud-Only via Turso).
@@ -2993,5 +3142,111 @@ mod tests_offline_login {
         for online_code in ["TOTP_REQUIRED", "TOTP_INVALID", "TOTP_ENROLLMENT_REQUIRED"] {
             assert_ne!(error.code, online_code);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_alfa_simulated_time {
+    use super::resolve_simulated_time;
+
+    /// Pada build RILIS, waktu simulasi ditolak — bukan diabaikan diam-diam.
+    ///
+    /// `generate_alfa_harian` memakainya menggantikan jam database sepenuhnya,
+    /// sehingga pemanggil bisa membuat baris Alfa untuk tanggal lampau maupun
+    /// tanggal yang belum terjadi, bertanda `Generate Sistem` sehingga tidak
+    /// bisa dibedakan dari hasil otomatis yang sah.
+    #[test]
+    fn rilis_menolak_waktu_simulasi() {
+        let hasil = resolve_simulated_time(Some("2020-01-01 23:59:00".into()), false);
+        assert!(hasil.is_err(), "build rilis wajib menolak waktu simulasi");
+        assert_eq!(
+            hasil.unwrap_err().code,
+            "ALFA_SIMULATED_TIME_FORBIDDEN",
+            "penolakannya harus punya kode sendiri supaya terbaca pemanggil"
+        );
+    }
+
+    /// Pemanggil nyata — halaman Pengaturan dan `AutoAlfaRunner` — tidak pernah
+    /// mengirim apa pun. Jalur itu WAJIB tetap bekerja di rilis.
+    #[test]
+    fn rilis_menerima_pemanggilan_tanpa_waktu() {
+        assert_eq!(resolve_simulated_time(None, false).unwrap(), None);
+        // String kosong diperlakukan sama dengan tidak dikirim: sebagian klien
+        // mengirim field kosong alih-alih menghilangkannya, dan menolaknya akan
+        // mematikan Generate Alfa otomatis pada klien tersebut.
+        assert_eq!(
+            resolve_simulated_time(Some("   ".into()), false).unwrap(),
+            None
+        );
+    }
+
+    /// Pada build pengembangan ia tetap tersedia, apa adanya.
+    #[test]
+    fn debug_meneruskan_waktu_simulasi() {
+        assert_eq!(
+            resolve_simulated_time(Some("2026-03-01 20:00:00".into()), true).unwrap(),
+            Some("2026-03-01 20:00:00".to_string())
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_gabung_antrean_wa {
+    use super::gabung_antrean_wa;
+    use serde_json::json;
+
+    fn baris(id: &str, status: &str) -> serde_json::Value {
+        json!({ "id_notifikasi": id, "status": status })
+    }
+
+    /// Baris lokal yang belum terkirim muncul, dan tidak menggandakan cloud.
+    ///
+    /// Sebuah baris bisa hadir di keduanya bila push-nya berhasil tepat di
+    /// antara dua bacaan. Menampilkannya dua kali akan terbaca sebagai dua
+    /// pesan ke nomor wali yang sama.
+    #[test]
+    fn menggabung_tanpa_menggandakan() {
+        let lokal = json!({ "items": [baris("n-lokal", "Menunggu"), baris("n-dobel", "Menunggu")] });
+        let cloud = json!({ "items": [baris("n-dobel", "Terkirim"), baris("n-cloud", "Terkirim")] });
+
+        let hasil = gabung_antrean_wa(&lokal, &cloud);
+        let ids: Vec<&str> = hasil["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|b| b["id_notifikasi"].as_str().unwrap_or_default())
+            .collect();
+
+        assert_eq!(ids, vec!["n-lokal", "n-dobel", "n-cloud"]);
+        // Yang menang adalah versi LOKAL, karena ia yang belum terkirim dan
+        // karenanya menggambarkan keadaan perangkat ini apa adanya.
+        assert_eq!(hasil["items"][1]["status"], "Menunggu");
+    }
+
+    /// Cloud kosong tidak boleh menelan antrean lokal, dan sebaliknya.
+    #[test]
+    fn salah_satu_kosong_tetap_utuh() {
+        let isi = json!({ "items": [baris("n-1", "Menunggu")] });
+        let kosong = json!({ "items": [] });
+
+        assert_eq!(
+            gabung_antrean_wa(&isi, &kosong)["items"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            gabung_antrean_wa(&kosong, &isi)["items"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        // Bentuk yang tidak dikenali diperlakukan sebagai kosong, bukan panik.
+        assert_eq!(
+            gabung_antrean_wa(&json!({}), &json!(null))["items"]
+                .as_array()
+                .map(Vec::len),
+            Some(0)
+        );
     }
 }

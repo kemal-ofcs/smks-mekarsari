@@ -222,6 +222,13 @@ export async function runDatabaseMigrations(client: Client) {
       verified_at TEXT,
       sent_at TEXT,
       used_at TEXT,
+      -- Siapa yang menyetujui permintaan ini, dan kapan. Jejaknya menempel pada
+      -- permintaan yang disetujui, bukan di tabel lain: sebelumnya kedua penulis
+      -- meng-INSERT ke role_permission_audit dengan empat kolom yang tidak pernah
+      -- ada di sana, errornya dibuang diam-diam, dan catatan persetujuan sebuah
+      -- aksi SENSITIVE_MUTATION tidak pernah tertulis sekalipun.
+      approved_by INTEGER,
+      approved_at TEXT,
       expires_at TEXT NOT NULL,
       request_ip_hash TEXT,
       user_agent_hash TEXT,
@@ -345,6 +352,19 @@ export async function runDatabaseMigrations(client: Client) {
       "master_operator",
       "no_hp",
       "ALTER TABLE master_operator ADD COLUMN no_hp TEXT;",
+    ],
+    // Jejak persetujuan "Lupa Password". Cerminan `ensure_column` di `turso.rs`,
+    // sehingga database yang lahir dari jalur mana pun disembuhkan oleh klien
+    // mana pun yang menyentuhnya.
+    [
+      "password_reset_request",
+      "approved_by",
+      "ALTER TABLE password_reset_request ADD COLUMN approved_by INTEGER;",
+    ],
+    [
+      "password_reset_request",
+      "approved_at",
+      "ALTER TABLE password_reset_request ADD COLUMN approved_at TEXT;",
     ],
     // Verifikasi dua langkah. `totp_enabled` sengaja tanpa CHECK: SQLite
     // membatasi bentuk constraint pada ALTER TABLE ADD COLUMN, dan menaruh CHECK
