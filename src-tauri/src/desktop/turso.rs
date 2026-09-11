@@ -125,6 +125,30 @@ pub fn is_private_network_host(host: &str) -> bool {
 /// tidak ada kemungkinan permintaan nyasar ke host milik orang lain.
 pub const LOCAL_FILE_ORIGIN: &str = "https://local-file.sppg.invalid";
 
+/// v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
+/// Istirahat, tanpa "+ Batas Masuk" lama. Nilai tersimpan dihitung ulang SEKALI.
+///
+/// Shift fleksibel (jam kerja normal 0, jam masuk = jam pulang, atau
+/// 00:00–23:59) sengaja dilewati: nilainya adalah penanda fleksibel, dan
+/// menghitung ulangnya akan diam-diam mengubah shift itu menjadi reguler.
+/// Hasil ≤ 0 juga dilewati. Teks SQL ini WAJIB identik dengan
+/// `RECALCULATE_NORMAL_WORK_SQL` di `db-migrations.ts`.
+pub const RECALCULATE_NORMAL_WORK_SQL: &str = "UPDATE tbl_shift
+SET jam_kerja_normal_menit =
+  (CAST(substr(jam_pulang, 1, 2) AS INTEGER) * 60 + CAST(substr(jam_pulang, 4, 2) AS INTEGER))
+  - (CAST(substr(jam_masuk, 1, 2) AS INTEGER) * 60 + CAST(substr(jam_masuk, 4, 2) AS INTEGER))
+  + (CASE WHEN substr(jam_pulang, 1, 5) < substr(jam_masuk, 1, 5) THEN 1440 ELSE 0 END)
+  - COALESCE(istirahat_menit, 0)
+WHERE COALESCE(jam_kerja_normal_menit, 0) > 0
+  AND jam_masuk GLOB '[0-2][0-9]:[0-5][0-9]*'
+  AND jam_pulang GLOB '[0-2][0-9]:[0-5][0-9]*'
+  AND substr(jam_masuk, 1, 5) <> substr(jam_pulang, 1, 5)
+  AND NOT (substr(jam_masuk, 1, 5) = '00:00' AND substr(jam_pulang, 1, 5) = '23:59')
+  AND (CAST(substr(jam_pulang, 1, 2) AS INTEGER) * 60 + CAST(substr(jam_pulang, 4, 2) AS INTEGER))
+    - (CAST(substr(jam_masuk, 1, 2) AS INTEGER) * 60 + CAST(substr(jam_masuk, 4, 2) AS INTEGER))
+    + (CASE WHEN substr(jam_pulang, 1, 5) < substr(jam_masuk, 1, 5) THEN 1440 ELSE 0 END)
+    - COALESCE(istirahat_menit, 0) > 0;";
+
 pub fn normalize_database_url(
     raw: &str,
     provider: DatabaseProvider,
@@ -2648,6 +2672,33 @@ impl TursoClient {
         self.ensure_sync_pulse().await?;
         self.purge_legacy_rate_rows().await?;
         self.repair_web_owned_tables().await?;
+
+        // v21 — aturan jam scan baru. Data migration sekali jalan yang dijaga
+        // baris versinya, sama persis dengan jalur Web di `db-migrations.ts`.
+        // Dijalankan setelah trigger `sync_pulse` terpasang supaya perangkat
+        // lain ikut menarik Jam Kerja Normal yang baru.
+        let shift_rules_applied = self
+            .query_one(
+                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = 21;",
+                vec![],
+            )
+            .await?
+            .to_objects()
+            .into_iter()
+            .next()
+            .and_then(|row| row.get("total").cloned())
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0)
+            > 0;
+        if !shift_rules_applied {
+            self.query_one(RECALCULATE_NORMAL_WORK_SQL, vec![]).await?;
+        }
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (21, 'shift-time-rules-v2', datetime('now'));",
+            vec![],
+        )
+        .await?;
+
         self.query_one(
             "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2007, 'tbl-shift-continuation-column-v1', datetime('now'));",
             vec![],
@@ -2675,6 +2726,11 @@ impl TursoClient {
         .await?;
         self.query_one(
             "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2013, 'phase-4-notification-and-counseling-v1', datetime('now'));",
+            vec![],
+        )
+        .await?;
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2014, 'shift-time-rules-v2', datetime('now'));",
             vec![],
         )
         .await?;
@@ -2948,7 +3004,7 @@ impl TursoClient {
                 // Sentinel WAJIB dinaikkan setiap kali ensure_schema menambah
                 // tabel atau kolom — nilainya di sini dan pada INSERT di atas
                 // harus selalu sama.
-                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2013;",
+                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2014;",
                 vec![],
             )
             .await
@@ -11475,6 +11531,66 @@ mod tests {
                 .await
                 .expect("pencarian lewat email huruf kecil");
         });
+    }
+
+    /// Migrasi v21: Jam Kerja Normal lama (+ Batas Masuk) dihitung ulang
+    /// sekali menjadi (Jam Pulang − Jam Masuk) − Istirahat, tanpa menyentuh
+    /// penanda shift fleksibel. Vektornya sama dengan `constraint-guard-v21.test.ts`.
+    #[test]
+    fn migrasi_v21_menghitung_ulang_jam_kerja_normal_sekali() {
+        let dir = tempfile::tempdir().expect("direktori sementara");
+        let hub = dir.path().join("sppg-hub.db");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime uji");
+        let client = TursoClient::local_file(
+            Url::parse(LOCAL_FILE_ORIGIN).expect("origin lokal"),
+            &hub,
+            Client::new(),
+        );
+        runtime.block_on(async {
+            client.ensure_schema().await.expect("provisioning lokal");
+        });
+
+        let connection = rusqlite::Connection::open(&hub).expect("buka hub");
+        connection
+            .execute_batch(
+                "INSERT INTO tbl_shift (id_shift, kode_shift, nama_shift, jam_masuk, jam_pulang, jam_kerja_normal_menit, istirahat_menit) VALUES
+                   (1, 1, 'Pagi', '07:00', '15:00', 480, 60),
+                   (2, 2, 'Malam', '22:00:00', '06:00:00', 480, 60),
+                   (3, 3, 'Fleksibel', '00:00', '23:59', 1439, 0),
+                   (4, 4, 'Fleksibel Nol', '08:00', '17:00', 0, 60),
+                   (5, 5, 'Pendek', '07:00', '07:30', 30, 60);
+                 DELETE FROM schema_migration WHERE version IN (21, -2014);",
+            )
+            .expect("siapkan shift lama");
+        runtime.block_on(async {
+            client.ensure_schema().await.expect("migrasi v21");
+        });
+
+        let normal = |id: i64| -> i64 {
+            connection
+                .query_row(
+                    "SELECT jam_kerja_normal_menit FROM tbl_shift WHERE id_shift = ?;",
+                    [id],
+                    |row| row.get(0),
+                )
+                .expect("jam kerja normal")
+        };
+        assert_eq!(normal(1), 420);
+        assert_eq!(normal(2), 420);
+        assert_eq!(normal(3), 1439, "penanda fleksibel 00:00-23:59 tidak disentuh");
+        assert_eq!(normal(4), 0, "penanda fleksibel 0 tidak disentuh");
+        assert_eq!(normal(5), 30, "hasil <= 0 tidak ditulis");
+
+        // Sekali jalan: nilai yang ditulis sesudahnya tidak ditimpa lagi.
+        connection
+            .execute("UPDATE tbl_shift SET jam_kerja_normal_menit = 999 WHERE id_shift = 1;", [])
+            .expect("ubah manual");
+        runtime.block_on(async {
+            client.ensure_schema().await.expect("provisioning ulang");
+        });
+        assert_eq!(normal(1), 999);
     }
 
     /// Jalan pulih terakhir bagi Superadmin, dibuktikan tanpa jaringan.

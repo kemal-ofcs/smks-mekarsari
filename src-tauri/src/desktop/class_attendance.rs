@@ -777,6 +777,24 @@ pub fn delete_class_attendance(
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
+    // Daftar jurnal memakai JOIN ke `presensi_mapel`, jadi menghapus sesinya
+    // membuat jurnal itu lenyap dari tampilan tanpa pernah dihapus. Tidak ada
+    // FOREIGN KEY yang menolaknya, maka penolakannya di sini — pesannya SAMA
+    // dengan `deleteClassAttendance` di `lib/services/class-attendance.ts`.
+    let jurnal: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM jurnal_mengajar WHERE id_presensi_mapel = ?1;",
+            params![id_presensi_mapel],
+            |row| row.get(0),
+        )
+        .map_err(|_| CommandError::internal())?;
+    if jurnal > 0 {
+        return Err(CommandError::new(
+            "CLASS_ATTENDANCE_HAS_JOURNAL",
+            "Sesi presensi ini sudah punya jurnal mengajar. Hapus jurnalnya lebih dulu lewat menu Jurnal Mengajar.",
+        ));
+    }
+
     tx.execute(
         "DELETE FROM presensi_mapel_detail WHERE id_presensi_mapel = ?1;",
         params![id_presensi_mapel],

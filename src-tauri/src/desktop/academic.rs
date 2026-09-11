@@ -286,9 +286,87 @@ pub fn save_academic_year(state: &DesktopState, draft: &Value) -> Result<Value, 
     Ok(json!({ "sukses": true, "id_tahun_ajaran": id }))
 }
 
+// ── Penjaga penghapusan master ────────────────────────────────────────────
+//
+// Tabel `akademik_*` TIDAK punya FOREIGN KEY, jadi SQLite menerima penghapusan
+// rombel yang masih berisi siswa, mapel yang masih punya penugasan, atau tahun
+// ajaran yang masih punya rombel — lalu meninggalkan baris yatim yang lenyap
+// dari setiap daftar yang memakai JOIN. Pemeriksaan ini menggantikan FK yang
+// tidak ada. Daftarnya dieja DUA KALI dan wajib sama: di sini dan di
+// `ACADEMIC_USAGE` pada `lib/services/academic.ts` (jalur Web).
+//
+// Hanya penghapusan yang BERASAL dari perangkat ini yang dijaga; penghapusan
+// yang datang lewat sinkronisasi sudah diputuskan di perangkat asalnya.
+
+const YEAR_USAGE: &[(&str, &str)] = &[
+    ("SELECT COUNT(*) FROM akademik_rombel WHERE id_tahun_ajaran = ?1;", "rombel"),
+    ("SELECT COUNT(*) FROM presensi_mapel WHERE id_tahun_ajaran = ?1;", "sesi presensi kelas"),
+];
+const DEPARTMENT_USAGE: &[(&str, &str)] = &[
+    ("SELECT COUNT(*) FROM akademik_rombel WHERE id_jurusan = ?1;", "rombel"),
+];
+const CLASS_USAGE: &[(&str, &str)] = &[
+    ("SELECT COUNT(*) FROM siswa_data WHERE id_rombel = ?1;", "siswa"),
+    ("SELECT COUNT(*) FROM akademik_guru_mapel WHERE id_rombel = ?1;", "penugasan guru"),
+    ("SELECT COUNT(*) FROM presensi_mapel WHERE id_rombel = ?1;", "sesi presensi kelas"),
+];
+const SUBJECT_USAGE: &[(&str, &str)] = &[
+    ("SELECT COUNT(*) FROM akademik_guru_mapel WHERE id_mapel = ?1;", "penugasan guru"),
+    ("SELECT COUNT(*) FROM presensi_mapel WHERE id_mapel = ?1;", "sesi presensi kelas"),
+];
+
+fn ensure_academic_unused(
+    tx: &rusqlite::Transaction<'_>,
+    label: &str,
+    checks: &[(&str, &str)],
+    id: &str,
+    hint: &str,
+) -> Result<(), CommandError> {
+    let mut reasons = Vec::new();
+    for (sql, noun) in checks {
+        let count: i64 = tx
+            .query_row(sql, params![id], |row| row.get(0))
+            .map_err(|_| CommandError::internal())?;
+        if count > 0 {
+            reasons.push(format!("{count} {noun}"));
+        }
+    }
+    if reasons.is_empty() {
+        return Ok(());
+    }
+    Err(CommandError::new(
+        "ACADEMIC_IN_USE",
+        format!(
+            "{label} tidak dapat dihapus karena masih dipakai: {}. {hint}",
+            reasons.join(", ")
+        ),
+    ))
+}
+
 pub fn delete_academic_year(state: &DesktopState, id: &str) -> Result<Value, CommandError> {
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    let aktif: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM akademik_tahun_ajaran WHERE id_tahun_ajaran = ?1 AND is_aktif = 1;",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| CommandError::internal())?;
+    if aktif > 0 {
+        return Err(CommandError::new(
+            "ACADEMIC_IN_USE",
+            "Tahun ajaran aktif tidak dapat dihapus. Aktifkan tahun ajaran lain lebih dulu.",
+        ));
+    }
+    ensure_academic_unused(
+        &tx,
+        "Tahun ajaran",
+        YEAR_USAGE,
+        id,
+        "Hapus atau pindahkan data yang memakainya lebih dulu.",
+    )?;
 
     tx.execute(
         "DELETE FROM akademik_tahun_ajaran WHERE id_tahun_ajaran = ?1;",
@@ -462,6 +540,13 @@ pub fn save_academic_department(
 pub fn delete_academic_department(state: &DesktopState, id: &str) -> Result<Value, CommandError> {
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+    ensure_academic_unused(
+        &tx,
+        "Jurusan",
+        DEPARTMENT_USAGE,
+        id,
+        "Nonaktifkan jurusan ini saja.",
+    )?;
 
     tx.execute(
         "DELETE FROM akademik_jurusan WHERE id_jurusan = ?1;",
@@ -610,6 +695,13 @@ pub fn save_academic_class(state: &DesktopState, draft: &Value) -> Result<Value,
 pub fn delete_academic_class(state: &DesktopState, id: &str) -> Result<Value, CommandError> {
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+    ensure_academic_unused(
+        &tx,
+        "Rombel",
+        CLASS_USAGE,
+        id,
+        "Nonaktifkan rombel ini saja.",
+    )?;
 
     tx.execute(
         "DELETE FROM akademik_rombel WHERE id_rombel = ?1;",
@@ -747,6 +839,13 @@ pub fn save_academic_subject(state: &DesktopState, draft: &Value) -> Result<Valu
 pub fn delete_academic_subject(state: &DesktopState, id: &str) -> Result<Value, CommandError> {
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+    ensure_academic_unused(
+        &tx,
+        "Mata pelajaran",
+        SUBJECT_USAGE,
+        id,
+        "Nonaktifkan mata pelajaran ini saja.",
+    )?;
 
     tx.execute(
         "DELETE FROM akademik_mapel WHERE id_mapel = ?1;",

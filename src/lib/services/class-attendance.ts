@@ -473,8 +473,23 @@ export async function saveClassAttendance(draft: SaveClassAttendanceDraft) {
   return { sukses: true, id_presensi_mapel: idPresensi };
 }
 
+/** Pesan penolakan yang SAMA dengan `delete_class_attendance` di `class_attendance.rs`. */
+const PESAN_SESI_BERJURNAL =
+  "Sesi presensi ini sudah punya jurnal mengajar. Hapus jurnalnya lebih dulu lewat menu Jurnal Mengajar.";
+
 export async function deleteClassAttendance(idPresensiMapel: string) {
   await ensureDbInitialized();
+
+  // Daftar jurnal memakai JOIN ke `presensi_mapel`, jadi menghapus sesinya
+  // membuat jurnal itu lenyap dari tampilan tanpa pernah dihapus. Tidak ada
+  // FOREIGN KEY yang menolaknya, maka penolakannya di sini.
+  const jurnal = await db.execute({
+    sql: "SELECT COUNT(*) AS n FROM jurnal_mengajar WHERE id_presensi_mapel = ?;",
+    args: [idPresensiMapel],
+  });
+  if (Number(jurnal.rows[0]?.n ?? 0) > 0) {
+    throw new ApiRequestError(PESAN_SESI_BERJURNAL, 409);
+  }
 
   await db.batch(
     [

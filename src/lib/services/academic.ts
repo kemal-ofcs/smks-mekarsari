@@ -141,8 +141,91 @@ export async function saveAcademicYear(draft: {
   return { sukses: true, id_tahun_ajaran: id };
 }
 
+// ── Penjaga penghapusan master ──────────────────────────────────────────────
+//
+// Tabel `akademik_*` TIDAK punya FOREIGN KEY, jadi database menerima
+// penghapusan rombel yang masih berisi siswa, mapel yang masih punya
+// penugasan, atau tahun ajaran yang masih punya rombel — lalu meninggalkan
+// baris yatim yang lenyap dari setiap daftar yang memakai JOIN. Daftar ini
+// dieja DUA KALI dan wajib sama: di sini dan `*_USAGE` di `academic.rs`.
+const ACADEMIC_USAGE = {
+  year: [
+    [
+      "SELECT COUNT(*) AS n FROM akademik_rombel WHERE id_tahun_ajaran = ?;",
+      "rombel",
+    ],
+    [
+      "SELECT COUNT(*) AS n FROM presensi_mapel WHERE id_tahun_ajaran = ?;",
+      "sesi presensi kelas",
+    ],
+  ],
+  department: [
+    [
+      "SELECT COUNT(*) AS n FROM akademik_rombel WHERE id_jurusan = ?;",
+      "rombel",
+    ],
+  ],
+  class: [
+    ["SELECT COUNT(*) AS n FROM siswa_data WHERE id_rombel = ?;", "siswa"],
+    [
+      "SELECT COUNT(*) AS n FROM akademik_guru_mapel WHERE id_rombel = ?;",
+      "penugasan guru",
+    ],
+    [
+      "SELECT COUNT(*) AS n FROM presensi_mapel WHERE id_rombel = ?;",
+      "sesi presensi kelas",
+    ],
+  ],
+  subject: [
+    [
+      "SELECT COUNT(*) AS n FROM akademik_guru_mapel WHERE id_mapel = ?;",
+      "penugasan guru",
+    ],
+    [
+      "SELECT COUNT(*) AS n FROM presensi_mapel WHERE id_mapel = ?;",
+      "sesi presensi kelas",
+    ],
+  ],
+} as const satisfies Record<string, ReadonlyArray<readonly [string, string]>>;
+
+async function assertAcademicUnused(
+  label: string,
+  checks: ReadonlyArray<readonly [string, string]>,
+  id: string,
+  hint: string,
+) {
+  const reasons: string[] = [];
+  for (const [sql, noun] of checks) {
+    const res = await db.execute({ sql, args: [id] });
+    const count = Number(res.rows[0]?.n ?? 0);
+    if (count > 0) reasons.push(`${count} ${noun}`);
+  }
+  if (reasons.length > 0) {
+    throw new ApiRequestError(
+      `${label} tidak dapat dihapus karena masih dipakai: ${reasons.join(", ")}. ${hint}`,
+      409,
+    );
+  }
+}
+
 export async function deleteAcademicYear(id: string) {
   await ensureDbInitialized();
+  const aktif = await db.execute({
+    sql: "SELECT COUNT(*) AS n FROM akademik_tahun_ajaran WHERE id_tahun_ajaran = ? AND is_aktif = 1;",
+    args: [id],
+  });
+  if (Number(aktif.rows[0]?.n ?? 0) > 0) {
+    throw new ApiRequestError(
+      "Tahun ajaran aktif tidak dapat dihapus. Aktifkan tahun ajaran lain lebih dulu.",
+      409,
+    );
+  }
+  await assertAcademicUnused(
+    "Tahun ajaran",
+    ACADEMIC_USAGE.year,
+    id,
+    "Hapus atau pindahkan data yang memakainya lebih dulu.",
+  );
   await db.execute({
     sql: "DELETE FROM akademik_tahun_ajaran WHERE id_tahun_ajaran = ?;",
     args: [id],
@@ -223,6 +306,12 @@ export async function saveAcademicDepartment(draft: {
 
 export async function deleteAcademicDepartment(id: string) {
   await ensureDbInitialized();
+  await assertAcademicUnused(
+    "Jurusan",
+    ACADEMIC_USAGE.department,
+    id,
+    "Nonaktifkan jurusan ini saja.",
+  );
   await db.execute({
     sql: "DELETE FROM akademik_jurusan WHERE id_jurusan = ?;",
     args: [id],
@@ -303,6 +392,12 @@ export async function saveAcademicClass(draft: {
 
 export async function deleteAcademicClass(id: string) {
   await ensureDbInitialized();
+  await assertAcademicUnused(
+    "Rombel",
+    ACADEMIC_USAGE.class,
+    id,
+    "Nonaktifkan rombel ini saja.",
+  );
   await db.execute({
     sql: "DELETE FROM akademik_rombel WHERE id_rombel = ?;",
     args: [id],
@@ -378,6 +473,12 @@ export async function saveAcademicSubject(draft: {
 
 export async function deleteAcademicSubject(id: string) {
   await ensureDbInitialized();
+  await assertAcademicUnused(
+    "Mata pelajaran",
+    ACADEMIC_USAGE.subject,
+    id,
+    "Nonaktifkan mata pelajaran ini saja.",
+  );
   await db.execute({
     sql: "DELETE FROM akademik_mapel WHERE id_mapel = ?;",
     args: [id],

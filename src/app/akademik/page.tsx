@@ -137,7 +137,7 @@ export default function AkademikPage() {
     tanggal_selesai: new Date(Date.now() + 180 * 86400000).toLocaleDateString(
       "en-CA",
     ),
-    is_aktif: 1,
+    is_aktif: 0,
   });
 
   const [formJurusan, setFormJurusan] = useState<JurusanInput>({
@@ -413,7 +413,11 @@ export default function AkademikPage() {
                         tanggal_selesai: new Date(
                           Date.now() + 180 * 86400000,
                         ).toLocaleDateString("en-CA"),
-                        is_aktif: 1,
+                        // Menyimpan `is_aktif = 1` menonaktifkan tahun ajaran
+                        // lain di SELURUH sekolah. Dulu itu bawaan "Tambah",
+                        // sehingga menyiapkan tahun depan diam-diam mengganti
+                        // tahun berjalan. Kini wajib dicentang secara sadar.
+                        is_aktif: 0,
                       });
                     } else if (activeTab === "jurusan") {
                       setFormJurusan({
@@ -736,6 +740,35 @@ export default function AkademikPage() {
                       />
                     </div>
                   </div>
+                  {formTA.id_tahun_ajaran ? null : (
+                    <label
+                      htmlFor="ta-aktif"
+                      className="flex items-start gap-3 rounded-xl border border-white/10 bg-slate-900/60 p-3"
+                    >
+                      <input
+                        id="ta-aktif"
+                        type="checkbox"
+                        checked={formTA.is_aktif === 1}
+                        onChange={(e) =>
+                          setFormTA({
+                            ...formTA,
+                            is_aktif: e.target.checked ? 1 : 0,
+                          })
+                        }
+                        className="mt-0.5 size-4 accent-sky-500"
+                      />
+                      <span>
+                        <span className="block text-xs font-semibold text-slate-200">
+                          Langsung jadikan tahun ajaran aktif
+                        </span>
+                        <span className="block text-[11px] text-slate-400">
+                          Tahun ajaran aktif yang lama otomatis dinonaktifkan di
+                          semua perangkat. Biarkan mati bila Anda hanya
+                          menyiapkan tahun depan.
+                        </span>
+                      </span>
+                    </label>
+                  )}
                 </>
               ) : null}
 

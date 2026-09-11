@@ -47,6 +47,51 @@ fn iso_now_tx(tx: &rusqlite::Transaction<'_>) -> String {
     .unwrap_or_else(|_| format!("epoch-{}", storage::now_epoch_seconds()))
 }
 
+/// Id baris BPJS yang sudah memakai `component_code` ini, atau id baru.
+///
+/// `bpjs_rules` unik per kode dan INSERT-nya menimpa lewat kode itu dengan id
+/// LAMA; tanpa ini outbox mengantrekan id yang tidak dimiliki baris mana pun.
+fn bpjs_rule_id(
+    tx: &rusqlite::Transaction<'_>,
+    requested_id: &str,
+    component_code: &str,
+) -> Result<String, CommandError> {
+    if !requested_id.trim().is_empty() {
+        return Ok(requested_id.to_string());
+    }
+    let existing = tx
+        .query_row(
+            "SELECT id FROM bpjs_rules WHERE component_code = ?1;",
+            params![component_code],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+    Ok(existing.unwrap_or_else(|| {
+        new_payroll_id(&format!("bpjs-{}", component_code.to_lowercase()))
+    }))
+}
+
+/// Id baris payroll dibuat KLIEN: `<awalan>-<detik epoch>-<48 bit acak>`.
+///
+/// Dulu hanya `<awalan>-<detik epoch>`, dan itu bertabrakan di tiga tempat:
+/// (1) fungsi simpan MASSAL (`save_*_rules`) memberi id yang SAMA ke setiap
+/// baris baru dalam satu loop, sehingga baris berikutnya menimpa yang pertama
+/// lewat `ON CONFLICT(id)`; (2) dua perangkat yang menyimpan pada detik yang
+/// sama menghasilkan id sama, dan cloud menolak push kedua dengan pelanggaran
+/// PK — outbox-nya macet permanen; (3) dua transisi status batch dalam satu
+/// detik menabrakkan id `payroll_audit_logs`. Detiknya dipertahankan supaya id
+/// tetap terbaca dan terurut kira-kira menurut waktu.
+fn new_payroll_id(prefix: &str) -> String {
+    let mut bytes = [0u8; 6];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut bytes);
+    format!(
+        "{prefix}-{}-{}",
+        storage::now_epoch_seconds(),
+        hex::encode(bytes)
+    )
+}
+
 #[tauri::command]
 pub async fn desktop_get_salary_configs(
     state: State<'_, DesktopState>,
@@ -105,8 +150,18 @@ pub async fn desktop_save_salary_config(
     let mut conn = storage::database(&state.data_dir)?;
 
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+    // Rate unik per (karyawan, tanggal berlaku) dan INSERT di bawah menimpa
+    // baris lama lewat kunci alami itu — dengan id LAMA. Tanpa pencarian ini,
+    // outbox mengantrekan id baru yang tidak dimiliki baris mana pun.
     let config_id = if draft.id.trim().is_empty() {
-        format!("sc-{}", storage::now_epoch_seconds())
+        tx.query_row(
+            "SELECT id FROM salary_configs WHERE id_karyawan = ?1 AND effective_date = ?2;",
+            params![draft.id_karyawan, draft.effective_date],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .unwrap_or_else(|| new_payroll_id("sc"))
     } else {
         draft.id.clone()
     };
@@ -239,11 +294,7 @@ pub async fn desktop_save_overtime_rule(
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
     let rule_id = if draft.id.trim().is_empty() {
-        format!(
-            "ot-{}-{}",
-            draft.rule_type.to_lowercase(),
-            storage::now_epoch_seconds()
-        )
+        new_payroll_id(&format!("ot-{}", draft.rule_type.to_lowercase()))
     } else {
         draft.id.clone()
     };
@@ -338,11 +389,7 @@ pub async fn desktop_save_overtime_rules(
 
     for rule in rules {
         let rule_id = if rule.id.trim().is_empty() {
-            format!(
-                "ot-{}-{}",
-                rule.rule_type.to_lowercase(),
-                storage::now_epoch_seconds()
-            )
+            new_payroll_id(&format!("ot-{}", rule.rule_type.to_lowercase()))
         } else {
             rule.id.clone()
         };
@@ -445,7 +492,7 @@ pub async fn desktop_save_payroll_component(
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
     let comp_id = if draft.id.trim().is_empty() {
-        format!("comp-{}", storage::now_epoch_seconds())
+        new_payroll_id("comp")
     } else {
         draft.id.clone()
     };
@@ -574,11 +621,7 @@ pub async fn desktop_save_tax_rule(
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
     let rule_id = if draft.id.trim().is_empty() {
-        format!(
-            "tax-{}-{}",
-            draft.category.to_lowercase(),
-            storage::now_epoch_seconds()
-        )
+        new_payroll_id(&format!("tax-{}", draft.category.to_lowercase()))
     } else {
         draft.id.clone()
     };
@@ -672,11 +715,7 @@ pub async fn desktop_save_tax_rules(
 
     for rule in rules {
         let rule_id = if rule.id.trim().is_empty() {
-            format!(
-                "tax-{}-{}",
-                rule.category.to_lowercase(),
-                storage::now_epoch_seconds()
-            )
+            new_payroll_id(&format!("tax-{}", rule.category.to_lowercase()))
         } else {
             rule.id.clone()
         };
@@ -740,15 +779,7 @@ pub async fn desktop_save_bpjs_rule(
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
-    let rule_id = if draft.id.trim().is_empty() {
-        format!(
-            "bpjs-{}-{}",
-            draft.component_code.to_lowercase(),
-            storage::now_epoch_seconds()
-        )
-    } else {
-        draft.id.clone()
-    };
+    let rule_id = bpjs_rule_id(&tx, &draft.id, &draft.component_code)?;
     let eff_date = if draft.effective_date.trim().is_empty() {
         iso_now_tx(&tx)[..10].to_string()
     } else {
@@ -879,15 +910,7 @@ pub async fn desktop_save_bpjs_rules(
     let client_id = sync::ensure_client_id(&state)?;
 
     for rule in rules {
-        let rule_id = if rule.id.trim().is_empty() {
-            format!(
-                "bpjs-{}-{}",
-                rule.component_code.to_lowercase(),
-                storage::now_epoch_seconds()
-            )
-        } else {
-            rule.id.clone()
-        };
+        let rule_id = bpjs_rule_id(&tx, &rule.id, &rule.component_code)?;
         let eff_date = if rule.effective_date.trim().is_empty() {
             iso_now_tx(&tx)[..10].to_string()
         } else {
@@ -1142,11 +1165,7 @@ pub async fn desktop_create_payroll_run(
 
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
-    let run_id = format!(
-        "PR-{}-{}",
-        period_start.replace('-', ""),
-        storage::now_epoch_seconds()
-    );
+    let run_id = new_payroll_id(&format!("PR-{}", period_start.replace('-', "")));
     let now = iso_now_tx(&tx);
 
     let mut total_gross_sum = 0i64;
@@ -1343,7 +1362,7 @@ pub async fn desktop_create_payroll_run(
         .map_err(|_| CommandError::new("RUN_FAILED", "Gagal menyimpan rincian slip gaji karyawan."))?;
     }
 
-    let audit_id = format!("audit-{}", storage::now_epoch_seconds());
+    let audit_id = new_payroll_id("audit");
     tx.execute(
         r#"
         INSERT INTO payroll_audit_logs (
@@ -1673,7 +1692,7 @@ pub async fn desktop_transition_payroll_status(
     )
     .map_err(|_| CommandError::new("UPDATE_FAILED", "Gagal memperbarui status payroll."))?;
 
-    let audit_id = format!("audit-{}", storage::now_epoch_seconds());
+    let audit_id = new_payroll_id("audit");
     let notes_text = notes.unwrap_or_default();
     tx.execute(
         r#"
@@ -1883,4 +1902,27 @@ fn load_bpjs_rules(conn: &Connection, period_end: &str) -> Result<Vec<BpjsRule>,
         .map_err(|_| CommandError::internal())?;
 
     Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_payroll_id;
+    use std::collections::HashSet;
+
+    #[test]
+    fn id_payroll_tidak_bertabrakan_dalam_satu_detik() {
+        // Fungsi simpan massal memanggilnya berkali-kali dalam loop yang sama —
+        // persis keadaan yang dulu memberi setiap baris id identik.
+        let ids: HashSet<String> = (0..500).map(|_| new_payroll_id("ot-hari_kerja")).collect();
+        assert_eq!(ids.len(), 500);
+    }
+
+    #[test]
+    fn id_payroll_mempertahankan_awalan_yang_terbaca() {
+        let id = new_payroll_id("PR-20260901");
+        assert!(id.starts_with("PR-20260901-"));
+        let suffix = id.rsplit('-').next().unwrap_or_default();
+        assert_eq!(suffix.len(), 12);
+        assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
+    }
 }
