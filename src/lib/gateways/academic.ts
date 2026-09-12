@@ -307,3 +307,78 @@ export async function hapusPenugasanGuru(id: string) {
     },
   );
 }
+
+/** Satu baris jadwal mengajar mingguan. */
+export interface TeachingScheduleRow {
+  id_jadwal: string;
+  id_tahun_ajaran: string;
+  id_rombel: string;
+  id_mapel: string;
+  id_guru: string;
+  /** 1=Senin sampai 7=Minggu. */
+  hari: number;
+  jam_ke: string;
+  is_aktif: number;
+  created_at: string;
+  updated_at: string;
+  nama_rombel?: string;
+  nama_mapel?: string;
+  nama_guru?: string;
+}
+
+export interface TeachingScheduleFilter {
+  id_rombel?: string | null;
+  id_tahun_ajaran?: string | null;
+  id_guru?: string | null;
+  /** Harinya diturunkan dari tanggal ini oleh SQL, bukan oleh JavaScript. */
+  tanggal?: string | null;
+  hari?: number | null;
+}
+
+export async function getJadwalMengajar(
+  filter?: TeachingScheduleFilter,
+): Promise<TeachingScheduleRow[]> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<TeachingScheduleRow[]>(
+      "desktop_get_teaching_schedules",
+      { filter: filter ?? null },
+    );
+  }
+  const response = await requestWebApi<{ data: TeachingScheduleRow[] }>(
+    "/api/academic/schedules",
+    "POST",
+    { filter: filter ?? {} },
+  );
+  return response.data;
+}
+
+export async function simpanJadwalMengajar(
+  draft: Partial<TeachingScheduleRow>,
+): Promise<{ sukses: boolean; id_jadwal?: string }> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<{ sukses: boolean; id_jadwal: string }>(
+      "desktop_save_teaching_schedule",
+      { draft },
+    );
+  }
+  return requestWebApi<{ sukses: boolean; id_jadwal?: string }>(
+    "/api/academic/schedules",
+    "POST",
+    { action: "save", draft },
+  );
+}
+
+export async function hapusJadwalMengajar(
+  idJadwal: string,
+): Promise<{ sukses: boolean }> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<{ sukses: boolean }>(
+      "desktop_delete_teaching_schedule",
+      { idJadwal },
+    );
+  }
+  return requestWebApi<{ sukses: boolean }>("/api/academic/schedules", "POST", {
+    action: "delete",
+    id: idJadwal,
+  });
+}

@@ -117,6 +117,10 @@ pub struct SalaryConfig {
     pub id: String,
     pub id_karyawan: String,
     pub rate_per_hour: i64,
+    /// Tarif bawaan per jam pelajaran; dipakai bila mapel yang diajar belum
+    /// punya tarifnya sendiri di `tarif_jp`. Nol berarti tidak dibayar per JP.
+    #[serde(default)]
+    pub rate_per_jp: i64,
     #[serde(default)]
     pub ptkp_status: String,
     #[serde(default)]
@@ -162,6 +166,11 @@ pub struct PayrollItem {
     pub total_holiday_hours: f64,
     /// Indeks hasil `total_holiday_hours` melewati jenjang HARI_LIBUR.
     pub total_holiday_overtime_index: f64,
+    /// JP yang diajar pada periode ini, DIBEKUKAN bersama honornya di bawah.
+    #[serde(default)]
+    pub total_teaching_jp: i64,
+    #[serde(default)]
+    pub teaching_salary: i64,
     pub rate_per_hour: i64,
     pub basic_salary: i64,
     pub overtime_salary: i64,
@@ -193,6 +202,12 @@ pub struct PayrollRecapRow {
     pub id_karyawan: String,
     pub nama_karyawan: String,
     pub divisi: String,
+    /// Dibawa dari rekap supaya PEMBEKUAN memakai sudut pandang yang sama
+    /// dengan yang dilihat admin. Tanpa keduanya, pembekuan harus menanyakan
+    /// ulang kelompok setiap orang ke database — dan jawaban yang berubah di
+    /// antara dua query berarti angka yang disetujui bukan angka yang dibayar.
+    pub jenis_personil: String,
+    pub status_kepegawaian: String,
     pub rate_per_hour: i64,
     pub ptkp_status: String,
     pub total_hadir: i64,
@@ -218,6 +233,17 @@ pub struct PayrollRecapRow {
     pub total_holiday_hours: f64,
     /// Indeks jenjang HARI_LIBUR untuk jam di atas.
     pub total_holiday_overtime_index: f64,
+    /// Jumlah jam pelajaran yang diajar dan sudah diparaf pada periode ini.
+    pub total_teaching_jp: i64,
+    /// Honor mengajar dari JP di atas.
+    pub teaching_salary: i64,
+    /// JP yang tidak menemukan tarif mana pun (tarif mapel maupun bawaan).
+    ///
+    /// Ditampilkan sebagai peringatan, BUKAN penghalang. Tarif nol adalah
+    /// keadaan normal bagi sekolah yang tidak memakai honor per JP sama
+    /// sekali, sehingga memblokir payroll karenanya akan mengunci seluruh
+    /// penggajian hanya karena fitur ini ada.
+    pub unrated_teaching_jp: i64,
     pub est_basic_salary: i64,
     pub est_overtime_salary: i64,
     pub est_gross_salary: i64,
@@ -226,4 +252,62 @@ pub struct PayrollRecapRow {
     pub est_bpjs_employee: i64,
     pub est_pph21: i64,
     pub est_net_salary: i64,
+}
+
+/// Satu orang, dilihat dari sudut pandang penyaringan komponen payroll.
+///
+/// Ketiga kolom di bawah `id_karyawan` adalah yang membuat tunjangan bisa
+/// ditujukan ke KELOMPOK — semua guru, guru honorer, satu divisi — tanpa
+/// menuliskan satu per satu orangnya. Ketiganya sengaja dibawa dari baris rekap
+/// yang sudah ada, bukan dari query tambahan per komponen.
+#[derive(Debug, Clone, Default)]
+pub struct ComponentSubject {
+    pub id_karyawan: String,
+    /// `master_data.jenis_personil`, ejaan apa adanya.
+    pub jenis_personil: String,
+    /// `guru_data.status_kepegawaian`; kosong untuk yang bukan guru.
+    pub status_kepegawaian: String,
+    /// `master_data.divisi`.
+    pub divisi: String,
+    /// JP mengajar terparaf pada periode ini; dasar komponen `PER_JP`.
+    pub total_teaching_jp: i64,
+    /// Hari hadir pada periode ini; dasar komponen `PER_HADIR`.
+    pub total_hadir: i64,
+}
+
+/// Satu sesi mengajar yang JP-nya dihitung.
+///
+/// Hanya sesi `presensi_mapel` yang jurnal mengajarnya SUDAH DIPARAF yang
+/// pernah sampai ke sini — paraf itu bukti bahwa pelajarannya benar berlangsung,
+/// dan itulah syarat yang dipilih pemilik sistem ini.
+#[derive(Debug, Clone)]
+pub struct TaughtSession {
+    pub id_presensi_mapel: String,
+    pub id_mapel: String,
+    pub tanggal: String,
+    /// Jam pelajaran pertama dan terakhir sesi ini, inklusif di kedua ujung.
+    pub jam_awal: u32,
+    pub jam_akhir: u32,
+}
+
+/// Satu baris `tarif_jp`.
+#[derive(Debug, Clone)]
+pub struct JpRate {
+    pub id: String,
+    pub id_mapel: String,
+    /// `None` berarti tarif umum untuk mapel ini, berlaku bagi guru mana pun.
+    pub id_guru: Option<String>,
+    pub rate_per_jp: i64,
+    pub effective_date: String,
+    pub status_aktif: i64,
+    pub updated_at: String,
+}
+
+/// Hasil penjumlahan JP dan honor seorang guru pada satu periode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeachingTotals {
+    pub total_jp: i64,
+    pub honor: i64,
+    /// JP yang tidak menemukan tarif mana pun. Peringatan, bukan penghalang.
+    pub unrated_jp: i64,
 }

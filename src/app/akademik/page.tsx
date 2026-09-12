@@ -36,7 +36,13 @@ import {
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 
-type TabKey = "tahun_ajaran" | "jurusan" | "rombel" | "mapel" | "penugasan";
+type TabKey =
+  | "tahun_ajaran"
+  | "jurusan"
+  | "rombel"
+  | "mapel"
+  | "penugasan"
+  | "jadwal";
 
 /**
  * Kelima panel tab dimuat terpisah.
@@ -81,6 +87,14 @@ const PenugasanPanel = dynamic(
   () =>
     import("@/components/akademik/PenugasanPanel").then((mod) => ({
       default: mod.PenugasanPanel,
+    })),
+  { ssr: false },
+);
+
+const JadwalPanel = dynamic(
+  () =>
+    import("@/components/akademik/JadwalPanel").then((mod) => ({
+      default: mod.JadwalPanel,
     })),
   { ssr: false },
 );
@@ -554,6 +568,18 @@ export default function AkademikPage() {
             <Icon name="user" className="size-4" />
             <span>Penugasan Guru</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("jadwal")}
+            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+              activeTab === "jadwal"
+                ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            <Icon name="calendar" className="size-4" />
+            <span>Jadwal Mengajar</span>
+          </button>
         </div>
 
         {/* Tab 1: Tahun Ajaran */}
@@ -618,6 +644,17 @@ export default function AkademikPage() {
             canManage={canManage}
             handleRombelFilterChange={handleRombelFilterChange}
             handleDeleteItem={handleDeleteItem}
+          />
+        ) : null}
+
+        {activeTab === "jadwal" ? (
+          <JadwalPanel
+            tahunAjaranList={tahunAjaranList}
+            rombelList={rombelList}
+            mapelList={mapelList}
+            guruList={guruList}
+            canManage={canManage}
+            onFeedback={(tone, message) => setFeedback({ tone, message })}
           />
         ) : null}
 

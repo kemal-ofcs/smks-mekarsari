@@ -36,6 +36,12 @@ describe("readOperationalSnapshot", () => {
             { id: "sc-1", id_karyawan: "employee-1", rate_per_hour: 25000 },
           ]),
           result(),
+          // tarif_jp (honor per jam pelajaran, schema v22)
+          result(),
+          // akademik_jam_pelajaran (jadwal bel, schema v23)
+          result(),
+          // jadwal_mengajar (jadwal mingguan, schema v24)
+          result(),
           result(),
           result(),
           result(),
@@ -61,7 +67,7 @@ describe("readOperationalSnapshot", () => {
     const snapshot = await readOperationalSnapshot(client);
 
     expect(receivedMode).toBe("read");
-    expect(receivedStatementCount).toBe(33);
+    expect(receivedStatementCount).toBe(36);
     expect(snapshot.revision).toBe(12);
     expect(snapshot.employees).toEqual([
       { id_unik: "employee-1", nama: "Operator Uji" },
@@ -91,13 +97,13 @@ describe("readOperationalSnapshot", () => {
   });
 });
 
-/** Klien tiruan: 33 hasil batch kosong, plus `execute` yang bisa diatur. */
+/** Klien tiruan: 36 hasil batch kosong, plus `execute` yang bisa diatur. */
 function clientDenganExecute(
   execute: (arg: { sql: string; args: unknown[] }) => Promise<ResultSet>,
 ) {
   return {
     batch: async () => [
-      ...Array.from({ length: 32 }, () => result()),
+      ...Array.from({ length: 35 }, () => result()),
       result([{ revision: 5 }]),
     ],
     execute,

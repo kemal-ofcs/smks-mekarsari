@@ -2,16 +2,24 @@
 
 import Image from "next/image";
 import { redirect } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
+import {
+  describeImportReport,
+  downloadTeacherTemplate,
+  exportTeachers,
+  readTeacherWorkbook,
+  runPersonnelImport,
+} from "@/lib/client/personnel-workbook";
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarShift } from "@/lib/gateways/shift";
+import { syncNow } from "@/lib/gateways/sync-status";
 import {
   type GuruInput,
   getDaftarGuru,
@@ -19,6 +27,7 @@ import {
   simpanGuru,
 } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
+import { shiftLabel } from "@/lib/validations/personnel";
 
 export default function GuruPage() {
   const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
@@ -28,6 +37,9 @@ export default function GuruPage() {
   const [guruList, setGuruList] = useState<Record<string, unknown>[]>([]);
   const [shiftList, setShiftList] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const isSubmittingRef = useRef(false);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterKepegawaian, setFilterKepegawaian] = useState("");
@@ -213,7 +225,8 @@ export default function GuruPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManage) return;
+    if (!canManage || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setSaving(true);
     try {
       await simpanGuru(formData);
@@ -227,7 +240,83 @@ export default function GuruPage() {
           err instanceof Error ? err.message : "Gagal menyimpan data guru.",
       });
     } finally {
+      isSubmittingRef.current = false;
       setSaving(false);
+    }
+  };
+
+  const handleImport = async (file: File) => {
+    if (!canManage || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setBulkWorking(true);
+    try {
+      const baris = await readTeacherWorkbook(file, { shifts: shiftList });
+      const report = await runPersonnelImport(baris, (draft) =>
+        simpanGuru(draft, { tundaSinkronisasi: true }),
+      );
+      let catatanSinkron = "";
+      if (report.berhasil > 0) {
+        try {
+          await syncNow();
+        } catch (err) {
+          catatanSinkron = ` Data sudah tersimpan di perangkat ini; sinkronisasi akan dicoba otomatis (${
+            err instanceof Error ? err.message : "gagal menghubungi database"
+          }).`;
+        }
+      }
+      setFeedback({
+        tone: report.gagal.length > 0 || catatanSinkron ? "warning" : "success",
+        message: describeImportReport(report, "guru") + catatanSinkron,
+      });
+      await loadData();
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message: err instanceof Error ? err.message : "Impor Excel gagal.",
+      });
+    } finally {
+      isSubmittingRef.current = false;
+      setBulkWorking(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
+  const reportSaved = (
+    result: { cancelled?: boolean; path?: string | null },
+    label: string,
+  ) => {
+    if (result.cancelled) return;
+    setFeedback({
+      tone: "success",
+      message: result.path
+        ? `${label} berhasil disimpan di: ${result.path}`
+        : `${label} berhasil diunduh.`,
+    });
+  };
+
+  const handleExport = async () => {
+    try {
+      reportSaved(
+        await exportTeachers(filteredTeachers, shiftList),
+        "Data guru",
+      );
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message: err instanceof Error ? err.message : "Gagal mengekspor data.",
+      });
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      reportSaved(await downloadTeacherTemplate(shiftList), "Template impor");
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message:
+          err instanceof Error ? err.message : "Gagal mengunduh template.",
+      });
     }
   };
 
@@ -258,7 +347,7 @@ export default function GuruPage() {
           title="Master Data Guru & PTK"
           description="Direktori pendidik dan tenaga kependidikan sekolah serta identitas kartu barcode."
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => void loadData()}
@@ -267,6 +356,46 @@ export default function GuruPage() {
                 <Icon name="refresh" className="size-4" />
                 <span>Muat Ulang</span>
               </button>
+              <button
+                type="button"
+                onClick={() => void handleExport()}
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-sky-500/40 bg-slate-800 px-4 py-2 text-sm font-semibold text-sky-300 transition hover:bg-slate-700"
+              >
+                <Icon name="download" className="size-4" />
+                <span>Export Excel</span>
+              </button>
+              {canManage ? (
+                <>
+                  <input
+                    aria-label="Berkas Excel untuk impor guru"
+                    ref={importInputRef}
+                    type="file"
+                    accept=".xlsx,.csv"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void handleImport(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={bulkWorking}
+                    onClick={() => importInputRef.current?.click()}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-emerald-500/40 bg-slate-800 px-4 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    <Icon name="upload" className="size-4" />
+                    <span>{bulkWorking ? "Memproses…" : "Import Excel"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadTemplate()}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/10 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-700"
+                  >
+                    <Icon name="document" className="size-4" />
+                    <span>Template</span>
+                  </button>
+                </>
+              ) : null}
               {canManage ? (
                 <button
                   type="button"
@@ -329,6 +458,9 @@ export default function GuruPage() {
               </option>
               <option value="Honorer" className="bg-slate-900 text-slate-100">
                 Honorer
+              </option>
+              <option value="Kontrak" className="bg-slate-900 text-slate-100">
+                Kontrak
               </option>
             </select>
             <select
@@ -440,7 +572,15 @@ export default function GuruPage() {
                         <td className="px-6 py-4 text-xs text-slate-300">
                           <div>{String(item.no_hp || "-")}</div>
                           <div className="text-slate-400">
-                            Shift #{String(item.id_shift || 1)}
+                            Jam scan: {(() => {
+                              const shift = shiftList.find(
+                                (s) =>
+                                  Number(s.id_shift) === Number(item.id_shift),
+                              );
+                              return shift
+                                ? shiftLabel(shift)
+                                : `Shift #${String(item.id_shift || 1)}`;
+                            })()}
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right">
@@ -636,6 +776,12 @@ export default function GuruPage() {
                     >
                       Honorer
                     </option>
+                    <option
+                      value="Kontrak"
+                      className="bg-slate-900 text-slate-100"
+                    >
+                      Kontrak
+                    </option>
                   </select>
                 </div>
               </div>
@@ -669,7 +815,7 @@ export default function GuruPage() {
                     htmlFor="guru-shift"
                     className="block text-xs font-semibold text-slate-300"
                   >
-                    Shift Jam Mengajar
+                    Shift / Jam Scan
                   </label>
                   <select
                     id="guru-shift"
@@ -688,7 +834,7 @@ export default function GuruPage() {
                         value={Number(s.id_shift)}
                         className="bg-slate-900 text-slate-100"
                       >
-                        {String(s.nama_shift || `Shift #${s.id_shift}`)}
+                        {shiftLabel(s)}
                       </option>
                     ))}
                   </select>

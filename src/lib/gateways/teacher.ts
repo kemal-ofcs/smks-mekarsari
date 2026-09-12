@@ -33,13 +33,17 @@ export async function getDaftarGuru() {
   return response.teachers;
 }
 
-export async function simpanGuru(draft: GuruInput) {
+/** `tundaSinkronisasi`: lihat `simpanSiswa`. */
+export async function simpanGuru(
+  draft: GuruInput,
+  options: { tundaSinkronisasi?: boolean } = {},
+) {
   if (isDesktopRuntime()) {
     const result = await invokeDesktop<{ sukses: boolean; id_guru: string }>(
       "desktop_save_teacher",
       { draft },
     );
-    kickDesktopSync();
+    if (!options.tundaSinkronisasi) kickDesktopSync();
     return result;
   }
   return requestWebApi<{ sukses: boolean; id_guru: string }>(

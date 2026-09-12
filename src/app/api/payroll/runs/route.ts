@@ -130,10 +130,11 @@ export async function PUT(request: NextRequest) {
             id, payroll_run_id, id_karyawan, nama_karyawan, divisi, ptkp_status,
             total_regular_hours, total_overtime_hours, total_overtime_index,
             total_holiday_hours, total_holiday_overtime_index,
+            total_teaching_jp, teaching_salary,
             rate_per_hour, basic_salary, overtime_salary, gross_salary,
             total_allowances, total_deductions, bpjs_employee_total, bpjs_company_total,
             pph21_amount, net_salary, breakdown_snapshot, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         `,
         args: [
           `${runId}-${row.id_karyawan}`,
@@ -147,6 +148,8 @@ export async function PUT(request: NextRequest) {
           row.total_overtime_index,
           row.total_holiday_hours,
           row.total_holiday_overtime_index,
+          row.total_teaching_jp,
+          row.teaching_salary,
           row.rate_per_hour,
           row.est_basic_salary,
           row.est_overtime_salary,

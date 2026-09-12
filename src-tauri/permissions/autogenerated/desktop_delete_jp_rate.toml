@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-delete-jp-rate"
+description = "Enables the desktop_delete_jp_rate command without any pre-configured scope."
+commands.allow = ["desktop_delete_jp_rate"]
+
+[[permission]]
+identifier = "deny-desktop-delete-jp-rate"
+description = "Denies the desktop_delete_jp_rate command without any pre-configured scope."
+commands.deny = ["desktop_delete_jp_rate"]

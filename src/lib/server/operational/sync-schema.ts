@@ -517,10 +517,30 @@ export const operationalSyncEventSchema = z.union([
         id: shortText.min(1),
         id_karyawan: shortText.min(1),
         rate_per_hour: finiteNumber,
+        // Opsional: perangkat yang belum diperbarui masih mengirim baris tanpa
+        // kolom ini, dan menolaknya akan membuat outbox-nya macet permanen.
+        rate_per_jp: finiteNumber.optional(),
         ptkp_status: shortText.min(1),
         effective_date: shortText.min(1),
         created_by: shortText.min(1),
         created_at: shortText.min(1),
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "payroll",
+    "jp-rate",
+    z
+      .object({
+        id: shortText.min(1),
+        id_mapel: shortText.min(1),
+        // NULL berarti tarif berlaku untuk siapa pun yang mengajar mapel ini.
+        id_guru: shortText.nullable().optional(),
+        rate_per_jp: finiteNumber,
+        effective_date: shortText.min(1),
+        status_aktif: finiteNumber,
+        created_at: shortText.min(1),
+        updated_at: shortText.min(1),
       })
       .strict(),
   ),
@@ -547,7 +567,10 @@ export const operationalSyncEventSchema = z.union([
         id: shortText.min(1),
         name: shortText.min(1),
         category: z.enum(["ALLOWANCE", "DEDUCTION"]),
-        calc_type: z.enum(["FIXED", "PERCENTAGE"]),
+        // PER_JP dan PER_HADIR menyusul pada schema versi 25, bersama rebuild
+        // CHECK constraint `payroll_components.calc_type` di ketiga jalur
+        // provisioning. Daftar ini WAJIB sama dengan ketiganya.
+        calc_type: z.enum(["FIXED", "PERCENTAGE", "PER_JP", "PER_HADIR"]),
         default_value: finiteNumber,
         applies_to: shortText.min(1),
         is_active: finiteNumber,
@@ -593,6 +616,7 @@ export const operationalSyncEventSchema = z.union([
           "payroll_components",
           "tax_rules",
           "bpjs_rules",
+          "tarif_jp",
         ]),
         id: shortText.min(1),
       })
@@ -792,6 +816,84 @@ export const operationalSyncEventSchema = z.union([
     z
       .object({
         id_mapel: optionalShortText,
+      })
+      .strict(),
+  ),
+  // Jadwal mengajar mingguan. `hari` 1=Senin sampai 7=Minggu; `jam_ke` sudah
+  // berbentuk kanonik karena dinormalkan `normalizeJamKe`/`normalize_jam_ke`
+  // sebelum event dibuat.
+  ...(["create", "update"] as const).map((operation) =>
+    eventSchema(
+      "teaching-schedule",
+      operation,
+      z
+        .object({
+          id_jadwal: shortText.min(1),
+          id_tahun_ajaran: shortText.min(1),
+          id_rombel: shortText.min(1),
+          id_mapel: shortText.min(1),
+          id_guru: shortText.min(1),
+          hari: finiteNumber,
+          jam_ke: shortText.min(1),
+          is_aktif: optionalNumber,
+          created_at: optionalShortText,
+          updated_at: optionalShortText,
+        })
+        .strict(),
+    ),
+  ),
+  eventSchema(
+    "teaching-schedule",
+    "delete",
+    z
+      .object({
+        id_jadwal: optionalShortText,
+      })
+      .strict(),
+  ),
+  // Jadwal bel sekolah. `jam_mulai`/`jam_selesai` divalidasi bentuk jamnya di
+  // `normalizeJamBel`, bukan di sini: aturan yang sama harus berlaku pada
+  // penyimpanan lokal Rust, dan Zod hanya menjaga sisi cloud.
+  eventSchema(
+    "academic-period",
+    "create",
+    z
+      .object({
+        id_jam_pelajaran: shortText.min(1),
+        jam_ke: finiteNumber,
+        jam_mulai: shortText.min(1),
+        jam_selesai: shortText.min(1),
+        jenis: z.enum(["KBM", "Istirahat", "Upacara", "Ekstrakurikuler"]),
+        keterangan: optionalShortText,
+        is_aktif: optionalNumber,
+        created_at: optionalShortText,
+        updated_at: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "academic-period",
+    "update",
+    z
+      .object({
+        id_jam_pelajaran: shortText.min(1),
+        jam_ke: finiteNumber,
+        jam_mulai: shortText.min(1),
+        jam_selesai: shortText.min(1),
+        jenis: z.enum(["KBM", "Istirahat", "Upacara", "Ekstrakurikuler"]),
+        keterangan: optionalShortText,
+        is_aktif: optionalNumber,
+        created_at: optionalShortText,
+        updated_at: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "academic-period",
+    "delete",
+    z
+      .object({
+        id_jam_pelajaran: optionalShortText,
       })
       .strict(),
   ),

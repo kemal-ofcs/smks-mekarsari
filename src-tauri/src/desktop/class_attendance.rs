@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 
 use super::{config::DesktopState, models::CommandError, storage, sync};
@@ -81,11 +81,407 @@ fn class_status(raw: &str) -> Result<&str, CommandError> {
     }
 }
 
-/// Batas atas jam pelajaran yang masuk akal dalam satu hari sekolah.
+/// Batas STRUKTURAL jam pelajaran — pagar terluar, bukan kebijakan sekolah.
 ///
-/// Sengaja lebih longgar daripada 8 pilihan yang ditawarkan UI: sekolah dengan
-/// 10–12 jam pelajaran tidak boleh terkunci hanya karena validator ini.
-const MAX_JAM_KE: u32 = 12;
+/// Angka ini hanya menjaga agar teks asing tidak masuk ke kolom yang ikut
+/// disinkronkan; jumlah jam pelajaran yang benar-benar dipakai sebuah sekolah
+/// diatur terpisah lewat `jp_max_per_hari` di `setting_gex_system`. Keduanya
+/// dipisah karena sifatnya berbeda: yang ini melindungi database dan karena itu
+/// dieja di kode, yang satu lagi keputusan sekolah dan bisa diubah tanpa
+/// memasang ulang aplikasi.
+///
+/// Dinaikkan dari 12 ke 20: pesantren dan sekolah berasrama benar-benar punya
+/// jam pelajaran sampai belasan, dan batas lama menguncinya tanpa alasan
+/// teknis apa pun. Cerminan `MAX_JAM_KE` di `class-attendance.ts`.
+const MAX_JAM_KE: u32 = 20;
+
+/// Jenis baris pada jadwal bel sekolah. Cerminan `JENIS_JAM_PELAJARAN` di
+/// `class-attendance.ts`, dan WAJIB sama dengan CHECK constraint tabelnya.
+const JENIS_JAM_PELAJARAN: &[&str] = &["KBM", "Istirahat", "Upacara", "Ekstrakurikuler"];
+
+/// Normalisasi jam dinding `HH:MM` pada jadwal bel.
+///
+/// Menerima `7:5` dan mengembalikan `07:05`, karena orang mengetik jam seperti
+/// itu; menolak apa pun yang bukan jam. Kolomnya TEKS dan ikut disinkronkan,
+/// jadi satu ejaan bebas akan membuat pengurutan bel berantakan di perangkat
+/// lain tanpa pesan apa pun.
+///
+/// Cerminan `normalizeJamBel` di `class-attendance.ts`; keduanya diuji dengan
+/// vektor yang sama.
+pub fn normalize_jam_bel(raw: &str) -> Option<String> {
+    let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+    let (jam_text, menit_text) = compact.split_once(':')?;
+
+    let angka = |bagian: &str| -> Option<u32> {
+        if bagian.is_empty()
+            || bagian.len() > 2
+            || !bagian.chars().all(|c| c.is_ascii_digit())
+        {
+            return None;
+        }
+        bagian.parse::<u32>().ok()
+    };
+
+    let jam = angka(jam_text)?;
+    let menit = angka(menit_text)?;
+    if jam > 23 || menit > 59 {
+        return None;
+    }
+    Some(format!("{jam:02}:{menit:02}"))
+}
+
+/// Kunci `setting_gex_system` untuk jumlah jam pelajaran per hari.
+pub const JP_MAX_PER_DAY_SETTING_KEY: &str = "jp_max_per_hari";
+
+/// Kunci `setting_gex_system` untuk lama satu jam pelajaran (menit).
+pub const JP_DURATION_SETTING_KEY: &str = "jp_durasi_menit";
+
+/// Jumlah jam pelajaran per hari bila sekolah belum mengaturnya.
+pub const DEFAULT_JP_MAX_PER_DAY: u32 = 12;
+
+/// Lama satu jam pelajaran bila sekolah belum mengaturnya (menit).
+pub const DEFAULT_JP_DURATION_MINUTES: u32 = 45;
+
+/// Membaca `jp_max_per_hari` dari nilai mentah `setting_gex_system`.
+///
+/// Nilai yang hilang, bukan angka, atau di luar `1..MAX_JAM_KE` jatuh ke bawaan
+/// — BUKAN ke nol dan bukan ke batas struktural. Nol akan membuat setiap
+/// presensi ditolak, dan batas struktural akan diam-diam melonggarkan kebijakan
+/// sekolah yang justru sedang salah tulis.
+///
+/// Cerminan `parseJpMaxPerDay` di `class-attendance.ts`; keduanya diuji dengan
+/// vektor yang sama.
+pub fn jp_max_per_day(raw: Option<&str>) -> u32 {
+    raw.and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| (1..=MAX_JAM_KE).contains(value))
+        .unwrap_or(DEFAULT_JP_MAX_PER_DAY)
+}
+
+/// Membaca `jp_durasi_menit`. Angka ini TIDAK mengubah nominal gaji: honor guru
+/// dibayar per jam pelajaran, bukan per menit.
+///
+/// Cerminan `parseJpDuration` di `class-attendance.ts`.
+pub fn jp_duration_minutes(raw: Option<&str>) -> u32 {
+    raw.and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| (1..=240).contains(value))
+        .unwrap_or(DEFAULT_JP_DURATION_MINUTES)
+}
+
+/// Jadwal bel sekolah, urut menurut jam pelajaran lalu jam mulai.
+///
+/// Tanpa LIMIT: satu baris per jam pelajaran per hari sekolah — dibatasi
+/// `jp_max_per_hari` ditambah beberapa baris istirahat, bukan oleh waktu.
+pub fn list_lesson_periods(state: &DesktopState) -> Result<Value, CommandError> {
+    let conn = storage::database(&state.data_dir)?;
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT id_jam_pelajaran, jam_ke, jam_mulai, jam_selesai, jenis,
+                   COALESCE(keterangan, ''), is_aktif, created_at, updated_at
+            FROM akademik_jam_pelajaran
+            ORDER BY jam_ke, jam_mulai;
+            "#,
+        )
+        .map_err(|_| CommandError::internal())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(json!({
+                "id_jam_pelajaran": row.get::<_, String>(0)?,
+                "jam_ke": row.get::<_, i64>(1)?,
+                "jam_mulai": row.get::<_, String>(2)?,
+                "jam_selesai": row.get::<_, String>(3)?,
+                "jenis": row.get::<_, String>(4)?,
+                "keterangan": row.get::<_, String>(5)?,
+                "is_aktif": row.get::<_, i64>(6)?,
+                "created_at": row.get::<_, String>(7)?,
+                "updated_at": row.get::<_, String>(8)?,
+            }))
+        })
+        .map_err(|_| CommandError::internal())?;
+
+    Ok(Value::Array(rows.flatten().collect()))
+}
+
+/// Menyimpan satu baris jadwal bel.
+pub fn save_lesson_period(state: &DesktopState, draft: &Value) -> Result<Value, CommandError> {
+    let id_masuk = text(draft, "id_jam_pelajaran").to_owned();
+    let is_new = id_masuk.is_empty();
+    let id = if is_new {
+        new_attendance_id("jp_")
+    } else {
+        id_masuk
+    };
+
+    let jam_ke = integer(draft, "jam_ke", 0);
+    let jam_mulai = normalize_jam_bel(text(draft, "jam_mulai")).ok_or_else(|| {
+        CommandError::new(
+            "VALIDATION_ERROR",
+            "Jam mulai harus berbentuk jam, misalnya 07:00.",
+        )
+    })?;
+    let jam_selesai = normalize_jam_bel(text(draft, "jam_selesai")).ok_or_else(|| {
+        CommandError::new(
+            "VALIDATION_ERROR",
+            "Jam selesai harus berbentuk jam, misalnya 07:45.",
+        )
+    })?;
+    let jenis = {
+        let value = text(draft, "jenis");
+        let value = if value.is_empty() { "KBM" } else { value };
+        if !JENIS_JAM_PELAJARAN.contains(&value) {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Jenis jam pelajaran tidak dikenal.",
+            ));
+        }
+        value.to_owned()
+    };
+    let keterangan = optional_text(draft, "keterangan");
+    let is_aktif = if integer(draft, "is_aktif", 1) == 0 { 0 } else { 1 };
+
+    let mut conn = storage::database(&state.data_dir)?;
+    let batas = configured_jp_max(&conn)?;
+    if jam_ke < 1 || jam_ke > i64::from(batas) {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            format!("Jam pelajaran harus di antara 1 dan {batas}, sesuai Pengaturan."),
+        ));
+    }
+    // Jam selesai yang lebih awal daripada jam mulai bukan sekadar salah ketik:
+    // ia membuat durasi negatif di layar dan pengurutan bel yang tidak masuk
+    // akal. Bel yang melewati tengah malam tidak didukung — sekolah tidak
+    // punya jam pelajaran seperti itu, dan menebaknya akan memaksa setiap
+    // pembaca menebak hal yang sama.
+    if jam_selesai <= jam_mulai {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Jam selesai harus lebih lambat daripada jam mulai.",
+        ));
+    }
+
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    // Keunikan jam pelajaran ditegakkan di APLIKASI, bukan skema: tabelnya
+    // sengaja tanpa UNIQUE supaya push dari perangkat offline tidak macet.
+    let bentrok: bool = tx
+        .prepare(
+            "SELECT 1 FROM akademik_jam_pelajaran
+             WHERE jam_ke = ?1 AND id_jam_pelajaran <> ?2 AND is_aktif = 1
+             LIMIT 1;",
+        )
+        .map_err(|_| CommandError::internal())?
+        .exists(params![jam_ke, id])
+        .map_err(|_| CommandError::internal())?;
+    if bentrok && is_aktif == 1 {
+        return Err(CommandError::new(
+            "DUPLICATE_PERIOD",
+            format!("Jam pelajaran ke-{jam_ke} sudah terdaftar pada jadwal bel."),
+        ));
+    }
+
+    let now = sqlite_now(&tx);
+    let created_at = tx
+        .query_row(
+            "SELECT created_at FROM akademik_jam_pelajaran WHERE id_jam_pelajaran = ?1;",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .unwrap_or_else(|| now.clone());
+
+    tx.execute(
+        r#"
+        INSERT INTO akademik_jam_pelajaran (
+            id_jam_pelajaran, jam_ke, jam_mulai, jam_selesai, jenis,
+            keterangan, is_aktif, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        ON CONFLICT(id_jam_pelajaran) DO UPDATE SET
+            jam_ke = excluded.jam_ke,
+            jam_mulai = excluded.jam_mulai,
+            jam_selesai = excluded.jam_selesai,
+            jenis = excluded.jenis,
+            keterangan = excluded.keterangan,
+            is_aktif = excluded.is_aktif,
+            updated_at = excluded.updated_at;
+        "#,
+        params![
+            id,
+            jam_ke,
+            jam_mulai,
+            jam_selesai,
+            jenis,
+            keterangan,
+            is_aktif,
+            created_at,
+            now
+        ],
+    )
+    .map_err(|_| CommandError::new("SAVE_FAILED", "Gagal menyimpan jadwal jam pelajaran."))?;
+
+    let client_id = sync::ensure_client_id(state)?;
+    let op = if is_new { "create" } else { "update" };
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "academic-period",
+        op,
+        &id,
+        &json!({
+            "id_jam_pelajaran": id,
+            "jam_ke": jam_ke,
+            "jam_mulai": jam_mulai,
+            "jam_selesai": jam_selesai,
+            "jenis": jenis,
+            "keterangan": keterangan,
+            "is_aktif": is_aktif,
+            "created_at": created_at,
+            "updated_at": now,
+        }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true, "id_jam_pelajaran": id }))
+}
+
+/// Menghapus satu baris jadwal bel.
+///
+/// Tidak ada pemeriksaan "sedang dipakai": jadwal bel hanya KETERANGAN, dan
+/// presensi yang sudah tersimpan memegang `jam_ke`-nya sendiri. Menghapus
+/// barisnya membuat pukulnya berhenti ditampilkan, bukan merusak presensi.
+pub fn delete_lesson_period(state: &DesktopState, id: &str) -> Result<Value, CommandError> {
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    tx.execute(
+        "DELETE FROM akademik_jam_pelajaran WHERE id_jam_pelajaran = ?1;",
+        params![id],
+    )
+    .map_err(|_| CommandError::new("DELETE_FAILED", "Gagal menghapus jadwal jam pelajaran."))?;
+
+    let client_id = sync::ensure_client_id(state)?;
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "academic-period",
+        "delete",
+        id,
+        &json!({ "id_jam_pelajaran": id }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true }))
+}
+
+/// Pengaturan jam pelajaran sekolah: jumlah per hari dan lama satu jam.
+///
+/// Dibaca bersama supaya layar presensi hanya melakukan satu panggilan.
+pub fn get_jp_settings(state: &DesktopState) -> Result<Value, CommandError> {
+    let conn = storage::database(&state.data_dir)?;
+    let baca = |key: &str| -> Result<Option<String>, CommandError> {
+        conn.query_row(
+            "SELECT value FROM setting_gex_system WHERE key = ?1 LIMIT 1;",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())
+    };
+
+    Ok(json!({
+        "maxPerHari": jp_max_per_day(baca(JP_MAX_PER_DAY_SETTING_KEY)?.as_deref()),
+        "durasiMenit": jp_duration_minutes(baca(JP_DURATION_SETTING_KEY)?.as_deref()),
+        "batasStruktural": MAX_JAM_KE,
+    }))
+}
+
+/// Menyimpan kedua pengaturan jam pelajaran.
+///
+/// Keduanya hidup di `setting_gex_system` yang ikut sinkronisasi: ini kebijakan
+/// sekolah, bukan setelan perangkat, sehingga TIDAK boleh masuk
+/// `sync::DEVICE_LOCAL_SETTING_KEYS`.
+pub fn save_jp_settings(
+    state: &DesktopState,
+    max_per_hari: i64,
+    durasi_menit: i64,
+) -> Result<Value, CommandError> {
+    if !(1..=i64::from(MAX_JAM_KE)).contains(&max_per_hari) {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            format!("Jumlah jam pelajaran per hari harus di antara 1 dan {MAX_JAM_KE}."),
+        ));
+    }
+    if !(1..=240).contains(&durasi_menit) {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Lama satu jam pelajaran harus di antara 1 dan 240 menit.",
+        ));
+    }
+
+    let client_id = sync::ensure_client_id(state)?;
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    for (key, value) in [
+        (JP_MAX_PER_DAY_SETTING_KEY, max_per_hari.to_string()),
+        (JP_DURATION_SETTING_KEY, durasi_menit.to_string()),
+    ] {
+        tx.execute(
+            "INSERT INTO setting_gex_system (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+            params![key, value],
+        )
+        .map_err(|_| {
+            CommandError::new("SAVE_FAILED", "Gagal menyimpan pengaturan jam pelajaran.")
+        })?;
+
+        // Antrean lama untuk kunci yang sama dibuang lebih dulu, sama seperti
+        // `save_alfa_settings`: tanpa itu nilai lama yang gagal terkirim bisa
+        // menyusul nilai baru dan mengembalikannya.
+        let _ = tx.execute(
+            "DELETE FROM desktop_sync_conflict WHERE domain = 'setting' AND entity_key = ?1;",
+            params![key],
+        );
+        let _ = tx.execute(
+            "DELETE FROM desktop_sync_outbox WHERE domain = 'setting' AND entity_key = ?1
+             AND status IN ('pending', 'failed', 'conflict');",
+            params![key],
+        );
+
+        sync::enqueue(
+            &tx,
+            &client_id,
+            "setting",
+            "update",
+            key,
+            &json!({ "key": key, "value": value }),
+            None,
+        )?;
+    }
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({
+        "sukses": true,
+        "maxPerHari": max_per_hari,
+        "durasiMenit": durasi_menit,
+    }))
+}
+
+/// Batas jam pelajaran yang berlaku pada pemasangan ini, dibaca dari database.
+fn configured_jp_max(conn: &rusqlite::Connection) -> Result<u32, CommandError> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM setting_gex_system WHERE key = ?1 LIMIT 1;",
+            params![JP_MAX_PER_DAY_SETTING_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+    Ok(jp_max_per_day(value.as_deref()))
+}
 
 /// Normalisasi dan validasi `presensi_mapel.jam_ke`.
 ///
@@ -132,6 +528,102 @@ fn normalize_jam_ke(raw: &str) -> Result<String, CommandError> {
             Ok(format!("{awal}-{akhir}"))
         }
     }
+}
+
+/// Rentang `(awal, akhir)` dari sebuah `jam_ke`; angka tunggal `3` menjadi `(3, 3)`.
+///
+/// `None` untuk nilai yang tidak lolos `normalize_jam_ke` — termasuk baris lama
+/// yang tersimpan sebelum gerbang itu ada. Pemanggil yang membandingkan dengan
+/// baris tersimpan WAJIB memperlakukan `None` sebagai "tidak diketahui", bukan
+/// sebagai bentrok: teks asing di satu baris lama tidak boleh mengunci seluruh
+/// jadwal rombel itu dari presensi baru.
+///
+/// Cerminan `rentangJamKe` di `src/lib/validations/class-attendance.ts`;
+/// keduanya diuji dengan vektor yang sama.
+/// Gerbang `jam_ke` untuk modul lain (jadwal mengajar).
+///
+/// Dibuka lewat pembungkus, bukan dengan mengubah `normalize_jam_ke` menjadi
+/// publik: aturannya tetap hidup di modul presensi, tempat ia dipakai pertama
+/// kali dan diuji.
+pub(crate) fn normalize_jam_ke_public(raw: &str) -> Result<String, CommandError> {
+    normalize_jam_ke(raw)
+}
+
+/// Irisan `jam_ke` untuk modul lain (jadwal mengajar).
+pub(crate) fn jam_ke_overlaps_public(a: &str, b: &str) -> bool {
+    jam_ke_overlaps(a, b)
+}
+
+pub(crate) fn jam_ke_range(raw: &str) -> Option<(u32, u32)> {
+    let normal = normalize_jam_ke(raw).ok()?;
+    match normal.split_once('-') {
+        None => normal.parse::<u32>().ok().map(|v| (v, v)),
+        Some((awal, akhir)) => Some((awal.parse().ok()?, akhir.parse().ok()?)),
+    }
+}
+
+/// Apakah dua `jam_ke` memakai setidaknya satu jam pelajaran yang sama?
+///
+/// Membandingkan IRISAN, bukan teks: `1-2` dan `2` sama-sama memakai jam ke-2.
+/// Pemeriksaan duplikat lama mencocokkan teks persis, sehingga pasangan itu
+/// lolos sebagai dua sesi dan jam ke-2 tercatat dua kali — begitu JP menjadi
+/// dasar honor guru, itu berarti membayar satu jam dua kali.
+///
+/// Cerminan `jamKeBeririsan` di `src/lib/validations/class-attendance.ts`.
+fn jam_ke_overlaps(a: &str, b: &str) -> bool {
+    match (jam_ke_range(a), jam_ke_range(b)) {
+        (Some((a_awal, a_akhir)), Some((b_awal, b_akhir))) => {
+            a_awal <= b_akhir && b_awal <= a_akhir
+        }
+        _ => false,
+    }
+}
+
+/// `jam_ke` sesi lain yang beririsan dengan sesi yang sedang disimpan.
+///
+/// Cakupannya sengaja (rombel, mapel, tanggal) — BUKAN seluruh rombel dan BUKAN
+/// seluruh sesi guru:
+/// - Dua MAPEL berbeda pada rombel dan jam yang sama itu sah: pelajaran Agama
+///   memecah satu rombel menjadi PAI dan PAK yang berjalan bersamaan.
+/// - Satu GURU pada dua rombel di jam yang sama juga sah: kelas gabungan
+///   (Agama lintas rombel, PJOK) tetap butuh presensi per rombel.
+///
+/// Menolak keduanya akan memblokir presensi yang benar. Pembayaran ganda pada
+/// kasus kedua dicegah di rekap honor, yang menghitung GABUNGAN jam per guru
+/// per hari, bukan di sini.
+///
+/// Tidak ada `LIMIT`: dipatok `tanggal = ?` pada satu rombel dan satu mapel,
+/// jadi hasilnya paling banyak beberapa sesi dalam sehari.
+fn find_overlapping_session(
+    conn: &rusqlite::Connection,
+    id_tahun_ajaran: &str,
+    id_rombel: &str,
+    id_mapel: &str,
+    tanggal: &str,
+    jam_ke: &str,
+    id_presensi: &str,
+) -> Result<Option<String>, CommandError> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT jam_ke FROM presensi_mapel
+            WHERE id_tahun_ajaran = ?1
+              AND id_rombel = ?2
+              AND id_mapel = ?3
+              AND tanggal = ?4
+              AND id_presensi_mapel <> ?5;
+            "#,
+        )
+        .map_err(|_| CommandError::internal())?;
+    let lain = stmt
+        .query_map(
+            params![id_tahun_ajaran, id_rombel, id_mapel, tanggal, id_presensi],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| CommandError::internal())?
+        .filter_map(Result::ok)
+        .find(|tersimpan| jam_ke_overlaps(jam_ke, tersimpan));
+    Ok(lain)
 }
 
 /// Ringkasan scan gerbang: SATU baris per (siswa, tanggal).
@@ -503,35 +995,38 @@ pub fn save_class_attendance(state: &DesktopState, draft: &Value) -> Result<Valu
     let jam_ke = normalize_jam_ke(jam_ke)?;
     let jam_ke = jam_ke.as_str();
 
-    // Aturan 32: Tegakkan keunikan sesi (rombel, mapel, tanggal, jam_ke) di aplikasi, bukan skema DB.
-    let duplicate = tx
-        .prepare(
-            r#"
-            SELECT 1 FROM presensi_mapel
-            WHERE id_tahun_ajaran = ?1
-              AND id_rombel = ?2
-              AND id_mapel = ?3
-              AND tanggal = ?4
-              AND jam_ke = ?5
-              AND id_presensi_mapel <> ?6
-            LIMIT 1;
-            "#,
-        )
-        .map_err(|_| CommandError::internal())?
-        .exists(params![
-            id_tahun_ajaran,
-            id_rombel,
-            id_mapel,
-            tanggal,
-            jam_ke,
-            id_presensi
-        ])
-        .map_err(|_| CommandError::internal())?;
+    // Batas sekolah ditegakkan SETELAH batas struktural: yang pertama menjaga
+    // databasenya, yang kedua kebijakan sekolahnya. Pesan errornya menyebut
+    // angka yang benar-benar dipakai sekolah itu, bukan pagar terluarnya.
+    let batas_sekolah = configured_jp_max(&tx)?;
+    if let Some((_, akhir)) = jam_ke_range(jam_ke) {
+        if akhir > batas_sekolah {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                format!(
+                    "Sekolah ini memakai {batas_sekolah} jam pelajaran per hari, sehingga jam ke-{akhir} tidak tersedia. Ubah di Pengaturan bila jumlahnya bertambah."
+                ),
+            ));
+        }
+    }
 
-    if duplicate {
+    // Aturan 32: Tegakkan keunikan sesi di aplikasi, bukan skema DB. Yang
+    // diperiksa adalah IRISAN jamnya, bukan teksnya: `1-2` dan `2` adalah dua
+    // baris berbeda bagi `=`, padahal keduanya memakai jam ke-2 yang sama.
+    if let Some(bentrok) = find_overlapping_session(
+        &tx,
+        id_tahun_ajaran,
+        id_rombel,
+        id_mapel,
+        tanggal,
+        jam_ke,
+        &id_presensi,
+    )? {
         return Err(CommandError::new(
             "DUPLICATE_SESSION",
-            "Sesi presensi untuk rombel, mapel, tanggal, dan jam ke ini sudah pernah dibuat.",
+            format!(
+                "Sesi mata pelajaran ini pada rombel dan tanggal tersebut sudah tercatat di jam ke-{bentrok}, yang beririsan dengan jam ke-{jam_ke}."
+            ),
         ));
     }
 
@@ -1113,51 +1608,107 @@ mod tests {
             r#"
             INSERT INTO presensi_mapel (
                 id_presensi_mapel, id_tahun_ajaran, id_rombel, id_mapel, id_guru, tanggal, jam_ke
-            ) VALUES ('pm_1', 'ta_1', 'rom_1', 'map_1', 'guru_1', '2026-09-07', '1');
+            ) VALUES ('pm_1', 'ta_1', 'rom_1', 'map_1', 'guru_1', '2026-09-07', '1-2');
             "#,
             [],
         )
         .unwrap();
 
-        // Sesi yang sama persis untuk id_presensi_mapel baru harus terdeteksi sebagai duplikat
-        let duplicate: bool = conn
-            .prepare(
-                r#"
-                SELECT 1 FROM presensi_mapel
-                WHERE id_tahun_ajaran = ?1
-                  AND id_rombel = ?2
-                  AND id_mapel = ?3
-                  AND tanggal = ?4
-                  AND jam_ke = ?5
-                  AND id_presensi_mapel <> ?6
-                LIMIT 1;
-                "#,
+        let cari = |jam_ke: &str, id_presensi: &str| {
+            find_overlapping_session(
+                &conn,
+                "ta_1",
+                "rom_1",
+                "map_1",
+                "2026-09-07",
+                jam_ke,
+                id_presensi,
             )
             .unwrap()
-            .exists(params!["ta_1", "rom_1", "map_1", "2026-09-07", "1", "pm_2"])
-            .unwrap();
+        };
 
-        assert!(duplicate);
+        // Sesi yang sama persis untuk id_presensi_mapel baru: bentrok.
+        assert_eq!(cari("1-2", "pm_2"), Some("1-2".to_string()));
 
-        // Mengedit sesi yang sama (id_presensi_mapel sama) TIDAK dianggap duplikat
-        let same_session_edit: bool = conn
-            .prepare(
-                r#"
-                SELECT 1 FROM presensi_mapel
-                WHERE id_tahun_ajaran = ?1
-                  AND id_rombel = ?2
-                  AND id_mapel = ?3
-                  AND tanggal = ?4
-                  AND jam_ke = ?5
-                  AND id_presensi_mapel <> ?6
-                LIMIT 1;
-                "#,
+        // Irisan sebagian — inilah yang lolos dari pencocokan teks persis, dan
+        // inilah bentuk hitung-dobelnya: jam ke-2 tercatat pada dua sesi.
+        assert_eq!(cari("2", "pm_2"), Some("1-2".to_string()));
+        assert_eq!(cari("2-3", "pm_2"), Some("1-2".to_string()));
+
+        // Bersebelahan tanpa berbagi jam: bukan bentrok.
+        assert_eq!(cari("3", "pm_2"), None);
+        assert_eq!(cari("3-4", "pm_2"), None);
+
+        // Mengedit sesi yang sama (id_presensi_mapel sama) TIDAK dianggap bentrok.
+        assert_eq!(cari("1-2", "pm_1"), None);
+
+        // Rombel dan tanggal yang sama tetapi MAPEL berbeda tidak diperiksa di
+        // sini: Agama memecah satu rombel menjadi dua kelas yang berjalan
+        // bersamaan, dan keduanya butuh presensinya masing-masing.
+        assert_eq!(
+            find_overlapping_session(
+                &conn,
+                "ta_1",
+                "rom_1",
+                "map_agama_2",
+                "2026-09-07",
+                "1-2",
+                "pm_2"
             )
-            .unwrap()
-            .exists(params!["ta_1", "rom_1", "map_1", "2026-09-07", "1", "pm_1"])
-            .unwrap();
+            .unwrap(),
+            None
+        );
+    }
 
-        assert!(!same_session_edit);
+    /// Vektor irisan `jam_ke` — WAJIB identik dengan `jamKeBeririsan` di
+    /// `src/lib/validations/class-attendance.ts`.
+    #[test]
+    fn irisan_jam_ke_dinilai_dari_rentang_bukan_teks() {
+        for (a, b) in [
+            ("1", "1"),
+            ("1-2", "2"),
+            ("2", "1-2"),
+            ("1-2", "2-3"),
+            ("1-4", "2-3"),
+            ("2-3", "1-4"),
+            ("1 - 2", "1-2"),
+        ] {
+            assert!(jam_ke_overlaps(a, b), "{a} seharusnya beririsan dengan {b}");
+        }
+
+        for (a, b) in [
+            ("1", "2"),
+            ("1-2", "3-4"),
+            ("3-4", "1-2"),
+            ("1-2", "3"),
+            // Nilai tidak valid tidak pernah dianggap bentrok: baris lama
+            // dengan teks asing tidak boleh mengunci jadwal rombelnya.
+            ("1-2", "abc"),
+            ("abc", "1-2"),
+            ("", "1"),
+        ] {
+            assert!(
+                !jam_ke_overlaps(a, b),
+                "{a} seharusnya TIDAK beririsan dengan {b}"
+            );
+        }
+    }
+
+    /// Rentang yang dibaca dari `jam_ke`, vektor yang sama dengan `rentangJamKe`.
+    #[test]
+    fn rentang_jam_ke_membaca_angka_tunggal_dan_rentang() {
+        for (masukan, harapan) in [
+            ("1", Some((1, 1))),
+            ("12", Some((12, 12))),
+            ("1-2", Some((1, 2))),
+            ("3 - 5", Some((3, 5))),
+            ("20", Some((20, 20))),
+            ("abc", None),
+            ("2-1", None),
+            ("21", None),
+        ] {
+            assert_eq!(jam_ke_range(masukan), harapan, "masukan: {masukan}");
+        }
     }
 
     /// Regresi: shift multi-sesi TIDAK BOLEH menggandakan baris roster.
@@ -1300,6 +1851,87 @@ mod tests {
         assert_eq!(stale[0].1, "sis_pindah");
     }
 
+    /// Vektor jam bel — WAJIB identik dengan `normalizeJamBel` di
+    /// `class-attendance.test.ts`.
+    #[test]
+    fn normalisasi_jam_bel_menerima_bentuk_manusia() {
+        for (masukan, harapan) in [
+            ("07:00", "07:00"),
+            ("7:0", "07:00"),
+            ("7:5", "07:05"),
+            ("23:59", "23:59"),
+            ("00:00", "00:00"),
+            (" 08 : 30 ", "08:30"),
+        ] {
+            assert_eq!(
+                normalize_jam_bel(masukan).as_deref(),
+                Some(harapan),
+                "masukan: {masukan}"
+            );
+        }
+
+        for masukan in [
+            "",
+            "0700",   // tanpa titik dua
+            "24:00",  // jam di luar hari
+            "07:60",  // menit di luar jam
+            "7",      // tidak lengkap
+            ":30",
+            "07:",
+            "abc:00",
+            "007:00", // lebih dari dua digit
+            "０7:00", // digit non-ASCII
+        ] {
+            assert!(
+                normalize_jam_bel(masukan).is_none(),
+                "seharusnya ditolak: {masukan}"
+            );
+        }
+    }
+
+    /// Vektor pengaturan jam pelajaran — WAJIB identik dengan blok
+    /// "pengaturan jam pelajaran" di `class-attendance.test.ts`.
+    #[test]
+    fn pengaturan_jp_jatuh_ke_bawaan_bukan_ke_nol() {
+        // Nilai cacat jatuh ke BAWAAN, bukan ke nol (setiap presensi akan
+        // ditolak) dan bukan ke batas struktural (diam-diam melonggarkan
+        // kebijakan sekolah yang justru sedang salah tulis).
+        for (mentah, harapan) in [
+            (None, 12),
+            (Some(""), 12),
+            (Some("   "), 12),
+            (Some("bukan angka"), 12),
+            (Some("0"), 12),
+            (Some("-3"), 12),
+            (Some("21"), 12),
+            (Some("1"), 1),
+            (Some("8"), 8),
+            (Some("12"), 12),
+            (Some("20"), 20),
+            (Some(" 10 "), 10),
+        ] {
+            assert_eq!(jp_max_per_day(mentah), harapan, "maks: {mentah:?}");
+        }
+
+        for (mentah, harapan) in [
+            (None, 45),
+            (Some(""), 45),
+            (Some("abc"), 45),
+            (Some("0"), 45),
+            (Some("241"), 45),
+            (Some("35"), 35),
+            (Some("40"), 40),
+            (Some("45"), 45),
+            (Some("240"), 240),
+        ] {
+            assert_eq!(
+                jp_duration_minutes(mentah),
+                harapan,
+                "durasi: {mentah:?}"
+            );
+        }
+    }
+
     /// Vektor uji `jam_ke` — WAJIB identik dengan `normalizeJamKe` di
     /// `src/lib/validations/class-attendance.ts`. Pola paritas yang sama dengan
     /// `ip-allowlist` dan `totp`.
@@ -1315,6 +1947,10 @@ mod tests {
             ("7-8", "7-8"),
             ("1 - 2", "1-2"),
             ("11-12", "11-12"),
+            // Batas struktural naik ke 20; jumlah yang dipakai sebuah sekolah
+            // dibatasi terpisah lewat `jp_max_per_hari`.
+            ("20", "20"),
+            ("13-20", "13-20"),
         ] {
             assert_eq!(
                 normalize_jam_ke(masukan).unwrap(),
@@ -1327,7 +1963,7 @@ mod tests {
         for masukan in [
             "",      // kosong
             "0",     // di bawah batas
-            "13",    // di atas batas
+            "21",    // di atas batas struktural
             "abc",   // bukan angka
             "2-1",   // terbalik
             "3-3",   // rentang nol

@@ -2,7 +2,13 @@
 
 import { Icon } from "@/components/ui/Icon";
 
-type TabKey = "tahun_ajaran" | "jurusan" | "rombel" | "mapel" | "penugasan";
+type TabKey =
+  | "tahun_ajaran"
+  | "jurusan"
+  | "rombel"
+  | "mapel"
+  | "penugasan"
+  | "jadwal";
 
 /**
  * Penugasan pada menu Akademik

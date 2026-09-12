@@ -4,7 +4,13 @@ import type { Dispatch, SetStateAction } from "react";
 import { Icon } from "@/components/ui/Icon";
 import type { TahunAjaranInput } from "@/lib/gateways/academic";
 
-type TabKey = "tahun_ajaran" | "jurusan" | "rombel" | "mapel" | "penugasan";
+type TabKey =
+  | "tahun_ajaran"
+  | "jurusan"
+  | "rombel"
+  | "mapel"
+  | "penugasan"
+  | "jadwal";
 
 /**
  * TahunAjaran pada menu Akademik

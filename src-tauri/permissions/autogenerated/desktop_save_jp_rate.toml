@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-save-jp-rate"
+description = "Enables the desktop_save_jp_rate command without any pre-configured scope."
+commands.allow = ["desktop_save_jp_rate"]
+
+[[permission]]
+identifier = "deny-desktop-save-jp-rate"
+description = "Denies the desktop_save_jp_rate command without any pre-configured scope."
+commands.deny = ["desktop_save_jp_rate"]

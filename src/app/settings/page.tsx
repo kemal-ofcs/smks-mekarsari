@@ -5,6 +5,7 @@ import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { DatabaseBackupCard } from "@/components/DatabaseBackupCard";
+import { JamPelajaranCard } from "@/components/JamPelajaranCard";
 import { MailSettingsCard } from "@/components/MailSettingsCard";
 import { PasswordRecoveryCard } from "@/components/PasswordRecoveryCard";
 import { GeofencingCard } from "@/components/settings/GeofencingCard";
@@ -1140,6 +1141,8 @@ export default function SettingsPage() {
       <PasswordRecoveryCard />
 
       {hasPermission(user, "settings.manage") ? <MailSettingsCard /> : null}
+
+      {hasPermission(user, "settings.manage") ? <JamPelajaranCard /> : null}
 
       {hasPermission(user, "settings.manage") ? (
         <ProfilInstansiCard

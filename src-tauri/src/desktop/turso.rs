@@ -838,6 +838,21 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
         sql: "SELECT * FROM overtime_tier_rules ORDER BY rule_type, tier_order;",
     },
     SnapshotSource {
+        payload_key: "jpRates",
+        table: "tarif_jp",
+        sql: "SELECT * FROM tarif_jp ORDER BY id_mapel, effective_date DESC;",
+    },
+    SnapshotSource {
+        payload_key: "lessonPeriods",
+        table: "akademik_jam_pelajaran",
+        sql: "SELECT * FROM akademik_jam_pelajaran ORDER BY jam_ke, jam_mulai;",
+    },
+    SnapshotSource {
+        payload_key: "teachingSchedules",
+        table: "jadwal_mengajar",
+        sql: "SELECT * FROM jadwal_mengajar ORDER BY id_rombel, hari, jam_ke;",
+    },
+    SnapshotSource {
         payload_key: "payrollComponents",
         table: "payroll_components",
         sql: "SELECT * FROM payroll_components ORDER BY category, name;",
@@ -1382,6 +1397,75 @@ impl TursoClient {
             statements.push(Statement::new((*index).to_owned(), vec![]));
         }
         self.execute_pipeline(statements).await?;
+        Ok(())
+    }
+
+    /// Memperluas CHECK `payroll_components.calc_type` pada database cloud yang
+    /// sudah ada (schema versi 25).
+    ///
+    /// SQLite — dan libSQL — tidak bisa mengubah CHECK lewat ALTER, jadi
+    /// tabelnya dibangun ulang. Menghapus tabel ikut menghapus trigger
+    /// `sync_pulse` miliknya, sehingga fungsi ini WAJIB berjalan SEBELUM
+    /// `ensure_sync_pulse`, sama seperti `rebuild_without_unique`.
+    ///
+    /// Idempoten lewat pemeriksaan teks DDL-nya sendiri. Tidak ada baris yang
+    /// perlu diperbaiki lebih dulu: nilai lama tetap sah pada CHECK baru.
+    /// Cerminan `ensure_payroll_calc_type_values` di `storage.rs`.
+    async fn ensure_payroll_calc_type_values(&self) -> Result<(), CommandError> {
+        let result = self
+            .query_one(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'payroll_components';",
+                vec![],
+            )
+            .await?;
+        let existing = result
+            .to_objects()
+            .first()
+            .and_then(|row| row.get("sql").and_then(Value::as_str).map(str::to_owned));
+        let Some(existing) = existing else {
+            return Ok(());
+        };
+        if existing.contains("'PER_JP'") {
+            return Ok(());
+        }
+
+        const KOLOM: &str =
+            "id, name, category, calc_type, default_value, applies_to, is_active, created_at";
+        // Nama tabel staging dirakit saat runtime, sama seperti
+        // `rebuild_without_unique`. Bentuk ini juga yang membuat `audit:sql`
+        // tidak mencoba menyiapkan INSERT ke tabel yang memang hanya hidup di
+        // tengah rebuild — query itu masuk daftar "tidak dapat disusun" yang
+        // dihitung dan dicetak auditnya, bukan dikecualikan diam-diam.
+        let staging = format!("payroll_components{}", "__rebuild");
+
+        self.execute_pipeline(vec![
+            Statement::new(format!("DROP TABLE IF EXISTS {staging};"), vec![]),
+            Statement::new(
+                r#"CREATE TABLE payroll_components__rebuild (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    category TEXT NOT NULL CHECK (category IN ('ALLOWANCE', 'DEDUCTION')),
+                    calc_type TEXT NOT NULL
+                        CHECK (calc_type IN ('FIXED', 'PERCENTAGE', 'PER_JP', 'PER_HADIR')),
+                    default_value REAL NOT NULL DEFAULT 0 CHECK (default_value >= 0),
+                    applies_to TEXT NOT NULL DEFAULT 'ALL',
+                    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#
+                .to_string(),
+                vec![],
+            ),
+            Statement::new(
+                format!("INSERT INTO {staging} ({KOLOM}) SELECT {KOLOM} FROM payroll_components;"),
+                vec![],
+            ),
+            Statement::new("DROP TABLE payroll_components;".to_string(), vec![]),
+            Statement::new(
+                format!("ALTER TABLE {staging} RENAME TO payroll_components;"),
+                vec![],
+            ),
+        ])
+        .await?;
         Ok(())
     }
 
@@ -2091,6 +2175,7 @@ impl TursoClient {
                     id TEXT PRIMARY KEY,
                     id_karyawan TEXT NOT NULL,
                     rate_per_hour REAL NOT NULL CHECK (rate_per_hour >= 0),
+                    rate_per_jp INTEGER NOT NULL DEFAULT 0 CHECK (rate_per_jp >= 0),
                     ptkp_status TEXT NOT NULL DEFAULT 'TK/0'
                         CHECK (ptkp_status IN ('TK/0','TK/1','TK/2','TK/3','K/0','K/1','K/2','K/3')),
                     effective_date TEXT NOT NULL,
@@ -2119,7 +2204,8 @@ impl TursoClient {
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     category TEXT NOT NULL CHECK (category IN ('ALLOWANCE', 'DEDUCTION')),
-                    calc_type TEXT NOT NULL CHECK (calc_type IN ('FIXED', 'PERCENTAGE')),
+                    calc_type TEXT NOT NULL
+                        CHECK (calc_type IN ('FIXED', 'PERCENTAGE', 'PER_JP', 'PER_HADIR')),
                     default_value REAL NOT NULL DEFAULT 0 CHECK (default_value >= 0),
                     applies_to TEXT NOT NULL DEFAULT 'ALL',
                     is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
@@ -2181,6 +2267,8 @@ impl TursoClient {
                     total_overtime_index REAL NOT NULL,
                     total_holiday_hours REAL NOT NULL DEFAULT 0,
                     total_holiday_overtime_index REAL NOT NULL DEFAULT 0,
+                    total_teaching_jp INTEGER NOT NULL DEFAULT 0,
+                    teaching_salary INTEGER NOT NULL DEFAULT 0 CHECK (teaching_salary >= 0),
                     rate_per_hour INTEGER NOT NULL,
                     basic_salary INTEGER NOT NULL CHECK (basic_salary >= 0),
                     overtime_salary INTEGER NOT NULL CHECK (overtime_salary >= 0),
@@ -2195,6 +2283,77 @@ impl TursoClient {
                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
                     UNIQUE (payroll_run_id, id_karyawan)
                 );"#,
+                vec![],
+            ),
+            // Tarif honor per jam pelajaran (schema versi 22). `id_guru` NULL
+            // berarti tarif berlaku untuk siapa pun yang mengajar mapel itu;
+            // diisi berarti tarif khusus dan menang atas tarif umum. SENGAJA
+            // tanpa UNIQUE selain PK — dua perangkat offline boleh membuat
+            // tarif untuk mapel yang sama, dan UNIQUE akan membuat push-nya
+            // gagal permanen. Cerminan DDL di `storage.rs`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS tarif_jp (
+                    id TEXT PRIMARY KEY,
+                    id_mapel TEXT NOT NULL,
+                    id_guru TEXT,
+                    rate_per_jp INTEGER NOT NULL CHECK (rate_per_jp >= 0),
+                    effective_date TEXT NOT NULL,
+                    status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                "CREATE INDEX IF NOT EXISTS idx_tarif_jp_lookup ON tarif_jp(id_mapel, effective_date DESC);",
+                vec![],
+            ),
+            // Jadwal bel sekolah (schema versi 23). Tabel KETERANGAN: presensi
+            // kelas tetap menyimpan `jam_ke` dan honor tetap dihitung per jam
+            // pelajaran, jadi baris yang belum lengkap tidak pernah
+            // menghalangi presensi. Tanpa UNIQUE pada `jam_ke` — dua perangkat
+            // offline boleh mendaftarkan jam yang sama, dan UNIQUE akan
+            // membuat push-nya gagal permanen. Cerminan DDL di `storage.rs`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS akademik_jam_pelajaran (
+                    id_jam_pelajaran TEXT PRIMARY KEY,
+                    jam_ke INTEGER NOT NULL CHECK (jam_ke >= 1),
+                    jam_mulai TEXT NOT NULL,
+                    jam_selesai TEXT NOT NULL,
+                    jenis TEXT NOT NULL DEFAULT 'KBM'
+                        CHECK (jenis IN ('KBM', 'Istirahat', 'Upacara', 'Ekstrakurikuler')),
+                    keterangan TEXT,
+                    is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                "CREATE INDEX IF NOT EXISTS idx_jam_pelajaran_urut ON akademik_jam_pelajaran(jam_ke, jam_mulai);",
+                vec![],
+            ),
+            // Jadwal mengajar mingguan (schema versi 24). Tabel KETERANGAN:
+            // presensi tetap bisa dicatat tanpa jadwal. `hari` 1=Senin sampai
+            // 7=Minggu. Tanpa UNIQUE — dua perangkat offline boleh menyusun
+            // jadwal yang sama. Cerminan DDL di `storage.rs`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS jadwal_mengajar (
+                    id_jadwal TEXT PRIMARY KEY,
+                    id_tahun_ajaran TEXT NOT NULL,
+                    id_rombel TEXT NOT NULL,
+                    id_mapel TEXT NOT NULL,
+                    id_guru TEXT NOT NULL,
+                    hari INTEGER NOT NULL CHECK (hari BETWEEN 1 AND 7),
+                    jam_ke TEXT NOT NULL,
+                    is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                "CREATE INDEX IF NOT EXISTS idx_jadwal_mengajar_lookup ON jadwal_mengajar(id_tahun_ajaran, id_rombel, hari);",
                 vec![],
             ),
             Statement::new(
@@ -2593,6 +2752,10 @@ impl TursoClient {
             // IF NOT EXISTS di pipeline tidak akan menambahkan kolomnya.
             ("payroll_items", "total_holiday_hours", "ALTER TABLE payroll_items ADD COLUMN total_holiday_hours REAL NOT NULL DEFAULT 0;"),
             ("payroll_items", "total_holiday_overtime_index", "ALTER TABLE payroll_items ADD COLUMN total_holiday_overtime_index REAL NOT NULL DEFAULT 0;"),
+            // Honor mengajar per jam pelajaran (schema versi 22).
+            ("payroll_items", "total_teaching_jp", "ALTER TABLE payroll_items ADD COLUMN total_teaching_jp INTEGER NOT NULL DEFAULT 0;"),
+            ("payroll_items", "teaching_salary", "ALTER TABLE payroll_items ADD COLUMN teaching_salary INTEGER NOT NULL DEFAULT 0;"),
+            ("salary_configs", "rate_per_jp", "ALTER TABLE salary_configs ADD COLUMN rate_per_jp INTEGER NOT NULL DEFAULT 0;"),
         ] {
             self.ensure_column(table, column, sql).await?;
         }
@@ -2669,6 +2832,11 @@ impl TursoClient {
             self.rebuild_without_unique(spec).await?;
         }
 
+        // v25: memperluas CHECK `calc_type`. WAJIB di sini — sebelum
+        // `ensure_sync_pulse` — karena membangun ulang tabel ikut membuang
+        // trigger pulse-nya, dan pemasangan ulangnya terjadi di sana.
+        self.ensure_payroll_calc_type_values().await?;
+
         self.ensure_sync_pulse().await?;
         self.purge_legacy_rate_rows().await?;
         self.repair_web_owned_tables().await?;
@@ -2695,6 +2863,40 @@ impl TursoClient {
         }
         self.query_one(
             "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (21, 'shift-time-rules-v2', datetime('now'));",
+            vec![],
+        )
+        .await?;
+
+        // v22 — honor mengajar per jam pelajaran. Barisnya WAJIB ditanam di
+        // jalur Rust juga: `isDatabaseSchemaReady` di Web membandingkan
+        // MAX(version) dengan CURRENT_SCHEMA_VERSION, sehingga database yang
+        // lahir dari Desktop/Mobile akan dianggap "belum siap" selamanya oleh
+        // Web bila sentinelnya hanya ditulis jalur TypeScript.
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (22, 'teaching-jp-rate', datetime('now'));",
+            vec![],
+        )
+        .await?;
+
+        // v23 — jadwal bel sekolah. Alasan yang sama dengan v22: tanpa baris
+        // ini, database yang lahir dari Desktop/Mobile dianggap "belum siap"
+        // selamanya oleh Web.
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (23, 'lesson-period-schedule', datetime('now'));",
+            vec![],
+        )
+        .await?;
+
+        // v25 — tunjangan per JP dan per hari hadir.
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (25, 'payroll-per-jp-allowance', datetime('now'));",
+            vec![],
+        )
+        .await?;
+
+        // v24 — jadwal mengajar mingguan.
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (24, 'teaching-schedule', datetime('now'));",
             vec![],
         )
         .await?;
@@ -6070,6 +6272,7 @@ fn canonical_sync_route(domain: &str, operation: &str) -> Option<(&'static str, 
             ("setting", "update")
         }
         ("payroll", "salary-config") => ("payroll", "salary-config"),
+        ("payroll", "jp-rate") => ("payroll", "jp-rate"),
         ("payroll", "overtime-rule") => ("payroll", "overtime-rule"),
         ("payroll", "payroll-component") => ("payroll", "payroll-component"),
         ("payroll", "tax-rule") => ("payroll", "tax-rule"),
@@ -6092,6 +6295,24 @@ fn canonical_sync_route(domain: &str, operation: &str) -> Option<(&'static str, 
         ("academic_class" | "academic-class" | "rombel", "create") => ("academic-class", "create"),
         ("academic_class" | "academic-class" | "rombel", "update") => ("academic-class", "update"),
         ("academic_class" | "academic-class" | "rombel", "delete") => ("academic-class", "delete"),
+        ("teaching_schedule" | "teaching-schedule" | "jadwal-mengajar", "create") => {
+            ("teaching-schedule", "create")
+        }
+        ("teaching_schedule" | "teaching-schedule" | "jadwal-mengajar", "update") => {
+            ("teaching-schedule", "update")
+        }
+        ("teaching_schedule" | "teaching-schedule" | "jadwal-mengajar", "delete") => {
+            ("teaching-schedule", "delete")
+        }
+        ("academic_period" | "academic-period" | "jam-pelajaran", "create") => {
+            ("academic-period", "create")
+        }
+        ("academic_period" | "academic-period" | "jam-pelajaran", "update") => {
+            ("academic-period", "update")
+        }
+        ("academic_period" | "academic-period" | "jam-pelajaran", "delete") => {
+            ("academic-period", "delete")
+        }
         ("academic_subject" | "academic-subject" | "mapel", "create") => {
             ("academic-subject", "create")
         }
@@ -6315,12 +6536,19 @@ async fn apply_event_to_turso(
                 ));
             }
             if operation == "update" {
+                // `jenis_personil` dan rentang aktif WAJIB ikut di daftar kolom
+                // INSERT, bukan hanya di `DO UPDATE`. Guru dan siswa baru tiba
+                // di cloud lewat event `update` (`enqueue_employee_snapshot`),
+                // jadi baris pertamanya selalu lewat cabang INSERT — dulu
+                // tersimpan `jenis_personil = NULL`, lalu pull berikutnya
+                // menimpa `'SISWA'`/`'GURU'` di perangkat asalnya.
                 turso
                     .query_one(
                         r#"INSERT INTO master_data (
                             id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp,
-                            lp, id_shift, status_aktif, catatan, status_backup
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NORMAL')
+                            lp, id_shift, status_aktif, catatan, jenis_personil,
+                            tanggal_mulai_aktif, tanggal_selesai_aktif, status_backup
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NORMAL')
                         ON CONFLICT(id_unik) DO UPDATE SET
                             kode_karyawan = excluded.kode_karyawan,
                             nama = excluded.nama,
@@ -6331,9 +6559,9 @@ async fn apply_event_to_turso(
                             id_shift = excluded.id_shift,
                             status_aktif = excluded.status_aktif,
                             catatan = excluded.catatan,
-                            jenis_personil = ?,
-                            tanggal_mulai_aktif = ?,
-                            tanggal_selesai_aktif = ?;"#,
+                            jenis_personil = excluded.jenis_personil,
+                            tanggal_mulai_aktif = excluded.tanggal_mulai_aktif,
+                            tanggal_selesai_aktif = excluded.tanggal_selesai_aktif;"#,
                         vec![
                             json!(id_unik),
                             json!(kode_karyawan),
@@ -7554,10 +7782,11 @@ async fn apply_event_to_turso(
             if !id.is_empty() {
                 let sql = r#"
                     INSERT INTO salary_configs (
-                        id, id_karyawan, rate_per_hour, ptkp_status, effective_date, created_by, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        id, id_karyawan, rate_per_hour, rate_per_jp, ptkp_status, effective_date, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id_karyawan, effective_date) DO UPDATE SET
                         rate_per_hour = excluded.rate_per_hour,
+                        rate_per_jp = excluded.rate_per_jp,
                         ptkp_status = excluded.ptkp_status,
                         created_by = excluded.created_by;
                 "#;
@@ -7571,6 +7800,9 @@ async fn apply_event_to_turso(
                                 .get("rate_per_hour")
                                 .and_then(Value::as_i64)
                                 .unwrap_or(0)),
+                            // Perangkat lama tidak mengirim kunci ini, dan 0
+                            // memang artinya bagi mereka: belum ada honor JP.
+                            json!(row.get("rate_per_jp").and_then(Value::as_i64).unwrap_or(0)),
                             json!(row
                                 .get("ptkp_status")
                                 .and_then(Value::as_str)
@@ -7581,6 +7813,46 @@ async fn apply_event_to_turso(
                                 .unwrap_or("")),
                             json!(row.get("created_by").and_then(Value::as_str).unwrap_or("")),
                             json!(row.get("created_at").and_then(Value::as_str).unwrap_or("")),
+                        ],
+                    )
+                    .await?;
+            }
+        }
+        ("payroll", "jp-rate") => {
+            // Tarif honor per jam pelajaran. `tarif_jp` tanpa UNIQUE selain PK,
+            // jadi konflik offline tidak pernah membuat push macet; yang
+            // menjaga hasilnya tetap sama di semua perangkat adalah urutan
+            // pemilihan tarif yang deterministik di `resolve_jp_rate`.
+            let row = payload.get("jpRate").unwrap_or(payload);
+            let id = row.get("id").and_then(Value::as_str).unwrap_or("");
+            if !id.is_empty() {
+                let sql = r#"
+                    INSERT INTO tarif_jp (
+                        id, id_mapel, id_guru, rate_per_jp, effective_date, status_aktif, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        id_mapel = excluded.id_mapel,
+                        id_guru = excluded.id_guru,
+                        rate_per_jp = excluded.rate_per_jp,
+                        effective_date = excluded.effective_date,
+                        status_aktif = excluded.status_aktif,
+                        updated_at = excluded.updated_at;
+                "#;
+                turso
+                    .query_one(
+                        sql,
+                        vec![
+                            json!(id),
+                            json!(row.get("id_mapel").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("id_guru").and_then(Value::as_str)),
+                            json!(row.get("rate_per_jp").and_then(Value::as_i64).unwrap_or(0)),
+                            json!(row
+                                .get("effective_date")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")),
+                            json!(row.get("status_aktif").and_then(Value::as_i64).unwrap_or(1)),
+                            json!(row.get("created_at").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("updated_at").and_then(Value::as_str).unwrap_or("")),
                         ],
                     )
                     .await?;
@@ -7738,6 +8010,7 @@ async fn apply_event_to_turso(
                 "payroll_components",
                 "tax_rules",
                 "bpjs_rules",
+                "tarif_jp",
             ];
             let table = payload.get("table").and_then(Value::as_str).unwrap_or("");
             let id = payload.get("id").and_then(Value::as_str).unwrap_or("");
@@ -7799,10 +8072,12 @@ async fn apply_event_to_turso(
                     INSERT INTO payroll_items (
                         id, payroll_run_id, id_karyawan, nama_karyawan, divisi, ptkp_status,
                         total_regular_hours, total_overtime_hours, total_overtime_index,
+                        total_holiday_hours, total_holiday_overtime_index,
+                        total_teaching_jp, teaching_salary,
                         rate_per_hour, basic_salary, overtime_salary, gross_salary,
                         total_allowances, total_deductions, bpjs_employee_total, bpjs_company_total,
                         pph21_amount, net_salary, breakdown_snapshot, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO NOTHING;
                 "#;
                 for item in items {
@@ -7841,6 +8116,29 @@ async fn apply_event_to_turso(
                                     .get("total_overtime_index")
                                     .and_then(Value::as_f64)
                                     .unwrap_or(0.0)),
+                                // Jam hari libur dan honor mengajar ikut
+                                // didorong: tanpa ini salinan cloud sebuah
+                                // batch yang dibuat Desktop kehilangan
+                                // rinciannya — `gross_salary` sudah memuatnya,
+                                // tetapi kolom rinciannya nol, dan slip yang
+                                // dibaca dari cloud terlihat tidak konsisten
+                                // dengan totalnya sendiri.
+                                json!(item
+                                    .get("total_holiday_hours")
+                                    .and_then(Value::as_f64)
+                                    .unwrap_or(0.0)),
+                                json!(item
+                                    .get("total_holiday_overtime_index")
+                                    .and_then(Value::as_f64)
+                                    .unwrap_or(0.0)),
+                                json!(item
+                                    .get("total_teaching_jp")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(0)),
+                                json!(item
+                                    .get("teaching_salary")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(0)),
                                 json!(item
                                     .get("rate_per_hour")
                                     .and_then(Value::as_i64)
@@ -8100,6 +8398,121 @@ async fn apply_event_to_turso(
                 turso
                     .query_one(
                         "DELETE FROM akademik_rombel WHERE id_rombel = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
+            }
+        }
+        ("teaching-schedule", "create" | "update") => {
+            let row = payload.get("teaching_schedule").unwrap_or(payload);
+            let id = row
+                .get("id_jadwal")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        r#"INSERT INTO jadwal_mengajar (
+                            id_jadwal, id_tahun_ajaran, id_rombel, id_mapel, id_guru,
+                            hari, jam_ke, is_aktif, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id_jadwal) DO UPDATE SET
+                            id_tahun_ajaran = excluded.id_tahun_ajaran,
+                            id_rombel = excluded.id_rombel,
+                            id_mapel = excluded.id_mapel,
+                            id_guru = excluded.id_guru,
+                            hari = excluded.hari,
+                            jam_ke = excluded.jam_ke,
+                            is_aktif = excluded.is_aktif,
+                            updated_at = excluded.updated_at;"#,
+                        vec![
+                            json!(id),
+                            json!(row
+                                .get("id_tahun_ajaran")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")),
+                            json!(row.get("id_rombel").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("id_mapel").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("id_guru").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("hari").and_then(Value::as_i64).unwrap_or(1)),
+                            json!(row.get("jam_ke").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("is_aktif").and_then(Value::as_i64).unwrap_or(1)),
+                            json!(row.get("created_at").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("updated_at").and_then(Value::as_str).unwrap_or("")),
+                        ],
+                    )
+                    .await?;
+            }
+        }
+        ("teaching-schedule", "delete") => {
+            let id = payload
+                .get("id_jadwal")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        "DELETE FROM jadwal_mengajar WHERE id_jadwal = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
+            }
+        }
+        ("academic-period", "create" | "update") => {
+            // Jadwal bel sekolah. Tabelnya tanpa UNIQUE pada `jam_ke`, jadi
+            // dua perangkat offline yang mendaftarkan jam yang sama tidak
+            // pernah membuat push macet; duplikatnya dibereskan di layar.
+            let row = payload.get("lesson_period").unwrap_or(payload);
+            let id = row
+                .get("id_jam_pelajaran")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        r#"INSERT INTO akademik_jam_pelajaran (
+                            id_jam_pelajaran, jam_ke, jam_mulai, jam_selesai, jenis,
+                            keterangan, is_aktif, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id_jam_pelajaran) DO UPDATE SET
+                            jam_ke = excluded.jam_ke,
+                            jam_mulai = excluded.jam_mulai,
+                            jam_selesai = excluded.jam_selesai,
+                            jenis = excluded.jenis,
+                            keterangan = excluded.keterangan,
+                            is_aktif = excluded.is_aktif,
+                            updated_at = excluded.updated_at;"#,
+                        vec![
+                            json!(id),
+                            json!(row.get("jam_ke").and_then(Value::as_i64).unwrap_or(1)),
+                            json!(row.get("jam_mulai").and_then(Value::as_str).unwrap_or("")),
+                            json!(row
+                                .get("jam_selesai")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")),
+                            json!(row.get("jenis").and_then(Value::as_str).unwrap_or("KBM")),
+                            json!(row.get("keterangan").and_then(Value::as_str)),
+                            json!(row.get("is_aktif").and_then(Value::as_i64).unwrap_or(1)),
+                            json!(row.get("created_at").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("updated_at").and_then(Value::as_str).unwrap_or("")),
+                        ],
+                    )
+                    .await?;
+            }
+        }
+        ("academic-period", "delete") => {
+            let id = payload
+                .get("id_jam_pelajaran")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        "DELETE FROM akademik_jam_pelajaran WHERE id_jam_pelajaran = ?;",
                         vec![json!(id)],
                     )
                     .await?;
@@ -11765,6 +12178,68 @@ mod tests {
     /// transport yang ditukar. Kalau tes ini lulus, drift antara tabel lokal
     /// dan tabel cloud tidak mungkin terjadi karena keduanya lahir dari satu
     /// fungsi.
+    #[test]
+    fn personil_baru_lewat_event_update_membawa_jenis_personil_ke_cloud() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime uji");
+        runtime.block_on(async {
+            let dir = tempfile::tempdir().expect("direktori sementara");
+            let hub = dir.path().join("sppg-hub.db");
+            TursoClient::local_file(
+                Url::parse(LOCAL_FILE_ORIGIN).expect("origin lokal"),
+                &hub,
+                Client::new(),
+            )
+            .ensure_schema()
+            .await
+            .expect("provisioning lokal");
+
+            // Bentuk payload persis `enqueue_employee_snapshot`: siswa BARU
+            // tiba di cloud sebagai `employee update`, bukan `create`.
+            let payload = json!({
+                "id_unik": "sis_baru", "kode_karyawan": "S-1", "nama": "Siswa Baru",
+                "divisi": "Peserta Didik", "jabatan_status": "Siswa", "no_hp": "",
+                "lp": "L", "id_shift": 1, "status_aktif": "Aktif", "catatan": "",
+                "jenis_personil": "SISWA", "tanggal_mulai_aktif": "",
+                "tanggal_selesai_aktif": "", "status_backup": "NORMAL"
+            });
+            let collector = StatementCollector::default();
+            apply_event_to_turso(&collector, "employee", "update", "sis_baru", &payload)
+                .await
+                .expect("event diterapkan");
+
+            let connection = rusqlite::Connection::open(&hub).expect("buka hub");
+            for statement in collector.finish().expect("mutasi") {
+                let args = statement
+                    .args
+                    .iter()
+                    .map(|arg| match arg {
+                        Value::Null => rusqlite::types::Value::Null,
+                        Value::Number(n) => n
+                            .as_i64()
+                            .map(rusqlite::types::Value::Integer)
+                            .unwrap_or(rusqlite::types::Value::Null),
+                        Value::String(s) => rusqlite::types::Value::Text(s.clone()),
+                        other => rusqlite::types::Value::Text(other.to_string()),
+                    })
+                    .collect::<Vec<_>>();
+                connection
+                    .execute(&statement.sql, rusqlite::params_from_iter(args))
+                    .expect("mutasi dijalankan pada skema cloud");
+            }
+
+            let jenis: Option<String> = connection
+                .query_row(
+                    "SELECT jenis_personil FROM master_data WHERE id_unik = 'sis_baru';",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("baris siswa ada di cloud");
+            assert_eq!(jenis.as_deref(), Some("SISWA"));
+        });
+    }
+
     #[test]
     fn provisioning_lokal_membangun_seluruh_tabel_cloud() {
         let runtime = tokio::runtime::Builder::new_current_thread()

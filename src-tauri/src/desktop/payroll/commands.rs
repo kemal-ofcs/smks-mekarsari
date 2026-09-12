@@ -5,9 +5,11 @@ use serde_json::{json, Value};
 use tauri::State;
 
 use super::engine::PayrollCalculator;
+use std::collections::HashMap;
+
 use super::models::{
-    BpjsRule, OvertimeTierRule, PayrollAuditLog, PayrollComponent, PayrollItem, PayrollRecapRow,
-    PayrollRun, PayrollStatus, SalaryConfig, TaxRule,
+    BpjsRule, ComponentSubject, JpRate, OvertimeTierRule, PayrollAuditLog, PayrollComponent,
+    PayrollItem, PayrollRecapRow, PayrollRun, PayrollStatus, SalaryConfig, TaughtSession, TaxRule,
 };
 use crate::desktop::config::DesktopState;
 use crate::desktop::models::CommandError;
@@ -92,6 +94,88 @@ fn new_payroll_id(prefix: &str) -> String {
     )
 }
 
+/// Kunci sakelar lembur guru di `setting_gex_system`.
+///
+/// Ikut sinkronisasi: ini kebijakan sekolah, bukan setelan perangkat, sehingga
+/// TIDAK boleh masuk `sync::DEVICE_LOCAL_SETTING_KEYS`. Cerminan
+/// `TEACHER_OVERTIME_SETTING_KEY` di `src/lib/validations/payroll-policy.ts`.
+pub const TEACHER_OVERTIME_SETTING_KEY: &str = "payroll_lembur_guru_aktif";
+
+/// Apakah lembur guru dihitung pada pemasangan ini?
+///
+/// Kunci yang BELUM ADA berarti MENYALA, bentuk yang sama dengan
+/// `auto_alfa_aktif`: lembur guru sudah terhitung sejak sebelum sakelar ini
+/// ada, dan pemasangan yang sedang berjalan tidak boleh diam-diam kehilangan
+/// komponen gaji hanya karena aplikasinya diperbarui. Mematikannya harus
+/// menjadi keputusan sadar sekolahnya.
+///
+/// Cerminan `parseTeacherOvertimeSetting` di `payroll-policy.ts`.
+fn teacher_overtime_enabled(conn: &Connection) -> Result<bool, CommandError> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM setting_gex_system WHERE key = ?1 LIMIT 1;",
+            params![TEACHER_OVERTIME_SETTING_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+    Ok(value
+        .map(|raw| raw.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(true))
+}
+
+/// Nilai `payroll_components.applies_to` untuk komponen yang berlaku umum.
+pub const APPLIES_TO_ALL: &str = "ALL";
+
+/// Bentuk kanonik `payroll_components.applies_to`.
+///
+/// Kosong berarti berlaku untuk semua, dan itu HARUS menjadi "ALL" yang
+/// literal: `calculate_components` membandingkan kolom ini dengan "ALL" persis,
+/// sehingga string kosong membuat komponennya tidak pernah berlaku untuk siapa
+/// pun — dan itu tidak terlihat salah di layar mana pun.
+///
+/// Cerminan `normalizeAppliesTo` di `src/lib/validations/payroll-policy.ts`.
+fn normalize_applies_to(raw: &str) -> String {
+    let value = raw.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case(APPLIES_TO_ALL) {
+        return APPLIES_TO_ALL.to_string();
+    }
+    if let Some((prefix, isi)) = value.split_once(':') {
+        let prefix = prefix.trim().to_ascii_uppercase();
+        let isi = isi.trim();
+        if APPLIES_TO_GROUP_PREFIXES.contains(&prefix.as_str()) {
+            // Isi kelompok TIDAK diseragamkan huruf besar-kecilnya: nama divisi
+            // ditulis manusia ("Tata Usaha"), dan menampilkannya kembali
+            // sebagai "TATA USAHA" membuat layar terasa bukan miliknya.
+            // Perbandingannya yang mengabaikan huruf besar-kecil.
+            return if isi.is_empty() {
+                APPLIES_TO_ALL.to_string()
+            } else {
+                format!("{prefix}:{isi}")
+            };
+        }
+    }
+    value.to_string()
+}
+
+/// Awalan kelompok yang dikenali `applies_to`. Cerminan
+/// `APPLIES_TO_GROUP_PREFIXES` di `src/lib/validations/payroll-policy.ts`.
+const APPLIES_TO_GROUP_PREFIXES: &[&str] = &["PERSONIL", "STATUS", "DIVISI"];
+
+/// Jenis perhitungan komponen. WAJIB sama dengan CHECK constraint di ketiga
+/// jalur provisioning, enum Zod `sync-schema.ts`, dan `PAYROLL_CALC_TYPES` di
+/// `payroll-policy.ts`.
+const PAYROLL_CALC_TYPES: &[&str] = &["FIXED", "PERCENTAGE", "PER_JP", "PER_HADIR"];
+
+/// Apakah `master_data.jenis_personil` ini seorang guru?
+///
+/// Kolomnya tersimpan dengan ejaan berbeda-beda ('GURU' dari alur akademik,
+/// 'Guru' dari normalisasi), jadi ia tidak pernah boleh dibandingkan mentah.
+/// Cerminan `isTeacherPersonnel` di `payroll-policy.ts`.
+fn is_teacher_personnel(jenis_personil: &str) -> bool {
+    jenis_personil.trim().eq_ignore_ascii_case("guru")
+}
+
 #[tauri::command]
 pub async fn desktop_get_salary_configs(
     state: State<'_, DesktopState>,
@@ -108,7 +192,7 @@ pub async fn desktop_get_salary_configs(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT sc.id, sc.id_karyawan, sc.rate_per_hour, sc.ptkp_status,
+            SELECT sc.id, sc.id_karyawan, sc.rate_per_hour, sc.rate_per_jp, sc.ptkp_status,
                    sc.effective_date, sc.created_by, sc.created_at
             FROM salary_configs sc
             LEFT JOIN master_data md ON md.id_unik = sc.id_karyawan
@@ -124,10 +208,11 @@ pub async fn desktop_get_salary_configs(
                 id: row.get(0)?,
                 id_karyawan: row.get(1)?,
                 rate_per_hour: row.get(2)?,
-                ptkp_status: row.get(3)?,
-                effective_date: row.get(4)?,
-                created_by: row.get(5)?,
-                created_at: row.get(6)?,
+                rate_per_jp: row.get(3)?,
+                ptkp_status: row.get(4)?,
+                effective_date: row.get(5)?,
+                created_by: row.get(6)?,
+                created_at: row.get(7)?,
             })
         })
         .map_err(|_| CommandError::internal())?;
@@ -170,10 +255,11 @@ pub async fn desktop_save_salary_config(
     tx.execute(
         r#"
         INSERT INTO salary_configs (
-            id, id_karyawan, rate_per_hour, ptkp_status, effective_date, created_by, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            id, id_karyawan, rate_per_hour, rate_per_jp, ptkp_status, effective_date, created_by, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ON CONFLICT(id_karyawan, effective_date) DO UPDATE SET
             rate_per_hour = excluded.rate_per_hour,
+            rate_per_jp = excluded.rate_per_jp,
             ptkp_status = excluded.ptkp_status,
             created_by = excluded.created_by;
         "#,
@@ -181,6 +267,7 @@ pub async fn desktop_save_salary_config(
             config_id,
             draft.id_karyawan,
             draft.rate_per_hour,
+            draft.rate_per_jp.max(0),
             draft.ptkp_status,
             draft.effective_date,
             operator.username,
@@ -200,6 +287,7 @@ pub async fn desktop_save_salary_config(
             "id": config_id,
             "id_karyawan": draft.id_karyawan.clone(),
             "rate_per_hour": draft.rate_per_hour,
+            "rate_per_jp": draft.rate_per_jp.max(0),
             "ptkp_status": draft.ptkp_status.clone(),
             "effective_date": draft.effective_date.clone(),
             "created_by": operator.username.clone(),
@@ -442,6 +530,386 @@ pub async fn desktop_save_overtime_rules(
     Ok(true)
 }
 
+/// Seluruh sesi mengajar yang JP-nya dihitung pada satu periode, per guru.
+///
+/// Syaratnya satu: jurnal mengajarnya SUDAH DIPARAF. Paraf itu bukti bahwa
+/// pelajarannya benar berlangsung, dan sesi yang dibuat lalu ditinggalkan tanpa
+/// jurnal tidak pernah menghasilkan honor.
+///
+/// Dipakai `EXISTS`, bukan JOIN: `jurnal_mengajar` tidak punya UNIQUE pada
+/// `id_presensi_mapel`, sehingga dua perangkat offline bisa menulis dua jurnal
+/// untuk sesi yang sama — dan JOIN akan menggandakan sesinya menjadi dua kali
+/// honor.
+///
+/// Tanpa LIMIT: dipatok jendela tanggal periode payroll di kedua ujungnya.
+fn load_taught_sessions(
+    conn: &Connection,
+    period_start: &str,
+    period_end: &str,
+) -> Result<HashMap<String, Vec<TaughtSession>>, CommandError> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            -- batas: dijepit satu periode payroll (sebulan) di kedua ujung tanggal, dan di dalamnya jumlah baris dibatasi jumlah rombel dikali jam pelajaran per hari — bukan oleh waktu. LIMIT justru berbahaya di sini: memotong sesi berarti memotong honor guru tanpa satu pun tanda.
+            SELECT pm.id_presensi_mapel, pm.id_guru, pm.id_mapel, pm.tanggal, pm.jam_ke
+            FROM presensi_mapel pm
+            WHERE pm.tanggal >= ?1 AND pm.tanggal <= ?2
+              AND EXISTS (
+                SELECT 1 FROM jurnal_mengajar j
+                WHERE j.id_presensi_mapel = pm.id_presensi_mapel
+                  AND j.paraf_at IS NOT NULL AND TRIM(j.paraf_at) <> ''
+              )
+            ORDER BY pm.tanggal, pm.jam_ke;
+            "#,
+        )
+        .map_err(|_| CommandError::internal())?;
+
+    let rows = stmt
+        .query_map(params![period_start, period_end], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|_| CommandError::internal())?;
+
+    let mut per_guru: HashMap<String, Vec<TaughtSession>> = HashMap::new();
+    for item in rows.flatten() {
+        let (id_presensi_mapel, id_guru, id_mapel, tanggal, jam_ke) = item;
+        // `jam_ke` yang tidak terbaca dilewati, bukan dianggap satu JP: baris
+        // lama bisa memuat teks apa pun, dan menebaknya berarti menebak uang.
+        let Some((awal, akhir)) = crate::desktop::class_attendance::jam_ke_range(&jam_ke) else {
+            continue;
+        };
+        per_guru
+            .entry(id_guru)
+            .or_default()
+            .push(TaughtSession {
+                id_presensi_mapel,
+                id_mapel,
+                tanggal,
+                jam_awal: awal,
+                jam_akhir: akhir,
+            });
+    }
+    Ok(per_guru)
+}
+
+/// Seluruh tarif JP yang pernah berlaku. Tabelnya sekecil daftar mata
+/// pelajaran, jadi dibaca utuh sekali per rekap alih-alih per sesi.
+fn load_jp_rates(conn: &Connection) -> Result<Vec<JpRate>, CommandError> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT id, id_mapel, id_guru, rate_per_jp, effective_date, status_aktif, updated_at
+            FROM tarif_jp
+            ORDER BY id_mapel, effective_date DESC;
+            "#,
+        )
+        .map_err(|_| CommandError::internal())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(JpRate {
+                id: row.get(0)?,
+                id_mapel: row.get(1)?,
+                id_guru: row.get(2)?,
+                rate_per_jp: row.get(3)?,
+                effective_date: row.get(4)?,
+                status_aktif: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|_| CommandError::internal())?;
+
+    Ok(rows.flatten().collect())
+}
+
+#[tauri::command]
+pub async fn desktop_get_teacher_overtime_policy(
+    state: State<'_, DesktopState>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "payroll.view")?;
+    let conn = storage::database(&state.data_dir)?;
+    Ok(json!({ "enabled": teacher_overtime_enabled(&conn)? }))
+}
+
+#[tauri::command]
+pub async fn desktop_save_teacher_overtime_policy(
+    state: State<'_, DesktopState>,
+    enabled: bool,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "payroll.config.manage")?;
+    let client_id = sync::ensure_client_id(&state)?;
+    let value = if enabled { "true" } else { "false" };
+
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    tx.execute(
+        "INSERT INTO setting_gex_system (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+        params![TEACHER_OVERTIME_SETTING_KEY, value],
+    )
+    .map_err(|_| CommandError::new("SAVE_FAILED", "Gagal menyimpan sakelar lembur guru."))?;
+
+    // Antrean lama untuk kunci yang sama dibuang lebih dulu, sama seperti
+    // `save_alfa_settings`: tanpa itu sebuah event "true" yang gagal terkirim
+    // bisa menyusul event "false" yang baru dan menghidupkan ulang lemburnya.
+    let _ = tx.execute(
+        "DELETE FROM desktop_sync_conflict WHERE domain = 'setting' AND entity_key = ?1;",
+        params![TEACHER_OVERTIME_SETTING_KEY],
+    );
+    let _ = tx.execute(
+        "DELETE FROM desktop_sync_outbox WHERE domain = 'setting' AND entity_key = ?1
+         AND status IN ('pending', 'failed', 'conflict');",
+        params![TEACHER_OVERTIME_SETTING_KEY],
+    );
+
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "setting",
+        "update",
+        TEACHER_OVERTIME_SETTING_KEY,
+        &json!({ "key": TEACHER_OVERTIME_SETTING_KEY, "value": value }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true, "enabled": enabled }))
+}
+
+#[tauri::command]
+pub async fn desktop_get_jp_rates(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
+    require_permission(&state, "payroll.view")?;
+    let conn = storage::database(&state.data_dir)?;
+
+    // Tanpa LIMIT: `tarif_jp` sebesar daftar mata pelajaran sekolah, bukan
+    // tabel yang tumbuh setiap hari operasional.
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT t.id, t.id_mapel, t.id_guru, t.rate_per_jp, t.effective_date,
+                   t.status_aktif, t.created_at, t.updated_at,
+                   COALESCE(m.nama_mapel, ''), COALESCE(md.nama, '')
+            FROM tarif_jp t
+            LEFT JOIN akademik_mapel m ON m.id_mapel = t.id_mapel
+            LEFT JOIN master_data md ON md.id_unik = t.id_guru
+            ORDER BY COALESCE(m.nama_mapel, ''), t.effective_date DESC;
+            "#,
+        )
+        .map_err(|_| CommandError::internal())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "id_mapel": row.get::<_, String>(1)?,
+                "id_guru": row.get::<_, Option<String>>(2)?,
+                "rate_per_jp": row.get::<_, i64>(3)?,
+                "effective_date": row.get::<_, String>(4)?,
+                "status_aktif": row.get::<_, i64>(5)?,
+                "created_at": row.get::<_, String>(6)?,
+                "updated_at": row.get::<_, String>(7)?,
+                "nama_mapel": row.get::<_, String>(8)?,
+                "nama_guru": row.get::<_, String>(9)?,
+            }))
+        })
+        .map_err(|_| CommandError::internal())?;
+
+    Ok(Value::Array(rows.flatten().collect()))
+}
+
+#[tauri::command]
+pub async fn desktop_save_jp_rate(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<bool, CommandError> {
+    require_permission(&state, "payroll.config.manage")?;
+
+    let text = |key: &str| -> String {
+        draft
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+
+    let id_mapel = text("id_mapel");
+    let effective_date = text("effective_date");
+    let id_guru = {
+        let value = text("id_guru");
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    };
+    let rate_per_jp = draft
+        .get("rate_per_jp")
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    let status_aktif = draft
+        .get("status_aktif")
+        .and_then(Value::as_i64)
+        .unwrap_or(1);
+
+    if id_mapel.is_empty() || effective_date.is_empty() {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Mata pelajaran dan tanggal berlaku wajib diisi.",
+        ));
+    }
+    if rate_per_jp < 0 {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Tarif per jam pelajaran tidak boleh kurang dari nol.",
+        ));
+    }
+    if !(0..=1).contains(&status_aktif) {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Status aktif hanya boleh 0 atau 1.",
+        ));
+    }
+
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    // Mapel dan guru diverifikasi ke master datanya, bukan dipercaya dari
+    // formulir: tarif yang menunjuk mapel yang sudah dihapus tidak akan pernah
+    // terpakai, dan itu hanya terlihat sebagai honor yang diam-diam nol.
+    let mapel_ada: bool = tx
+        .prepare("SELECT 1 FROM akademik_mapel WHERE id_mapel = ?1 LIMIT 1;")
+        .map_err(|_| CommandError::internal())?
+        .exists(params![id_mapel])
+        .map_err(|_| CommandError::internal())?;
+    if !mapel_ada {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Mata pelajaran tidak ditemukan.",
+        ));
+    }
+    if let Some(guru) = id_guru.as_ref() {
+        let guru_ada: bool = tx
+            .prepare(
+                "SELECT 1 FROM master_data
+                 WHERE id_unik = ?1
+                   AND LOWER(TRIM(COALESCE(jenis_personil, ''))) = 'guru'
+                 LIMIT 1;",
+            )
+            .map_err(|_| CommandError::internal())?
+            .exists(params![guru])
+            .map_err(|_| CommandError::internal())?;
+        if !guru_ada {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Guru tidak ditemukan pada data personil.",
+            ));
+        }
+    }
+
+    let now = iso_now_tx(&tx);
+    let id = {
+        let value = text("id");
+        if value.is_empty() {
+            new_payroll_id("tjp")
+        } else {
+            value
+        }
+    };
+    let created_at = tx
+        .query_row(
+            "SELECT created_at FROM tarif_jp WHERE id = ?1;",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .unwrap_or_else(|| now.clone());
+
+    tx.execute(
+        r#"
+        INSERT INTO tarif_jp (
+            id, id_mapel, id_guru, rate_per_jp, effective_date, status_aktif, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(id) DO UPDATE SET
+            id_mapel = excluded.id_mapel,
+            id_guru = excluded.id_guru,
+            rate_per_jp = excluded.rate_per_jp,
+            effective_date = excluded.effective_date,
+            status_aktif = excluded.status_aktif,
+            updated_at = excluded.updated_at;
+        "#,
+        params![
+            id,
+            id_mapel,
+            id_guru,
+            rate_per_jp,
+            effective_date,
+            status_aktif,
+            created_at,
+            now
+        ],
+    )
+    .map_err(|_| CommandError::new("SAVE_FAILED", "Gagal menyimpan tarif jam pelajaran."))?;
+
+    let client_id = sync::ensure_client_id(&state)?;
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "payroll",
+        "jp-rate",
+        &id,
+        &json!({
+            "id": id,
+            "id_mapel": id_mapel,
+            "id_guru": id_guru,
+            "rate_per_jp": rate_per_jp,
+            "effective_date": effective_date,
+            "status_aktif": status_aktif,
+            "created_at": created_at,
+            "updated_at": now,
+        }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn desktop_delete_jp_rate(
+    state: State<'_, DesktopState>,
+    id: String,
+) -> Result<bool, CommandError> {
+    require_permission(&state, "payroll.config.manage")?;
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    tx.execute("DELETE FROM tarif_jp WHERE id = ?1;", params![id])
+        .map_err(|_| CommandError::new("DELETE_FAILED", "Gagal menghapus tarif jam pelajaran."))?;
+
+    let client_id = sync::ensure_client_id(&state)?;
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "payroll",
+        "delete",
+        &format!("tarif_jp:{id}"),
+        &json!({ "table": "tarif_jp", "id": id }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn desktop_get_payroll_components(
     state: State<'_, DesktopState>,
@@ -497,6 +965,60 @@ pub async fn desktop_save_payroll_component(
         draft.id.clone()
     };
 
+    // Jenis perhitungan divalidasi SEBELUM menyentuh database: nilai asing
+    // ditolak CHECK constraint dengan pesan SQLite yang tidak bisa dipahami
+    // pengguna, dan pada jalur sinkronisasi penolakan itu mengunci outbox.
+    if !PAYROLL_CALC_TYPES.contains(&draft.calc_type.as_str()) {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Jenis perhitungan komponen tidak dikenal.",
+        ));
+    }
+
+    // Penerima komponen: "ALL" atau satu personil yang benar-benar ada dan
+    // bukan siswa. Sebelum ini kolomnya diterima apa adanya, sehingga id yang
+    // salah ketik tersimpan sebagai komponen yang tidak pernah berlaku untuk
+    // siapa pun — tanpa pesan, dan hanya terlihat sebagai tunjangan yang
+    // "hilang" di slip orangnya.
+    let applies_to = normalize_applies_to(&draft.applies_to);
+    // Bentuk kelompok tidak diverifikasi ke master data: divisi atau status
+    // yang hari ini belum dipakai siapa pun boleh saja didaftarkan lebih dulu,
+    // dan komponennya tinggal diam sampai ada orangnya. Yang diverifikasi
+    // hanyalah bentuk PERORANGAN, karena id yang salah ketik di sana tidak akan
+    // pernah cocok dengan siapa pun dan hanya terlihat sebagai tunjangan hilang.
+    let bentuk_kelompok = applies_to
+        .split_once(':')
+        .map(|(prefix, isi)| {
+            APPLIES_TO_GROUP_PREFIXES.contains(&prefix.to_ascii_uppercase().as_str())
+                && !isi.trim().is_empty()
+        })
+        .unwrap_or(false);
+    if applies_to != APPLIES_TO_ALL && !bentuk_kelompok {
+        let jenis: Option<String> = tx
+            .query_row(
+                "SELECT COALESCE(jenis_personil, '') FROM master_data WHERE id_unik = ?1;",
+                params![applies_to],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| CommandError::internal())?;
+        match jenis {
+            None => {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    "Penerima komponen tidak ditemukan pada data personil.",
+                ));
+            }
+            Some(jenis) if jenis.trim().eq_ignore_ascii_case("siswa") => {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    "Siswa tidak menerima komponen payroll.",
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+
     tx.execute(
         r#"
         INSERT INTO payroll_components (
@@ -516,7 +1038,7 @@ pub async fn desktop_save_payroll_component(
             draft.category,
             draft.calc_type,
             draft.default_value,
-            draft.applies_to,
+            applies_to,
             draft.is_active
         ],
     )
@@ -535,7 +1057,7 @@ pub async fn desktop_save_payroll_component(
             "category": draft.category.clone(),
             "calc_type": draft.calc_type.clone(),
             "default_value": draft.default_value,
-            "applies_to": draft.applies_to.clone(),
+            "applies_to": applies_to.clone(),
             "is_active": draft.is_active,
         }),
         None,
@@ -979,23 +1501,39 @@ pub async fn desktop_get_payroll_recap(
     let components = load_payroll_components(&conn)?;
     let tax_rules = load_tax_rules(&conn, &period_end)?;
     let bpjs_rules = load_bpjs_rules(&conn, &period_end)?;
+    let teacher_overtime = teacher_overtime_enabled(&conn)?;
+    let taught_sessions = load_taught_sessions(&conn, &period_start, &period_end)?;
+    let jp_rates = load_jp_rates(&conn)?;
 
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT 
+            SELECT
                 md.id_unik,
                 md.nama,
                 md.divisi,
+                COALESCE(md.jenis_personil, '') AS jenis_personil,
+                -- Status kepegawaian hanya ada pada guru, dan hanya dipakai
+                -- komponen bertujuan kelompok (`STATUS:Honorer`). Kosong untuk
+                -- yang bukan guru, sehingga kelompok itu tidak pernah cocok.
+                COALESCE(g.status_kepegawaian, '') AS status_kepegawaian,
                 COALESCE(sc.rate_per_hour, 0) AS rate_per_hour,
+                COALESCE(sc.rate_per_jp, 0) AS rate_per_jp,
                 COALESCE(sc.ptkp_status, 'TK/0') AS ptkp_status,
                 COUNT(CASE WHEN ah.status_kehadiran IN ('Hadir', 'PRESENT') THEN 1 END) AS total_hadir,
                 COALESCE(SUM(ah.menit_terlambat), 0) AS total_terlambat_menit,
                 COALESCE(SUM(CASE WHEN hl.tanggal IS NULL THEN ah.jam_kerja ELSE 0 END), 0) AS total_jam_kerja_menit,
                 COALESCE(SUM(CASE WHEN hl.tanggal IS NULL THEN ah.lembur ELSE 0 END), 0) AS total_lembur_menit,
                 COALESCE(SUM(CASE WHEN hl.tanggal IS NOT NULL
-                    THEN COALESCE(ah.jam_kerja, 0) + COALESCE(ah.lembur, 0) ELSE 0 END), 0) AS total_libur_menit
+                    THEN COALESCE(ah.jam_kerja, 0) + COALESCE(ah.lembur, 0) ELSE 0 END), 0) AS total_libur_menit,
+                -- Jam kerja (tanpa lembur) yang jatuh pada tanggal libur. Hanya
+                -- dipakai ketika lembur seseorang dimatikan: menit ini pindah ke
+                -- jam reguler supaya hari itu tetap dibayar. Lihat
+                -- `apply_overtime_policy`.
+                COALESCE(SUM(CASE WHEN hl.tanggal IS NOT NULL
+                    THEN COALESCE(ah.jam_kerja, 0) ELSE 0 END), 0) AS total_libur_jam_kerja_menit
             FROM master_data md
+            LEFT JOIN guru_data g ON g.id_guru = md.id_unik
             LEFT JOIN salary_configs sc ON sc.id_karyawan = md.id_unik
                 AND sc.effective_date = (
                     SELECT MAX(effective_date) FROM salary_configs
@@ -1009,6 +1547,13 @@ pub async fn desktop_get_payroll_recap(
             -- ikut terhitung benar begitu admin melengkapi daftar hari liburnya.
             LEFT JOIN tbl_hari_libur hl ON hl.tanggal = ah.tanggal AND hl.status_aktif = 1
             WHERE md.status_aktif = 'Aktif'
+              -- Siswa TIDAK digaji. Mereka hidup di `master_data` yang sama
+              -- dengan guru dan karyawan, sehingga tanpa baris ini setiap siswa
+              -- aktif ikut masuk rekap dan setiap komponen tunjangan yang
+              -- berlaku untuk 'ALL' menerbitkan slip untuk mereka.
+              -- Dibandingkan dalam bentuk ternormalisasi karena kolomnya
+              -- tersimpan dengan ejaan berbeda-beda ('SISWA', 'Siswa').
+              AND LOWER(TRIM(COALESCE(md.jenis_personil, ''))) <> 'siswa'
             GROUP BY md.id_unik
             ORDER BY md.nama ASC;
             "#,
@@ -1019,13 +1564,17 @@ pub async fn desktop_get_payroll_recap(
         id_unik: String,
         nama: String,
         divisi: String,
+        jenis_personil: String,
+        status_kepegawaian: String,
         rate_per_hour: i64,
+        rate_per_jp: i64,
         ptkp_status: String,
         total_hadir: i64,
         total_terlambat: i64,
         jam_kerja_menit: i64,
         lembur_menit: i64,
         libur_menit: i64,
+        libur_jam_kerja_menit: i64,
     }
 
     let rows = stmt
@@ -1034,13 +1583,17 @@ pub async fn desktop_get_payroll_recap(
                 id_unik: row.get(0)?,
                 nama: row.get(1)?,
                 divisi: row.get(2)?,
-                rate_per_hour: row.get(3)?,
-                ptkp_status: row.get(4)?,
-                total_hadir: row.get(5)?,
-                total_terlambat: row.get(6)?,
-                jam_kerja_menit: row.get(7)?,
-                lembur_menit: row.get(8)?,
-                libur_menit: row.get(9)?,
+                jenis_personil: row.get(3)?,
+                status_kepegawaian: row.get(4)?,
+                rate_per_hour: row.get(5)?,
+                rate_per_jp: row.get(6)?,
+                ptkp_status: row.get(7)?,
+                total_hadir: row.get(8)?,
+                total_terlambat: row.get(9)?,
+                jam_kerja_menit: row.get(10)?,
+                lembur_menit: row.get(11)?,
+                libur_menit: row.get(12)?,
+                libur_jam_kerja_menit: row.get(13)?,
             })
         })
         .map_err(|_| CommandError::internal())?;
@@ -1049,9 +1602,21 @@ pub async fn desktop_get_payroll_recap(
 
     for item in rows {
         if let Ok(agg) = item {
-            let reg_hours = Decimal::from(agg.jam_kerja_menit) / Decimal::from(60);
-            let ot_hours = Decimal::from(agg.lembur_menit) / Decimal::from(60);
-            let holiday_hours = Decimal::from(agg.libur_menit) / Decimal::from(60);
+            // Sakelar lembur guru: kebijakan sekolah, dibaca sekali per rekap.
+            // Untuk selain guru nilainya tidak pernah berlaku.
+            let overtime_allowed = teacher_overtime || !is_teacher_personnel(&agg.jenis_personil);
+            let (jam_kerja_menit, lembur_menit, libur_menit) =
+                PayrollCalculator::apply_overtime_policy(
+                    agg.jam_kerja_menit,
+                    agg.lembur_menit,
+                    agg.libur_menit,
+                    agg.libur_jam_kerja_menit,
+                    overtime_allowed,
+                );
+
+            let reg_hours = Decimal::from(jam_kerja_menit) / Decimal::from(60);
+            let ot_hours = Decimal::from(lembur_menit) / Decimal::from(60);
+            let holiday_hours = Decimal::from(libur_menit) / Decimal::from(60);
             let rate_dec = Decimal::from(agg.rate_per_hour);
 
             // Dua indeks, dua jenjang: jam lembur hari biasa memakai HARI_KERJA,
@@ -1062,14 +1627,41 @@ pub async fn desktop_get_payroll_recap(
             let holiday_index =
                 PayrollCalculator::calculate_overtime_index(holiday_hours, &holiday_tiers);
             let basic_salary =
-                PayrollCalculator::wage_from_minutes(agg.jam_kerja_menit, agg.rate_per_hour);
+                PayrollCalculator::wage_from_minutes(jam_kerja_menit, agg.rate_per_hour);
             let overtime_salary = ((ot_index + holiday_index) * rate_dec)
                 .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
 
-            let (allowance, deduction, _) =
-                PayrollCalculator::calculate_components(basic_salary, &components, &agg.id_unik);
+            // Honor mengajar berdiri SENDIRI di samping upah kehadiran: gaji
+            // pokok berasal dari jam di sekolah lewat scan gerbang, honor ini
+            // dari jam pelajaran yang benar-benar diajar dan sudah diparaf.
+            // Guru honorer dengan rate pokok 0 karenanya tetap dibayar.
+            let teaching = PayrollCalculator::summarize_teaching(
+                taught_sessions
+                    .get(&agg.id_unik)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                &jp_rates,
+                &agg.id_unik,
+                agg.rate_per_jp,
+            );
+            let teaching_salary = Decimal::from(teaching.honor);
 
-            let gross = basic_salary + overtime_salary + allowance;
+            // Tunjangan persentase tetap dihitung dari GAJI POKOK saja, sesuai
+            // label di layar konfigurasinya ("% Gaji Pokok"). Memasukkan honor
+            // mengajar ke dasarnya akan diam-diam mengubah arti setiap
+            // komponen persen yang sudah dibuat sekolah sebelum fitur ini ada.
+            let subject = ComponentSubject {
+                id_karyawan: agg.id_unik.clone(),
+                jenis_personil: agg.jenis_personil.clone(),
+                status_kepegawaian: agg.status_kepegawaian.clone(),
+                divisi: agg.divisi.clone(),
+                total_teaching_jp: teaching.total_jp,
+                total_hadir: agg.total_hadir,
+            };
+            let (allowance, deduction, _) =
+                PayrollCalculator::calculate_components(basic_salary, &components, &subject);
+
+            let gross = basic_salary + overtime_salary + teaching_salary + allowance;
             let (bpjs_emp, _, _) = PayrollCalculator::calculate_bpjs(gross, &bpjs_rules);
             let (pph21, _) =
                 PayrollCalculator::calculate_pph21_ter(gross, &agg.ptkp_status, &tax_rules);
@@ -1080,6 +1672,8 @@ pub async fn desktop_get_payroll_recap(
                 id_karyawan: agg.id_unik,
                 nama_karyawan: agg.nama,
                 divisi: agg.divisi,
+                jenis_personil: agg.jenis_personil,
+                status_kepegawaian: agg.status_kepegawaian,
                 rate_per_hour: agg.rate_per_hour,
                 ptkp_status: agg.ptkp_status,
                 total_hadir: agg.total_hadir,
@@ -1087,14 +1681,22 @@ pub async fn desktop_get_payroll_recap(
                 // Menit mentah ikut dibawa supaya pembekuan bisa menurunkan
                 // jamnya dengan cara yang sama persis seperti di sini, alih-alih
                 // membaca ulang `f64` di bawah yang presisinya sudah hilang.
-                total_regular_minutes: agg.jam_kerja_menit,
-                total_overtime_minutes: agg.lembur_menit,
-                total_holiday_minutes: agg.libur_menit,
+                // Menit SETELAH kebijakan lembur, bukan menit mentah: nilai
+                // inilah yang dibekukan `desktop_create_payroll_run` ke
+                // `payroll_items`. Membawa menit mentah ke sini membuat slip
+                // yang dibekukan berbeda dari angka yang dilihat dan disetujui
+                // admin di layar rekap.
+                total_regular_minutes: jam_kerja_menit,
+                total_overtime_minutes: lembur_menit,
+                total_holiday_minutes: libur_menit,
                 total_regular_hours: reg_hours.to_f64().unwrap_or(0.0),
                 total_overtime_hours: ot_hours.to_f64().unwrap_or(0.0),
                 total_overtime_index: ot_index.to_f64().unwrap_or(0.0),
                 total_holiday_hours: holiday_hours.to_f64().unwrap_or(0.0),
                 total_holiday_overtime_index: holiday_index.to_f64().unwrap_or(0.0),
+                total_teaching_jp: teaching.total_jp,
+                teaching_salary: teaching.honor,
+                unrated_teaching_jp: teaching.unrated_jp,
                 est_basic_salary: basic_salary.to_i64().unwrap_or(0),
                 est_overtime_salary: overtime_salary.to_i64().unwrap_or(0),
                 est_gross_salary: gross.to_i64().unwrap_or(0),
@@ -1201,10 +1803,25 @@ pub async fn desktop_create_payroll_run(
         let overtime_salary = ((ot_index + holiday_index) * rate_dec)
             .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero);
 
-        let (allowance, deduction, comp_breakdown) =
-            PayrollCalculator::calculate_components(basic_salary, &components, &row.id_karyawan);
+        // Honor mengajar dibekukan dari angka yang SUDAH dihitung rekap, bukan
+        // dihitung ulang di sini: rekap itulah yang dilihat dan disetujui
+        // admin, dan menghitung ulang berarti membuka celah bagi dua angka.
+        let teaching_salary = Decimal::from(row.teaching_salary);
 
-        let gross = basic_salary + overtime_salary + allowance;
+        let subject = ComponentSubject {
+            id_karyawan: row.id_karyawan.clone(),
+            jenis_personil: row.jenis_personil.clone(),
+            status_kepegawaian: row.status_kepegawaian.clone(),
+            divisi: row.divisi.clone(),
+            // Dibaca dari baris REKAP, bukan dihitung ulang: pembekuan harus
+            // memakai angka yang sama dengan yang dilihat dan disetujui admin.
+            total_teaching_jp: row.total_teaching_jp,
+            total_hadir: row.total_hadir,
+        };
+        let (allowance, deduction, comp_breakdown) =
+            PayrollCalculator::calculate_components(basic_salary, &components, &subject);
+
+        let gross = basic_salary + overtime_salary + teaching_salary + allowance;
         let (bpjs_emp, bpjs_co, bpjs_breakdown) =
             PayrollCalculator::calculate_bpjs(gross, &bpjs_rules);
         let (pph21, tax_breakdown) =
@@ -1221,6 +1838,8 @@ pub async fn desktop_create_payroll_run(
             "holiday_overtime_index": holiday_index.to_f64().unwrap_or(0.0),
             "basic_salary": basic_salary.to_i64().unwrap_or(0),
             "overtime_salary": overtime_salary.to_i64().unwrap_or(0),
+            "teaching_jp": row.total_teaching_jp,
+            "teaching_salary": row.teaching_salary,
             "components": comp_breakdown,
             "bpjs": bpjs_breakdown,
             "tax": tax_breakdown,
@@ -1262,6 +1881,11 @@ pub async fn desktop_create_payroll_run(
             pph21_i64,
             net_i64,
             snapshot.to_string(),
+            // Ditambahkan di UJUNG tuple dengan sengaja: menyisipkannya di
+            // tengah akan menggeser setiap indeks `it.N` di bawah tanpa satu
+            // pun error kompilasi, karena semuanya bertipe angka.
+            row.total_teaching_jp,
+            row.teaching_salary,
         ));
     }
 
@@ -1280,6 +1904,8 @@ pub async fn desktop_create_payroll_run(
                 "total_overtime_index": it.7,
                 "total_holiday_hours": it.8,
                 "total_holiday_overtime_index": it.9,
+                "total_teaching_jp": it.21,
+                "teaching_salary": it.22,
                 "rate_per_hour": it.10,
                 "basic_salary": it.11,
                 "overtime_salary": it.12,
@@ -1328,10 +1954,11 @@ pub async fn desktop_create_payroll_run(
                 id, payroll_run_id, id_karyawan, nama_karyawan, divisi, ptkp_status,
                 total_regular_hours, total_overtime_hours, total_overtime_index,
                 total_holiday_hours, total_holiday_overtime_index,
+                total_teaching_jp, teaching_salary,
                 rate_per_hour, basic_salary, overtime_salary, gross_salary,
                 total_allowances, total_deductions, bpjs_employee_total, bpjs_company_total,
                 pph21_amount, net_salary, breakdown_snapshot, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23);
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25);
             "#,
             params![
                 it.0,
@@ -1345,6 +1972,8 @@ pub async fn desktop_create_payroll_run(
                 it.7,
                 it.8,
                 it.9,
+                it.21,
+                it.22,
                 it.10,
                 it.11,
                 it.12,
@@ -1522,6 +2151,7 @@ pub async fn desktop_get_payroll_run_detail(
             SELECT id, payroll_run_id, id_karyawan, nama_karyawan, divisi, ptkp_status,
                    total_regular_hours, total_overtime_hours, total_overtime_index,
                    COALESCE(total_holiday_hours, 0), COALESCE(total_holiday_overtime_index, 0),
+                   COALESCE(total_teaching_jp, 0), COALESCE(teaching_salary, 0),
                    rate_per_hour, basic_salary, overtime_salary, gross_salary,
                    total_allowances, total_deductions, bpjs_employee_total, bpjs_company_total,
                    pph21_amount, net_salary, breakdown_snapshot, created_at
@@ -1546,18 +2176,20 @@ pub async fn desktop_get_payroll_run_detail(
                 total_overtime_index: row.get(8)?,
                 total_holiday_hours: row.get(9)?,
                 total_holiday_overtime_index: row.get(10)?,
-                rate_per_hour: row.get(11)?,
-                basic_salary: row.get(12)?,
-                overtime_salary: row.get(13)?,
-                gross_salary: row.get(14)?,
-                total_allowances: row.get(15)?,
-                total_deductions: row.get(16)?,
-                bpjs_employee_total: row.get(17)?,
-                bpjs_company_total: row.get(18)?,
-                pph21_amount: row.get(19)?,
-                net_salary: row.get(20)?,
-                breakdown_snapshot: row.get(21)?,
-                created_at: row.get(22)?,
+                total_teaching_jp: row.get(11)?,
+                teaching_salary: row.get(12)?,
+                rate_per_hour: row.get(13)?,
+                basic_salary: row.get(14)?,
+                overtime_salary: row.get(15)?,
+                gross_salary: row.get(16)?,
+                total_allowances: row.get(17)?,
+                total_deductions: row.get(18)?,
+                bpjs_employee_total: row.get(19)?,
+                bpjs_company_total: row.get(20)?,
+                pph21_amount: row.get(21)?,
+                net_salary: row.get(22)?,
+                breakdown_snapshot: row.get(23)?,
+                created_at: row.get(24)?,
             })
         })
         .map_err(|_| CommandError::internal())?
@@ -1906,7 +2538,7 @@ fn load_bpjs_rules(conn: &Connection, period_end: &str) -> Result<Vec<BpjsRule>,
 
 #[cfg(test)]
 mod tests {
-    use super::new_payroll_id;
+    use super::{load_jp_rates, load_taught_sessions, new_payroll_id};
     use std::collections::HashSet;
 
     #[test]
@@ -1924,5 +2556,88 @@ mod tests {
         let suffix = id.rsplit('-').next().unwrap_or_default();
         assert_eq!(suffix.len(), 12);
         assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    /// Hanya sesi yang jurnalnya SUDAH DIPARAF yang menghasilkan honor, dan
+    /// jurnal ganda tidak menggandakan sesinya.
+    ///
+    /// SQL-nya dijalankan sungguhan di sini, bukan dibaca: satu nama kolom yang
+    /// salah ketik hanyalah teks di dalam string bagi lint maupun typecheck.
+    #[test]
+    fn sesi_mengajar_hanya_terhitung_bila_jurnalnya_diparaf() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE presensi_mapel (
+                id_presensi_mapel TEXT PRIMARY KEY,
+                id_tahun_ajaran TEXT NOT NULL,
+                id_rombel TEXT NOT NULL,
+                id_mapel TEXT NOT NULL,
+                id_guru TEXT NOT NULL,
+                tanggal TEXT NOT NULL,
+                jam_ke TEXT NOT NULL
+            );
+            CREATE TABLE jurnal_mengajar (
+                id_jurnal TEXT PRIMARY KEY,
+                id_presensi_mapel TEXT NOT NULL,
+                paraf_at TEXT
+            );
+            INSERT INTO presensi_mapel VALUES
+                ('pm1', 'ta', 'r1', 'mtk', 'g1', '2026-09-10', '1-2'),
+                ('pm2', 'ta', 'r2', 'mtk', 'g1', '2026-09-10', '3'),
+                ('pm3', 'ta', 'r3', 'mtk', 'g1', '2026-09-10', '5'),
+                ('pm4', 'ta', 'r1', 'mtk', 'g1', '2026-10-01', '1');
+            INSERT INTO jurnal_mengajar VALUES
+                -- Dua jurnal untuk SATU sesi: bisa terjadi karena dua perangkat
+                -- offline menulisnya, dan JOIN akan menghitungnya dua kali.
+                ('j1', 'pm1', '2026-09-10T10:00:00Z'),
+                ('j1b', 'pm1', '2026-09-10T10:05:00Z'),
+                -- Jurnal tanpa paraf: sesi yang dibuat lalu ditinggalkan.
+                ('j2', 'pm2', NULL),
+                ('j3', 'pm3', '   '),
+                ('j4', 'pm4', '2026-10-01T10:00:00Z');
+            "#,
+        )
+        .unwrap();
+
+        let sessions = load_taught_sessions(&conn, "2026-09-01", "2026-09-30").unwrap();
+        let milik_guru = sessions.get("g1").cloned().unwrap_or_default();
+
+        assert_eq!(
+            milik_guru.len(),
+            1,
+            "hanya pm1 yang diparaf, dan jurnal gandanya tidak menggandakannya"
+        );
+        assert_eq!(milik_guru[0].id_presensi_mapel, "pm1");
+        assert_eq!((milik_guru[0].jam_awal, milik_guru[0].jam_akhir), (1, 2));
+    }
+
+    /// Tarif JP dibaca utuh, termasuk baris yang `id_guru`-nya NULL.
+    #[test]
+    fn tarif_jp_dibaca_beserta_baris_tanpa_guru() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE tarif_jp (
+                id TEXT PRIMARY KEY,
+                id_mapel TEXT NOT NULL,
+                id_guru TEXT,
+                rate_per_jp INTEGER NOT NULL CHECK (rate_per_jp >= 0),
+                effective_date TEXT NOT NULL,
+                status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO tarif_jp VALUES
+                ('t1', 'mtk', NULL, 100000, '2026-01-01', 1, '2026-01-01', '2026-01-01'),
+                ('t2', 'mtk', 'g1', 120000, '2026-01-01', 1, '2026-01-01', '2026-01-01');
+            "#,
+        )
+        .unwrap();
+
+        let rates = load_jp_rates(&conn).unwrap();
+        assert_eq!(rates.len(), 2);
+        assert!(rates.iter().any(|r| r.id_guru.is_none()));
+        assert!(rates.iter().any(|r| r.id_guru.as_deref() == Some("g1")));
     }
 }

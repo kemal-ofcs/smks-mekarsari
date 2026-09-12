@@ -166,6 +166,16 @@ export function SlipGajiPrintView({
                   </td>
                 </tr>
               )}
+              {(item.teaching_salary ?? 0) > 0 && (
+                <tr>
+                  <td className="py-1 text-slate-600">
+                    {`Honor Mengajar (${item.total_teaching_jp ?? 0} JP)`}
+                  </td>
+                  <td className="py-1 text-right font-mono font-medium">
+                    {IDR.format(item.teaching_salary ?? 0)}
+                  </td>
+                </tr>
+              )}
               {allowances.map((a) => (
                 <tr key={a.id}>
                   <td className="py-1 text-slate-600">{a.name}</td>

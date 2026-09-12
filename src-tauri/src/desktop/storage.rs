@@ -159,6 +159,74 @@ const ATTENDANCE_SOURCE_VALUES: &[&str] = &[
 /// SUDAH tidak bisa didorong ke cloud, jadi menormalkannya justru
 /// membebaskannya. `Generate Sistem` dipilih karena prioritas TERENDAH — ia
 /// tidak akan menimpa catatan yang lebih tinggi saat rekonsiliasi.
+/// Jenis perhitungan komponen payroll yang diterima database.
+///
+/// Sama persis dengan CHECK constraint cloud, enum Zod di `sync-schema.ts`, dan
+/// `PAYROLL_CALC_TYPES` di `src/lib/validations/payroll-policy.ts`.
+const PAYROLL_CALC_TYPES: &[&str] = &["FIXED", "PERCENTAGE", "PER_JP", "PER_HADIR"];
+
+/// Memperluas CHECK `payroll_components.calc_type` pada database yang sudah ada.
+///
+/// SQLite tidak bisa mengubah CHECK lewat ALTER, jadi satu-satunya jalan adalah
+/// membangun ulang tabelnya. Tanpa ini hanya pemasangan BARU yang bisa memakai
+/// tunjangan per JP dan per hari hadir, sementara pemasangan lama — yang justru
+/// sudah memakai payroll setiap bulan — akan menolak nilainya di titik simpan,
+/// dan pada jalur sinkronisasi penolakan itu mengunci outbox secara permanen.
+///
+/// Idempoten lewat pemeriksaan teks DDL-nya sendiri, pola yang sama dengan
+/// `ensure_attendance_source_check`. Tidak ada baris yang perlu diperbaiki
+/// lebih dulu: nilai lama ('FIXED', 'PERCENTAGE') tetap sah pada CHECK baru.
+fn ensure_payroll_calc_type_values(connection: &Connection) -> Result<(), String> {
+    let existing: Option<String> = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'payroll_components';",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| "Skema payroll_components tidak dapat diperiksa.".to_string())?;
+    let Some(existing) = existing else {
+        return Ok(());
+    };
+    if existing.contains("'PER_JP'") {
+        return Ok(());
+    }
+
+    let daftar = PAYROLL_CALC_TYPES
+        .iter()
+        .map(|nilai| format!("'{nilai}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    const KOLOM: &str =
+        "id, name, category, calc_type, default_value, applies_to, is_active, created_at";
+
+    let script = format!(
+        "BEGIN;
+        DROP TABLE IF EXISTS payroll_components__rebuild;
+        CREATE TABLE payroll_components__rebuild (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          category TEXT NOT NULL CHECK (category IN ('ALLOWANCE', 'DEDUCTION')),
+          calc_type TEXT NOT NULL CHECK (calc_type IN ({daftar})),
+          default_value REAL NOT NULL DEFAULT 0 CHECK (default_value >= 0),
+          applies_to TEXT NOT NULL DEFAULT 'ALL',
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO payroll_components__rebuild ({KOLOM})
+          SELECT {KOLOM} FROM payroll_components;
+        DROP TABLE payroll_components;
+        ALTER TABLE payroll_components__rebuild RENAME TO payroll_components;
+        COMMIT;"
+    );
+
+    connection
+        .execute_batch(&script)
+        .map_err(|_| "Tabel payroll_components tidak dapat dibangun ulang.".to_string())?;
+    Ok(())
+}
+
 fn ensure_attendance_source_check(connection: &Connection) -> Result<(), String> {
     let existing: Option<String> = connection
         .query_row(
@@ -647,6 +715,11 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         id TEXT PRIMARY KEY,
         id_karyawan TEXT NOT NULL,
         rate_per_hour INTEGER NOT NULL CHECK (rate_per_hour >= 0),
+        -- Tarif bawaan per jam pelajaran, dipakai ketika mapel yang diajar
+        -- belum punya tarif sendiri di `tarif_jp`. Nol berarti orang ini
+        -- memang tidak dibayar per JP — itu keadaan normal bagi karyawan
+        -- non-guru, jadi ketiadaan tarif TIDAK PERNAH menggagalkan payroll.
+        rate_per_jp INTEGER NOT NULL DEFAULT 0 CHECK (rate_per_jp >= 0),
         ptkp_status TEXT NOT NULL DEFAULT 'TK/0'
           CHECK (ptkp_status IN ('TK/0','TK/1','TK/2','TK/3','K/0','K/1','K/2','K/3')),
         effective_date TEXT NOT NULL,
@@ -668,7 +741,11 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         category TEXT NOT NULL CHECK (category IN ('ALLOWANCE', 'DEDUCTION')),
-        calc_type TEXT NOT NULL CHECK (calc_type IN ('FIXED', 'PERCENTAGE')),
+        -- PER_JP dan PER_HADIR ditambahkan pada schema versi 25. Database yang
+        -- sudah ada TIDAK diperbaiki oleh CREATE TABLE IF NOT EXISTS ini —
+        -- `ensure_payroll_calc_type_values` yang membangunnya ulang.
+        calc_type TEXT NOT NULL
+          CHECK (calc_type IN ('FIXED', 'PERCENTAGE', 'PER_JP', 'PER_HADIR')),
         default_value REAL NOT NULL DEFAULT 0 CHECK (default_value >= 0),
         applies_to TEXT NOT NULL DEFAULT 'ALL',
         is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
@@ -718,6 +795,12 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         total_overtime_index REAL NOT NULL,
         total_holiday_hours REAL NOT NULL DEFAULT 0,
         total_holiday_overtime_index REAL NOT NULL DEFAULT 0,
+        -- Honor mengajar yang DIBEKUKAN (schema versi 22). Jumlah jam
+        -- pelajaran dan uangnya disimpan di sini, bukan dihitung ulang dari
+        -- `presensi_mapel`, supaya slip yang sudah terbit tidak berubah ketika
+        -- presensi kelas atau tarifnya disunting kemudian.
+        total_teaching_jp INTEGER NOT NULL DEFAULT 0,
+        teaching_salary INTEGER NOT NULL DEFAULT 0 CHECK (teaching_salary >= 0),
         rate_per_hour INTEGER NOT NULL,
         basic_salary INTEGER NOT NULL CHECK (basic_salary >= 0),
         overtime_salary INTEGER NOT NULL CHECK (overtime_salary >= 0),
@@ -928,6 +1011,90 @@ pub fn initialize(path: &Path) -> Result<(), String> {
       CREATE INDEX IF NOT EXISTS idx_local_notifikasi_wa_dedupe ON notifikasi_wa(dedupe_key);
       INSERT OR IGNORE INTO desktop_schema_migration (version, name, applied_at)
       VALUES (9, 'desktop-whatsapp-notification-queue', unixepoch());
+      -- Tarif honor per jam pelajaran (schema versi 22).
+      --
+      -- `id_guru` NULL berarti tarif itu berlaku untuk SIAPA PUN yang mengajar
+      -- mapel tersebut; diisi berarti tarif khusus guru itu dan menang atas
+      -- tarif umum. `id_mapel` dipakai sebagai kunci karena `akademik_mapel`
+      -- ber-PK TEXT acak yang sama di semua perangkat — berbeda dari `id_shift`
+      -- yang AUTOINCREMENT dan berbeda per perangkat.
+      --
+      -- SENGAJA tanpa UNIQUE selain PK: dua perangkat offline boleh membuat
+      -- tarif untuk mapel yang sama, dan sebuah UNIQUE akan membuat push-nya
+      -- gagal permanen. Duplikatnya tidak berbahaya karena pemilihan tarif
+      -- selalu deterministik (lihat `resolve_jp_rate`), dan pencegahannya
+      -- dilakukan di lapisan aplikasi.
+      CREATE TABLE IF NOT EXISTS tarif_jp (
+        id TEXT PRIMARY KEY,
+        id_mapel TEXT NOT NULL,
+        id_guru TEXT,
+        rate_per_jp INTEGER NOT NULL CHECK (rate_per_jp >= 0),
+        effective_date TEXT NOT NULL,
+        status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_local_tarif_jp_lookup
+        ON tarif_jp(id_mapel, effective_date DESC);
+      INSERT OR IGNORE INTO desktop_schema_migration (version, name, applied_at)
+      VALUES (10, 'desktop-teaching-jp-rate', unixepoch());
+      -- Jadwal bel sekolah: jam pelajaran ke berapa berlangsung pukul berapa
+      -- (schema versi 23).
+      --
+      -- Tabel ini KETERANGAN, bukan penentu: presensi kelas tetap menyimpan
+      -- `jam_ke` dan honor tetap dihitung per jam pelajaran. Karena itu baris
+      -- yang belum lengkap tidak pernah menghalangi presensi — layar hanya
+      -- berhenti menampilkan pukulnya.
+      --
+      -- SENGAJA tanpa UNIQUE pada `jam_ke`: dua perangkat offline boleh
+      -- mendaftarkan jam yang sama, dan UNIQUE akan membuat push-nya gagal
+      -- permanen. Pencegahannya di lapisan aplikasi, yang bisa memberi pesan
+      -- ramah.
+      CREATE TABLE IF NOT EXISTS akademik_jam_pelajaran (
+        id_jam_pelajaran TEXT PRIMARY KEY,
+        jam_ke INTEGER NOT NULL CHECK (jam_ke >= 1),
+        jam_mulai TEXT NOT NULL,
+        jam_selesai TEXT NOT NULL,
+        jenis TEXT NOT NULL DEFAULT 'KBM'
+          CHECK (jenis IN ('KBM', 'Istirahat', 'Upacara', 'Ekstrakurikuler')),
+        keterangan TEXT,
+        is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_local_jam_pelajaran_urut
+        ON akademik_jam_pelajaran(jam_ke, jam_mulai);
+      INSERT OR IGNORE INTO desktop_schema_migration (version, name, applied_at)
+      VALUES (11, 'desktop-lesson-period-schedule', unixepoch());
+      -- Jadwal mengajar mingguan per rombel (schema versi 24).
+      --
+      -- Seperti jadwal bel, tabel ini KETERANGAN: presensi kelas tetap bisa
+      -- dicatat tanpa jadwal, dan jadwal hanya memberi tombol isi-cepat.
+      -- `hari` disimpan 1=Senin sampai 7=Minggu, dan diturunkan dari tanggal
+      -- lewat SQL (`strftime('%w')`) supaya tidak ada aritmetika tanggal yang
+      -- dieja dua kali di Rust dan TypeScript.
+      --
+      -- SENGAJA tanpa UNIQUE: dua perangkat offline boleh menyusun jadwal yang
+      -- sama, dan UNIQUE akan membuat push-nya gagal permanen. Bentroknya
+      -- dicegah di lapisan aplikasi, dengan cakupan yang sama seperti presensi
+      -- (rombel + mapel + hari), bukan seluruh rombel — pelajaran Agama memang
+      -- memecah satu rombel pada jam yang sama.
+      CREATE TABLE IF NOT EXISTS jadwal_mengajar (
+        id_jadwal TEXT PRIMARY KEY,
+        id_tahun_ajaran TEXT NOT NULL,
+        id_rombel TEXT NOT NULL,
+        id_mapel TEXT NOT NULL,
+        id_guru TEXT NOT NULL,
+        hari INTEGER NOT NULL CHECK (hari BETWEEN 1 AND 7),
+        jam_ke TEXT NOT NULL,
+        is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_local_jadwal_mengajar_lookup
+        ON jadwal_mengajar(id_tahun_ajaran, id_rombel, hari);
+      INSERT OR IGNORE INTO desktop_schema_migration (version, name, applied_at)
+      VALUES (12, 'desktop-teaching-schedule', unixepoch());
       "#,
         )
         .map_err(|_| "Schema keamanan Desktop tidak dapat diinisialisasi.".to_owned())?;
@@ -935,6 +1102,9 @@ pub fn initialize(path: &Path) -> Result<(), String> {
     seed_payroll_rate_tables(&connection)?;
 
     ensure_attendance_source_check(&connection)?;
+
+    // v25: memperluas CHECK `calc_type` untuk tunjangan per JP dan per hadir.
+    ensure_payroll_calc_type_values(&connection)?;
 
     // v17: melepas UNIQUE dari tabel akademik yang ikut sinkronisasi. Cerminan
     // `TursoClient::rebuild_without_unique` — lihat alasan lengkapnya di sana.
@@ -1023,6 +1193,27 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         "payroll_items",
         "total_holiday_overtime_index",
         "ALTER TABLE payroll_items ADD COLUMN total_holiday_overtime_index REAL NOT NULL DEFAULT 0;",
+    )?;
+
+    // Honor mengajar per jam pelajaran (v22). Alasan yang sama dengan blok di
+    // atas: `payroll_items` dan `salary_configs` sudah ada di database lama.
+    ensure_column(
+        &connection,
+        "payroll_items",
+        "total_teaching_jp",
+        "ALTER TABLE payroll_items ADD COLUMN total_teaching_jp INTEGER NOT NULL DEFAULT 0;",
+    )?;
+    ensure_column(
+        &connection,
+        "payroll_items",
+        "teaching_salary",
+        "ALTER TABLE payroll_items ADD COLUMN teaching_salary INTEGER NOT NULL DEFAULT 0;",
+    )?;
+    ensure_column(
+        &connection,
+        "salary_configs",
+        "rate_per_jp",
+        "ALTER TABLE salary_configs ADD COLUMN rate_per_jp INTEGER NOT NULL DEFAULT 0;",
     )?;
 
     // Stempel waktu pembuatan tarif payroll. `turso.rs` sudah memilikinya di
@@ -1207,7 +1398,16 @@ pub fn initialize(path: &Path) -> Result<(), String> {
 /// Semuanya adalah cache dari Turso: tidak ada satu pun baris di sini yang
 /// bermakna tanpa database asalnya. Ketika perangkat dipindahkan ke database
 /// Turso lain, isi tabel-tabel inilah yang harus hilang.
-const CLOUD_MIRRORED_TABLES: &[&str] = &[
+///
+/// Daftar ini dulu berhenti di tabel era payroll, sehingga seluruh tabel sekolah
+/// Fase 2–4 selamat dari pembersihan. Akibatnya nyata: perangkat yang pindah
+/// dari Mode Database Lokal ke Turso tetap MENAMPILKAN tahun ajaran, rombel,
+/// mapel, dan siswa milik database lama — padahal outbox-nya sudah dibuang di
+/// bawah dan `delete_missing` mati, jadi baris itu tidak pernah sampai ke cloud
+/// dan tidak pernah terlihat di perangkat lain. Dua test menjaganya sekarang:
+/// `every_local_table_is_classified_for_database_switch` di sini, dan
+/// `every_snapshot_table_is_purged_on_database_switch` di `sync.rs`.
+pub(crate) const CLOUD_MIRRORED_TABLES: &[&str] = &[
     "absensi_harian",
     "log_scan",
     "koreksi_admin",
@@ -1227,8 +1427,50 @@ const CLOUD_MIRRORED_TABLES: &[&str] = &[
     "payroll_components",
     "salary_configs",
     "overtime_tier_rules",
+    "tarif_jp",
     "tax_rules",
     "bpjs_rules",
+    "akademik_tahun_ajaran",
+    "akademik_jurusan",
+    "akademik_rombel",
+    "akademik_mapel",
+    "akademik_guru_mapel",
+    "akademik_jam_pelajaran",
+    "jadwal_mengajar",
+    "guru_data",
+    "siswa_data",
+    "presensi_mapel",
+    "presensi_mapel_detail",
+    "jurnal_mengajar",
+    "leger_kehadiran",
+    // Di luar snapshot tetapi tetap milik database asalnya: foto didorong ke
+    // cloud lewat outbox dan antrean WA berisi nomor wali siswa database lama.
+    "absensi_foto",
+    "siswa_foto",
+    "notifikasi_wa",
+];
+
+/// Tabel lokal yang SENGAJA tidak ikut `CLOUD_MIRRORED_TABLES`.
+///
+/// `setting_gex_system` dibersihkan per kunci (kunci koneksi perangkat
+/// dipertahankan); tabel `desktop_*` adalah identitas, vault, dan state
+/// sinkronisasi perangkat — yang terakhir dikosongkan tersendiri di
+/// `reset_cloud_linked_data`.
+#[cfg(test)]
+const DEVICE_OWNED_TABLES: &[&str] = &[
+    "setting_gex_system",
+    "desktop_schema_migration",
+    "desktop_credential_index",
+    "desktop_credential_alias",
+    "desktop_security_audit",
+    "desktop_login_rate_limit",
+    "desktop_device_identity",
+    "desktop_client_identity",
+    "desktop_sync_outbox",
+    "desktop_sync_cursor",
+    "desktop_sync_table_cursor",
+    "desktop_sync_conflict",
+    "desktop_entity_revision",
 ];
 
 /// Membuang seluruh jejak database cloud lama ketika perangkat dipindahkan ke
@@ -1524,7 +1766,8 @@ mod tests {
     use super::payroll_seed;
     use super::{
         clear_login_failures, database, get_or_create_device_id, initialize, login_lock_remaining,
-        record_failed_login, reset_cloud_linked_data, set_system_setting,
+        record_failed_login, reset_cloud_linked_data, set_system_setting, CLOUD_MIRRORED_TABLES,
+        DEVICE_OWNED_TABLES,
     };
 
     #[test]
@@ -1562,7 +1805,8 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("migration count");
-        assert_eq!(migrations, 9);
+        // Dua belas sejak v24 menambahkan `jadwal_mengajar` (jadwal mingguan).
+        assert_eq!(migrations, 12);
     }
 
     /// Pindah database cloud harus membuang seluruh cache database lama, tetapi
@@ -1581,6 +1825,14 @@ mod tests {
                 [],
             )
             .expect("seed employee");
+        // Data sekolah dari database lama: kasus nyata yang dulu lolos — rombel
+        // dan siswa tetap tampil setelah pindah dari Mode Lokal ke Turso.
+        connection
+            .execute_batch(
+                "INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel) VALUES ('rom-lama', 'ta-lama', 10, 'X AP 1');
+                 INSERT INTO siswa_data (id_siswa, nama_lengkap, id_rombel, angkatan, created_at, updated_at) VALUES ('S1', 'Siswa Lama', 'rom-lama', 2026, '2026-09-09', '2026-09-09');",
+            )
+            .expect("seed data sekolah");
         connection
             .execute(
                 "INSERT INTO desktop_sync_outbox (event_id, client_id, domain, operation, entity_key, payload_json, status, created_at, updated_at) VALUES ('EV1', 'C1', 'employee', 'update', 'E1', '{}', 'pending', 0, 0);",
@@ -1611,6 +1863,8 @@ mod tests {
         let connection = database(directory.path()).expect("database connection");
         for table in [
             "master_data",
+            "akademik_rombel",
+            "siswa_data",
             "desktop_sync_outbox",
             "desktop_entity_revision",
         ] {
@@ -1654,6 +1908,44 @@ mod tests {
         );
         assert!(!credentials.join("operator-lama.stronghold").is_file());
         assert!(credentials.join("turso_config.vault").is_file());
+    }
+
+    /// Setiap tabel lokal wajib diputuskan nasibnya saat pindah database:
+    /// dibuang bersama database lama, atau milik perangkat. Tabel baru yang
+    /// belum masuk salah satu daftar menggagalkan test ini — persis celah yang
+    /// dulu membuat seluruh tabel sekolah tertinggal di perangkat.
+    #[test]
+    fn every_local_table_is_classified_for_database_switch() {
+        let directory = tempdir().expect("temporary directory");
+        initialize(directory.path()).expect("initialize schema");
+        let connection = database(directory.path()).expect("database connection");
+        let mut statement = connection
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;")
+            .expect("prepare");
+        let tables = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows");
+
+        let unclassified = tables
+            .iter()
+            .filter(|table| {
+                !CLOUD_MIRRORED_TABLES.contains(&table.as_str())
+                    && !DEVICE_OWNED_TABLES.contains(&table.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            unclassified.is_empty(),
+            "tabel belum diklasifikasikan untuk pindah database: {unclassified:?}"
+        );
+
+        for table in CLOUD_MIRRORED_TABLES.iter().chain(DEVICE_OWNED_TABLES) {
+            assert!(
+                tables.iter().any(|name| name == table),
+                "daftar pindah database menyebut tabel yang tidak ada: {table}"
+            );
+        }
     }
 
     #[test]

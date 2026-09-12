@@ -2,24 +2,34 @@
 
 import Image from "next/image";
 import { redirect } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
+import {
+  describeImportReport,
+  downloadStudentTemplate,
+  exportStudents,
+  readStudentWorkbook,
+  runPersonnelImport,
+} from "@/lib/client/personnel-workbook";
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarRombel } from "@/lib/gateways/academic";
+import { getDaftarShift } from "@/lib/gateways/shift";
 import {
   getDaftarSiswa,
   hapusSiswa,
   type SiswaInput,
   simpanSiswa,
 } from "@/lib/gateways/student";
+import { syncNow } from "@/lib/gateways/sync-status";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { normalizeOperatorPhone } from "@/lib/operators/contact";
+import { STATUS_SISWA, shiftLabel } from "@/lib/validations/personnel";
 
 export default function SiswaPage() {
   const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
@@ -28,7 +38,14 @@ export default function SiswaPage() {
 
   const [siswaList, setSiswaList] = useState<Record<string, unknown>[]>([]);
   const [rombelList, setRombelList] = useState<Record<string, unknown>[]>([]);
+  const [shiftList, setShiftList] = useState<Record<string, unknown>[]>([]);
+  // Daftar shift menuntut `shifts.view`; tanpa izin itu halaman siswa tetap
+  // jalan, tetapi pemilih jam scan WAJIB menjelaskan kenapa ia kosong.
+  const [shiftError, setShiftError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const isSubmittingRef = useRef(false);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -83,6 +100,17 @@ export default function SiswaPage() {
     } finally {
       setLoading(false);
     }
+    try {
+      setShiftList(await getDaftarShift());
+      setShiftError(null);
+    } catch (err) {
+      setShiftList([]);
+      setShiftError(
+        err instanceof Error
+          ? `Daftar shift tidak bisa dimuat: ${err.message}`
+          : "Daftar shift tidak bisa dimuat.",
+      );
+    }
   }, [filterRombel]);
 
   useEffect(() => {
@@ -134,6 +162,7 @@ export default function SiswaPage() {
       alamat: "",
       angkatan: new Date().getFullYear(),
       status: "Aktif",
+      id_shift: shiftList[0] ? Number(shiftList[0].id_shift) : undefined,
     });
     setShowModal(true);
   };
@@ -153,6 +182,7 @@ export default function SiswaPage() {
       alamat: item.alamat ? String(item.alamat) : "",
       angkatan: Number(item.angkatan || new Date().getFullYear()),
       status: item.status ? String(item.status) : "Aktif",
+      id_shift: item.id_shift ? Number(item.id_shift) : undefined,
     });
     setShowModal(true);
   };
@@ -210,7 +240,8 @@ export default function SiswaPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManage) return;
+    if (!canManage || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setSaving(true);
     try {
       await simpanSiswa(formData);
@@ -227,9 +258,97 @@ export default function SiswaPage() {
           err instanceof Error ? err.message : "Gagal menyimpan data siswa.",
       });
     } finally {
+      isSubmittingRef.current = false;
       setSaving(false);
     }
   };
+
+  const handleImport = async (file: File) => {
+    if (!canManage || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setBulkWorking(true);
+    try {
+      const baris = await readStudentWorkbook(file, {
+        rombel: rombelList,
+        shifts: shiftList,
+      });
+      const report = await runPersonnelImport(baris, (draft) =>
+        simpanSiswa(draft, { tundaSinkronisasi: true }),
+      );
+      let catatanSinkron = "";
+      if (report.berhasil > 0) {
+        try {
+          await syncNow();
+        } catch (err) {
+          catatanSinkron = ` Data sudah tersimpan di perangkat ini; sinkronisasi akan dicoba otomatis (${
+            err instanceof Error ? err.message : "gagal menghubungi database"
+          }).`;
+        }
+      }
+      setFeedback({
+        tone: report.gagal.length > 0 || catatanSinkron ? "warning" : "success",
+        message: describeImportReport(report, "peserta didik") + catatanSinkron,
+      });
+      await loadData();
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message: err instanceof Error ? err.message : "Impor Excel gagal.",
+      });
+    } finally {
+      isSubmittingRef.current = false;
+      setBulkWorking(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
+  const reportSaved = (
+    result: { cancelled?: boolean; path?: string | null },
+    label: string,
+  ) => {
+    if (result.cancelled) return;
+    setFeedback({
+      tone: "success",
+      message: result.path
+        ? `${label} berhasil disimpan di: ${result.path}`
+        : `${label} berhasil diunduh.`,
+    });
+  };
+
+  const handleExport = async () => {
+    try {
+      reportSaved(
+        await exportStudents(filteredStudents, shiftList),
+        "Data peserta didik",
+      );
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message: err instanceof Error ? err.message : "Gagal mengekspor data.",
+      });
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      reportSaved(
+        await downloadStudentTemplate({
+          rombel: rombelList,
+          shifts: shiftList,
+        }),
+        "Template impor",
+      );
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message:
+          err instanceof Error ? err.message : "Gagal mengunduh template.",
+      });
+    }
+  };
+
+  const shiftById = (idShift: unknown) =>
+    shiftList.find((s) => Number(s.id_shift) === Number(idShift));
 
   // Gerbang area: setiap halaman lain melakukan hal yang sama. Backend sudah
   // menegakkan izinnya lewat require_permission/requireWebPermission, tetapi
@@ -258,7 +377,7 @@ export default function SiswaPage() {
           title="Master Data Peserta Didik"
           description="Direktori siswa, pembagian rombel belajar, dan integrasi notifikasi wali murid."
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => void loadData()}
@@ -267,6 +386,46 @@ export default function SiswaPage() {
                 <Icon name="refresh" className="size-4" />
                 <span>Muat Ulang</span>
               </button>
+              <button
+                type="button"
+                onClick={() => void handleExport()}
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-sky-500/40 bg-slate-800 px-4 py-2 text-sm font-semibold text-sky-300 transition hover:bg-slate-700"
+              >
+                <Icon name="download" className="size-4" />
+                <span>Export Excel</span>
+              </button>
+              {canManage ? (
+                <>
+                  <input
+                    aria-label="Berkas Excel untuk impor peserta didik"
+                    ref={importInputRef}
+                    type="file"
+                    accept=".xlsx,.csv"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void handleImport(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={bulkWorking}
+                    onClick={() => importInputRef.current?.click()}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-emerald-500/40 bg-slate-800 px-4 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    <Icon name="upload" className="size-4" />
+                    <span>{bulkWorking ? "Memproses…" : "Import Excel"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadTemplate()}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/10 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-700"
+                  >
+                    <Icon name="document" className="size-4" />
+                    <span>Template</span>
+                  </button>
+                </>
+              ) : null}
               {canManage ? (
                 <button
                   type="button"
@@ -334,18 +493,15 @@ export default function SiswaPage() {
               <option value="" className="bg-slate-900 text-slate-100">
                 Semua Status
               </option>
-              <option value="Aktif" className="bg-slate-900 text-slate-100">
-                Aktif
-              </option>
-              <option value="Lulus" className="bg-slate-900 text-slate-100">
-                Lulus
-              </option>
-              <option value="Mutasi" className="bg-slate-900 text-slate-100">
-                Mutasi
-              </option>
-              <option value="Nonaktif" className="bg-slate-900 text-slate-100">
-                Nonaktif
-              </option>
+              {STATUS_SISWA.map((status) => (
+                <option
+                  key={status}
+                  value={status}
+                  className="bg-slate-900 text-slate-100"
+                >
+                  {status}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -429,6 +585,14 @@ export default function SiswaPage() {
                             Kelas {String(item.tingkat || 10)} -{" "}
                             {String(item.nama_rombel || "-")}
                           </span>
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            Jam scan: {(() => {
+                              const shift = shiftById(item.id_shift);
+                              return shift
+                                ? shiftLabel(shift)
+                                : `Shift #${String(item.id_shift ?? "-")}`;
+                            })()}
+                          </div>
                         </td>
                         <td className="px-6 py-4 text-xs text-slate-300">
                           <div className="font-semibold text-slate-200">
@@ -711,32 +875,63 @@ export default function SiswaPage() {
                     }
                     className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
                   >
-                    <option
-                      value="Aktif"
-                      className="bg-slate-900 text-slate-100"
-                    >
-                      Aktif
-                    </option>
-                    <option
-                      value="Lulus"
-                      className="bg-slate-900 text-slate-100"
-                    >
-                      Lulus
-                    </option>
-                    <option
-                      value="Mutasi"
-                      className="bg-slate-900 text-slate-100"
-                    >
-                      Mutasi / Pindah
-                    </option>
-                    <option
-                      value="Nonaktif"
-                      className="bg-slate-900 text-slate-100"
-                    >
-                      Nonaktif
-                    </option>
+                    {STATUS_SISWA.map((status) => (
+                      <option
+                        key={status}
+                        value={status}
+                        className="bg-slate-900 text-slate-100"
+                      >
+                        {status}
+                      </option>
+                    ))}
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="siswa-shift"
+                  className="block text-xs font-semibold text-slate-300"
+                >
+                  Shift / Jam Scan
+                </label>
+                <select
+                  id="siswa-shift"
+                  value={formData.id_shift ?? ""}
+                  disabled={shiftList.length === 0}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      id_shift: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
+                    })
+                  }
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none disabled:opacity-60"
+                >
+                  {formData.id_shift === undefined ? (
+                    <option value="" className="bg-slate-900 text-slate-100">
+                      {formData.id_siswa
+                        ? "Pertahankan shift saat ini"
+                        : "Shift bawaan (shift 1)"}
+                    </option>
+                  ) : null}
+                  {shiftList.map((s) => (
+                    <option
+                      key={Number(s.id_shift)}
+                      value={Number(s.id_shift)}
+                      className="bg-slate-900 text-slate-100"
+                    >
+                      {shiftLabel(s)}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {shiftError ??
+                    (shiftList.length === 0
+                      ? "Belum ada shift. Buat shift khusus siswa di menu Shift agar jam scan-nya sesuai jadwal sekolah."
+                      : "Scan masuk hanya diterima di sekitar jam masuk shift ini. Jam dan toleransinya diatur di menu Shift.")}
+                </p>
               </div>
 
               <div>

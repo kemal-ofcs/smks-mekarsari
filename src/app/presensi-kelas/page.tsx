@@ -14,6 +14,8 @@ import {
   getDaftarMapel,
   getDaftarRombel,
   getDaftarTahunAjaran,
+  getJadwalMengajar,
+  type TeachingScheduleRow,
 } from "@/lib/gateways/academic";
 import {
   type AttendanceAnomalyItem,
@@ -21,8 +23,12 @@ import {
   deleteClassAttendance,
   getDaftarSesiPresensi,
   getDetailSesiPresensi,
+  getJpSettings,
+  getLessonPeriods,
   getRekonsiliasiPresensi,
   getRosterUntukPresensi,
+  type JpSettings,
+  type LessonPeriodRow,
   type StudentAttendanceDetailItem,
   saveClassAttendance,
 } from "@/lib/gateways/class-attendance";
@@ -33,7 +39,13 @@ import { normalizeOperatorPhone } from "@/lib/operators/contact";
 import {
   buildParentNotificationText,
   buildPresentWithoutGateScanWarning,
+  DEFAULT_JP_DURATION_MINUTES,
+  DEFAULT_JP_MAX_PER_DAY,
   hasUnsavedAttendanceMarks,
+  hitungJp,
+  MAX_JAM_KE,
+  rentangJamKe,
+  susunJamKe,
 } from "@/lib/validations/class-attendance";
 
 type TabKey = "input" | "reconciliation" | "history";
@@ -66,7 +78,43 @@ export default function PresensiKelasPage() {
   const [selectedDate, setSelectedDate] = useState<string>(
     formatTanggalOperasional(new Date()),
   );
-  const [selectedJamKe, setSelectedJamKe] = useState<string>("1-2");
+  // Jam pelajaran diketik sebagai dua angka, bukan dipilih dari daftar tetap.
+  // Daftar lama berhenti di jam ke-8 sementara validatornya menerima sampai
+  // jam ke-12, jadi sekolah dengan jam pelajaran lebih panjang terkunci hanya
+  // oleh isi dropdown. Bentuk kanonik yang tersimpan tetap dihasilkan
+  // `susunJamKe`, sehingga tidak ada ejaan kedua yang bisa lolos ke database.
+  const [jamKeDari, setJamKeDari] = useState<number>(1);
+  const [jamKeSampai, setJamKeSampai] = useState<number>(2);
+  const selectedJamKe = susunJamKe(jamKeDari, jamKeSampai);
+  const jumlahJp = selectedJamKe === null ? null : hitungJp(selectedJamKe);
+
+  // Jumlah jam pelajaran sekolah ini. Dibaca dari backend, bukan dari tetapan
+  // di layar: batas strukturalnya jauh lebih longgar daripada yang benar-benar
+  // dipakai sekolah, dan gurunya berhak tahu angka miliknya sendiri.
+  const [jpSettings, setJpSettings] = useState<JpSettings>({
+    maxPerHari: DEFAULT_JP_MAX_PER_DAY,
+    durasiMenit: DEFAULT_JP_DURATION_MINUTES,
+    batasStruktural: MAX_JAM_KE,
+  });
+
+  // Jadwal mengajar hari ini untuk rombel terpilih. Sama seperti jadwal bel,
+  // ini KETERANGAN: sekolah yang belum menyusunnya tetap bisa mencatat
+  // presensi, hanya tanpa tombol isi-cepat.
+  const [jadwalHariIni, setJadwalHariIni] = useState<TeachingScheduleRow[]>([]);
+
+  // Jadwal bel hanya KETERANGAN: kalau sekolah belum mengisinya, layar ini
+  // tetap berjalan dan pukulnya saja yang tidak muncul.
+  const [lessonPeriods, setLessonPeriods] = useState<LessonPeriodRow[]>([]);
+  const pukulBel = (() => {
+    const awal = lessonPeriods.find(
+      (row) => row.jam_ke === jamKeDari && row.is_aktif === 1,
+    );
+    const akhir = lessonPeriods.find(
+      (row) => row.jam_ke === jamKeSampai && row.is_aktif === 1,
+    );
+    if (!awal || !akhir) return null;
+    return `${awal.jam_mulai}–${akhir.jam_selesai}`;
+  })();
   const [materiPokok, setMateriPokok] = useState<string>("");
   const [catatanSesi, setCatatanSesi] = useState<string>("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -121,12 +169,17 @@ export default function PresensiKelasPage() {
   // Load master dropdown options
   const loadMasterData = useCallback(async () => {
     try {
-      const [taData, rombelData, mapelData, guruData] = await Promise.all([
-        getDaftarTahunAjaran(),
-        getDaftarRombel(),
-        getDaftarMapel(),
-        getDaftarGuru(),
-      ]);
+      const [taData, rombelData, mapelData, guruData, jp, belData] =
+        await Promise.all([
+          getDaftarTahunAjaran(),
+          getDaftarRombel(),
+          getDaftarMapel(),
+          getDaftarGuru(),
+          getJpSettings(),
+          getLessonPeriods(),
+        ]);
+      setJpSettings(jp);
+      setLessonPeriods(belData);
 
       setTahunAjaranList(taData);
       setRombelList(rombelData);
@@ -205,8 +258,18 @@ export default function PresensiKelasPage() {
     setLoading(true);
     setFeedback(null);
     try {
-      const roster = await getRosterUntukPresensi(selectedRombel, selectedDate);
+      const [roster, jadwal] = await Promise.all([
+        getRosterUntukPresensi(selectedRombel, selectedDate),
+        // Jadwal hari itu ikut dimuat bersama roster: keduanya berangkat dari
+        // rombel dan tanggal yang sama, dan memuatnya terpisah berarti dua
+        // perjalanan untuk satu tindakan pengguna.
+        getJadwalMengajar({
+          id_rombel: selectedRombel,
+          tanggal: selectedDate,
+        }).catch(() => [] as TeachingScheduleRow[]),
+      ]);
       setRosterItems(roster);
+      setJadwalHariIni(jadwal.filter((row) => row.is_aktif === 1));
       setEditingSessionId(null);
       if (roster.length === 0) {
         setFeedback({
@@ -350,12 +413,19 @@ export default function PresensiKelasPage() {
       !selectedRombel ||
       !selectedMapel ||
       !selectedGuru ||
-      !selectedDate ||
-      !selectedJamKe
+      !selectedDate
     ) {
       setFeedback({
         tone: "warning",
         message: "Lengkapi seluruh informasi header sesi KBM.",
+      });
+      return;
+    }
+
+    if (selectedJamKe === null) {
+      setFeedback({
+        tone: "warning",
+        message: `Jam pelajaran tidak valid. Isi angka 1-${jpSettings.maxPerHari}, dan jam "sampai" tidak boleh lebih kecil daripada jam "dari".`,
       });
       return;
     }
@@ -442,7 +512,14 @@ export default function PresensiKelasPage() {
       setSelectedMapel(data.session.id_mapel);
       setSelectedGuru(data.session.id_guru);
       setSelectedDate(data.session.tanggal);
-      setSelectedJamKe(data.session.jam_ke);
+      // Sesi lama bisa menyimpan `jam_ke` yang tidak lolos validator sekarang.
+      // Bila begitu, kolomnya dibiarkan pada nilai terakhir alih-alih dipaksa
+      // menjadi NaN, dan gurunya mengetik ulang jam yang benar.
+      const rentang = rentangJamKe(data.session.jam_ke);
+      if (rentang) {
+        setJamKeDari(rentang.awal);
+        setJamKeSampai(rentang.akhir);
+      }
       setMateriPokok(data.session.materi_pokok || "");
       setCatatanSesi(data.session.catatan || "");
       setEditingSessionId(data.session.id_presensi_mapel);
@@ -730,31 +807,43 @@ export default function PresensiKelasPage() {
 
                 {/* Jam Ke */}
                 <div>
-                  <label
-                    htmlFor="input-jam-ke"
-                    className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5"
-                  >
+                  <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                     Jam Pelajaran Ke
-                  </label>
-                  <select
-                    id="input-jam-ke"
-                    value={selectedJamKe}
-                    onChange={(e) => setSelectedJamKe(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs font-semibold text-white outline-none focus:border-sky-500"
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="input-jam-ke-dari"
+                      aria-label="Jam pelajaran dari"
+                      type="number"
+                      min={1}
+                      max={jpSettings.maxPerHari}
+                      value={jamKeDari}
+                      onChange={(e) => setJamKeDari(Number(e.target.value))}
+                      className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs font-semibold text-white outline-none focus:border-sky-500"
+                    />
+                    <span className="text-xs text-slate-500">s.d.</span>
+                    <input
+                      id="input-jam-ke-sampai"
+                      aria-label="Jam pelajaran sampai"
+                      type="number"
+                      min={1}
+                      max={jpSettings.maxPerHari}
+                      value={jamKeSampai}
+                      onChange={(e) => setJamKeSampai(Number(e.target.value))}
+                      className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-xs font-semibold text-white outline-none focus:border-sky-500"
+                    />
+                  </div>
+                  <p
+                    className={`mt-1 text-[11px] ${
+                      jumlahJp === null ? "text-amber-300" : "text-slate-500"
+                    }`}
                   >
-                    <option value="1">Jam ke-1</option>
-                    <option value="2">Jam ke-2</option>
-                    <option value="3">Jam ke-3</option>
-                    <option value="4">Jam ke-4</option>
-                    <option value="5">Jam ke-5</option>
-                    <option value="6">Jam ke-6</option>
-                    <option value="7">Jam ke-7</option>
-                    <option value="8">Jam ke-8</option>
-                    <option value="1-2">Jam ke 1 - 2</option>
-                    <option value="3-4">Jam ke 3 - 4</option>
-                    <option value="5-6">Jam ke 5 - 6</option>
-                    <option value="7-8">Jam ke 7 - 8</option>
-                  </select>
+                    {jumlahJp === null
+                      ? `Isi angka 1-${jpSettings.maxPerHari}, jam "sampai" tidak boleh lebih kecil.`
+                      : `Jam ke-${selectedJamKe} · ${jumlahJp} JP · ${
+                          jumlahJp * jpSettings.durasiMenit
+                        } menit${pukulBel ? ` · ${pukulBel}` : ""}`}
+                  </p>
                 </div>
 
                 {/* Materi Pokok */}
@@ -775,6 +864,42 @@ export default function PresensiKelasPage() {
                   />
                 </div>
               </div>
+
+              {/* Isi cepat dari jadwal mengajar hari itu. Hanya muncul bila
+                  sekolah memang menyusun jadwalnya; tanpa itu form di atas
+                  tetap diisi manual seperti sebelumnya. */}
+              {jadwalHariIni.length > 0 ? (
+                <div className="pt-2 border-t border-white/5">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    Jadwal hari ini — ketuk untuk mengisi
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {jadwalHariIni.map((row) => {
+                      const rentang = rentangJamKe(row.jam_ke);
+                      return (
+                        <button
+                          key={row.id_jadwal}
+                          type="button"
+                          onClick={() => {
+                            setSelectedMapel(row.id_mapel);
+                            setSelectedGuru(row.id_guru);
+                            if (rentang) {
+                              setJamKeDari(rentang.awal);
+                              setJamKeSampai(rentang.akhir);
+                            }
+                          }}
+                          className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/20"
+                        >
+                          Jam {row.jam_ke} · {row.nama_mapel || row.id_mapel}
+                          <span className="ml-1 font-normal text-sky-300/70">
+                            {row.nama_guru || ""}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="flex items-center justify-between pt-2 border-t border-white/5">
                 <div className="flex-1 max-w-lg">

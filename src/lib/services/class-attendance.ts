@@ -2,7 +2,14 @@ import "server-only";
 
 import { db, ensureDbInitialized } from "@/lib/db";
 import { ApiRequestError } from "@/lib/server/http/api-response";
-import { MAX_JAM_KE, normalizeJamKe } from "@/lib/validations/class-attendance";
+import {
+  JP_MAX_PER_DAY_SETTING_KEY,
+  jamKeBeririsan,
+  MAX_JAM_KE,
+  normalizeJamKe,
+  parseJpMaxPerDay,
+  rentangJamKe,
+} from "@/lib/validations/class-attendance";
 
 /**
  * Status awal roster SELALU "Hadir" — TIDAK PERNAH diturunkan dari scan gerbang.
@@ -299,28 +306,57 @@ export async function saveClassAttendance(draft: SaveClassAttendanceDraft) {
     );
   }
 
+  // Batas sekolah ditegakkan SETELAH batas struktural: yang pertama menjaga
+  // databasenya, yang kedua kebijakan sekolahnya. Pesan errornya menyebut angka
+  // yang benar-benar dipakai sekolah itu, bukan pagar terluarnya. Cerminan
+  // `configured_jp_max` di `class_attendance.rs`.
+  const batasRow = await db.execute({
+    sql: "SELECT value FROM setting_gex_system WHERE key = ? LIMIT 1;",
+    args: [JP_MAX_PER_DAY_SETTING_KEY],
+  });
+  const batasSekolah = parseJpMaxPerDay(
+    batasRow.rows[0] ? String(batasRow.rows[0].value ?? "") : null,
+  );
+  const rentang = rentangJamKe(jamKeNormal);
+  if (rentang && rentang.akhir > batasSekolah) {
+    throw new ApiRequestError(
+      `Sekolah ini memakai ${batasSekolah} jam pelajaran per hari, sehingga jam ke-${rentang.akhir} tidak tersedia. Ubah di Pengaturan bila jumlahnya bertambah.`,
+      400,
+    );
+  }
+
   const idPresensi =
     draft.id_presensi_mapel?.trim() ||
     `pm_${crypto.randomUUID().replace(/-/g, "")}`;
 
-  // Aturan 32: Validasi keunikan di level aplikasi
-  const duplicate = await db.execute({
+  // Aturan 32: Validasi keunikan di level aplikasi. Yang diperiksa IRISAN
+  // jamnya, bukan teksnya — `1-2` dan `2` adalah dua nilai berbeda bagi `=`,
+  // padahal keduanya memakai jam ke-2 yang sama. Cakupannya (rombel, mapel,
+  // tanggal): dua mapel berbeda pada jam yang sama itu sah (Agama memecah satu
+  // rombel), begitu pula satu guru pada dua rombel (kelas gabungan).
+  // Cerminan `find_overlapping_session` di `class_attendance.rs`.
+  //
+  // Tanpa LIMIT: dipatok `tanggal = ?` pada satu rombel dan satu mapel, jadi
+  // hasilnya paling banyak beberapa sesi dalam sehari.
+  const sesiLain = await db.execute({
     sql: `
-      SELECT 1 FROM presensi_mapel
+      SELECT jam_ke FROM presensi_mapel
       WHERE id_tahun_ajaran = ?
         AND id_rombel = ?
         AND id_mapel = ?
         AND tanggal = ?
-        AND jam_ke = ?
-        AND id_presensi_mapel <> ?
-      LIMIT 1;
+        AND id_presensi_mapel <> ?;
     `,
-    args: [idTahunAjaran, idRombel, idMapel, tanggal, jamKeNormal, idPresensi],
+    args: [idTahunAjaran, idRombel, idMapel, tanggal, idPresensi],
   });
 
-  if (duplicate.rows.length > 0) {
+  const bentrok = sesiLain.rows
+    .map((row) => String(row.jam_ke ?? ""))
+    .find((tersimpan) => jamKeBeririsan(jamKeNormal, tersimpan));
+
+  if (bentrok !== undefined) {
     throw new ApiRequestError(
-      "Sesi presensi untuk rombel, mapel, tanggal, dan jam ke ini sudah pernah dibuat.",
+      `Sesi mata pelajaran ini pada rombel dan tanggal tersebut sudah tercatat di jam ke-${bentrok}, yang beririsan dengan jam ke-${jamKeNormal}.`,
       409,
     );
   }

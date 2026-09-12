@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
         alamat?: string | null;
         angkatan?: number;
         status?: string;
+        id_shift?: number;
       };
       id?: string;
     }>(request);

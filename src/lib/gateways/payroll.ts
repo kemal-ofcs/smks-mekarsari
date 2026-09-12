@@ -4,6 +4,7 @@ import { requestWebApi } from "@/lib/client/api-client";
 import { requestSyncNow } from "@/lib/gateways/sync-status";
 import { isDesktopRuntime, isMobileRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop } from "@/lib/runtime/desktop-commands";
+import type { PayrollCalcType } from "@/lib/validations/payroll-policy";
 
 function kickDesktopSync() {
   requestSyncNow();
@@ -13,6 +14,11 @@ export interface SalaryConfigRow {
   id: string;
   id_karyawan: string;
   rate_per_hour: number;
+  /**
+   * Tarif bawaan per jam pelajaran; dipakai bila mapel yang diajar belum punya
+   * tarifnya sendiri. Nol berarti orang ini tidak dibayar per JP.
+   */
+  rate_per_jp: number;
   ptkp_status: string;
   effective_date: string;
   created_by: string;
@@ -33,7 +39,8 @@ export interface PayrollComponentRow {
   id: string;
   name: string;
   category: "ALLOWANCE" | "DEDUCTION";
-  calc_type: "FIXED" | "PERCENTAGE";
+  /** Termasuk PER_JP dan PER_HADIR sejak schema versi 25. */
+  calc_type: PayrollCalcType;
   default_value: number;
   applies_to: string;
   is_active: number;
@@ -77,6 +84,12 @@ export interface PayrollRecapRow {
   total_holiday_hours: number;
   /** Indeks jenjang HARI_LIBUR untuk jam di atas. */
   total_holiday_overtime_index: number;
+  /** Jam pelajaran yang diajar dan sudah diparaf pada periode ini. */
+  total_teaching_jp: number;
+  /** Honor mengajar dari JP di atas. */
+  teaching_salary: number;
+  /** JP yang tidak menemukan tarif mana pun. Peringatan, bukan penghalang. */
+  unrated_teaching_jp: number;
   est_basic_salary: number;
   est_overtime_salary: number;
   est_gross_salary: number;
@@ -113,6 +126,8 @@ export interface PayrollItemRow {
   total_overtime_index: number;
   total_holiday_hours: number;
   total_holiday_overtime_index: number;
+  total_teaching_jp: number;
+  teaching_salary: number;
   rate_per_hour: number;
   basic_salary: number;
   overtime_salary: number;
@@ -255,6 +270,101 @@ export async function saveOvertimeRules(
     "/api/payroll/config/overtime",
     "PUT",
     { rules },
+  );
+  return response.sukses;
+}
+
+/** Satu baris tarif honor per jam pelajaran. */
+export interface JpRateRow {
+  id: string;
+  id_mapel: string;
+  /** `null` berarti tarif umum mapel ini, berlaku bagi guru mana pun. */
+  id_guru: string | null;
+  rate_per_jp: number;
+  effective_date: string;
+  status_aktif: number;
+  created_at: string;
+  updated_at: string;
+  nama_mapel?: string;
+  nama_guru?: string;
+}
+
+export async function getJpRates(): Promise<JpRateRow[]> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<JpRateRow[]>("desktop_get_jp_rates");
+  }
+  const response = await requestWebApi<{ data: JpRateRow[] }>(
+    "/api/payroll/config/jp-rates",
+    "POST",
+  );
+  return response.data;
+}
+
+export async function saveJpRate(draft: Partial<JpRateRow>): Promise<boolean> {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<boolean>("desktop_save_jp_rate", {
+      draft,
+    });
+    kickDesktopSync();
+    return result;
+  }
+  const response = await requestWebApi<{ sukses: boolean }>(
+    "/api/payroll/config/jp-rates",
+    "PUT",
+    { draft },
+  );
+  return response.sukses;
+}
+
+export async function deleteJpRate(id: string): Promise<boolean> {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<boolean>("desktop_delete_jp_rate", {
+      id,
+    });
+    kickDesktopSync();
+    return result;
+  }
+  const response = await requestWebApi<{ sukses: boolean }>(
+    "/api/payroll/config/jp-rates",
+    "DELETE",
+    { id },
+  );
+  return response.sukses;
+}
+
+/**
+ * Sakelar lembur guru. Kebijakan sekolah, tersimpan di `setting_gex_system`
+ * dan ikut sinkronisasi — bukan setelan per perangkat.
+ */
+export async function getTeacherOvertimePolicy(): Promise<boolean> {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<{ enabled: boolean }>(
+      "desktop_get_teacher_overtime_policy",
+    );
+    return result.enabled;
+  }
+  const response = await requestWebApi<{ enabled: boolean }>(
+    "/api/payroll/config/teacher-overtime",
+    "POST",
+  );
+  return response.enabled;
+}
+
+export async function saveTeacherOvertimePolicy(
+  enabled: boolean,
+): Promise<boolean> {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<{ sukses: boolean }>(
+      "desktop_save_teacher_overtime_policy",
+      { enabled },
+    );
+    kickDesktopSync();
+    return result.sukses;
+  }
+  const response = await requestWebApi<{ sukses: boolean }>(
+    "/api/payroll/config/teacher-overtime",
+    "PUT",
+    { enabled },
   );
   return response.sukses;
 }
@@ -570,6 +680,9 @@ export interface MobileSlipDetail {
   total_overtime_index: number;
   total_holiday_hours?: number;
   total_holiday_overtime_index?: number;
+  /** JP mengajar yang dibekukan di slip ini. */
+  total_teaching_jp?: number;
+  teaching_salary?: number;
   rate_per_hour: number;
   basic_salary: number;
   overtime_salary: number;
@@ -607,6 +720,8 @@ export async function getEmployeePayrollEstimate(
       total_overtime_index: 0,
       total_holiday_hours: 0,
       total_holiday_overtime_index: 0,
+      total_teaching_jp: 0,
+      teaching_salary: 0,
       rate_per_hour: 0,
       basic_salary: 0,
       overtime_salary: 0,
@@ -636,6 +751,8 @@ export async function getEmployeePayrollEstimate(
     total_overtime_index: row.total_overtime_index,
     total_holiday_hours: row.total_holiday_hours,
     total_holiday_overtime_index: row.total_holiday_overtime_index,
+    total_teaching_jp: row.total_teaching_jp,
+    teaching_salary: row.teaching_salary,
     rate_per_hour: row.rate_per_hour,
     basic_salary: row.est_basic_salary,
     overtime_salary: row.est_overtime_salary,
@@ -653,6 +770,8 @@ export async function getEmployeePayrollEstimate(
       overtime_index: row.total_overtime_index,
       holiday_hours: row.total_holiday_hours,
       holiday_overtime_index: row.total_holiday_overtime_index,
+      teaching_jp: row.total_teaching_jp,
+      teaching_salary: row.teaching_salary,
       basic_salary: row.est_basic_salary,
       overtime_salary: row.est_overtime_salary,
     }),

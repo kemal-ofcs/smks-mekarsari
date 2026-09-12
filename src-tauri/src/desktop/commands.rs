@@ -2472,6 +2472,39 @@ pub fn desktop_delete_academic_subject(
     academic::delete_academic_subject(&state, &id)
 }
 
+/// Jadwal mengajar mingguan. Dibaca layar presensi untuk tombol isi-cepat,
+/// jadi cukup `academic.view` — menyusunnya menuntut `academic.manage`.
+#[tauri::command]
+pub fn desktop_get_teaching_schedules(
+    state: State<'_, DesktopState>,
+    filter: Option<Value>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "academic.view")?;
+    academic::list_teaching_schedules(&state, &filter.unwrap_or(Value::Null))
+}
+
+#[tauri::command]
+pub async fn desktop_save_teaching_schedule(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "academic.manage")?;
+    let hasil = academic::save_teaching_schedule(&state, &draft)?;
+    let _ = sync::push_outbox(&state, &session_token(&state)).await;
+    Ok(hasil)
+}
+
+#[tauri::command]
+pub async fn desktop_delete_teaching_schedule(
+    state: State<'_, DesktopState>,
+    id_jadwal: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "academic.manage")?;
+    let hasil = academic::delete_teaching_schedule(&state, &id_jadwal)?;
+    let _ = sync::push_outbox(&state, &session_token(&state)).await;
+    Ok(hasil)
+}
+
 #[tauri::command]
 pub fn desktop_get_academic_assignments(
     state: State<'_, DesktopState>,
@@ -2587,6 +2620,55 @@ pub fn desktop_save_class_attendance(
 ) -> Result<Value, CommandError> {
     require_permission(&state, "class_attendance.manage")?;
     class_attendance::save_class_attendance(&state, &draft)
+}
+
+/// Jadwal bel sekolah. Dibaca layar presensi, jadi cukup butuh SESI.
+#[tauri::command]
+pub fn desktop_get_lesson_periods(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
+    require_permission(&state, "home.view")?;
+    class_attendance::list_lesson_periods(&state)
+}
+
+#[tauri::command]
+pub async fn desktop_save_lesson_period(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "settings.manage")?;
+    let hasil = class_attendance::save_lesson_period(&state, &draft)?;
+    let _ = sync::push_outbox(&state, &session_token(&state)).await;
+    Ok(hasil)
+}
+
+#[tauri::command]
+pub async fn desktop_delete_lesson_period(
+    state: State<'_, DesktopState>,
+    id_jam_pelajaran: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "settings.manage")?;
+    let hasil = class_attendance::delete_lesson_period(&state, &id_jam_pelajaran)?;
+    let _ = sync::push_outbox(&state, &session_token(&state)).await;
+    Ok(hasil)
+}
+
+/// Pengaturan jam pelajaran. Dibaca layar presensi, jadi cukup butuh SESI —
+/// gurunya harus tahu berapa jam pelajaran yang tersedia sebelum menyimpan.
+#[tauri::command]
+pub fn desktop_get_jp_settings(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
+    require_permission(&state, "home.view")?;
+    class_attendance::get_jp_settings(&state)
+}
+
+#[tauri::command]
+pub async fn desktop_save_jp_settings(
+    state: State<'_, DesktopState>,
+    max_per_hari: i64,
+    durasi_menit: i64,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "settings.manage")?;
+    let hasil = class_attendance::save_jp_settings(&state, max_per_hari, durasi_menit)?;
+    let _ = sync::push_outbox(&state, &session_token(&state)).await;
+    Ok(hasil)
 }
 
 #[tauri::command]

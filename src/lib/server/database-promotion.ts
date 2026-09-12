@@ -133,6 +133,7 @@ export const PROMOTION_PLAN: readonly PromotionTable[] = [
   // Lapisan 5 — payroll.
   { table: "salary_configs", uniqueColumns: [], dependsOn: ["master_data"] },
   { table: "overtime_tier_rules", uniqueColumns: [], dependsOn: [] },
+  { table: "tarif_jp", uniqueColumns: [], dependsOn: [] },
   { table: "payroll_components", uniqueColumns: [], dependsOn: [] },
   { table: "tax_rules", uniqueColumns: [], dependsOn: [] },
   { table: "bpjs_rules", uniqueColumns: ["component_code"], dependsOn: [] },

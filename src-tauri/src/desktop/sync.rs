@@ -19,7 +19,7 @@ use super::{
 /// `CURRENT_SCHEMA_VERSION` di `web-desktop/src/lib/db-schema.ts` setiap kali
 /// migrasi baru ditambahkan, karena keduanya membaca tabel `schema_migration`
 /// yang sama di Turso.
-pub const CLIENT_SCHEMA_VERSION: i64 = 21;
+pub const CLIENT_SCHEMA_VERSION: i64 = 25;
 
 /// Hanya `cloud > client` yang berbahaya; `cloud <= client` adalah kondisi normal.
 fn is_client_schema_outdated(cloud_version: i64) -> bool {
@@ -385,6 +385,7 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
             "id",
             "id_karyawan",
             "rate_per_hour",
+            "rate_per_jp",
             "ptkp_status",
             "effective_date",
             "created_by",
@@ -408,6 +409,63 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
             "is_active",
         ],
         conflict_column: "rule_type, tier_order",
+        entity_column: "id",
+        delete_missing: false,
+    },
+    SnapshotTable {
+        payload_key: "teachingSchedules",
+        domain: "teaching-schedule",
+        table: "jadwal_mengajar",
+        columns: &[
+            "id_jadwal",
+            "id_tahun_ajaran",
+            "id_rombel",
+            "id_mapel",
+            "id_guru",
+            "hari",
+            "jam_ke",
+            "is_aktif",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id_jadwal",
+        entity_column: "id_jadwal",
+        delete_missing: false,
+    },
+    SnapshotTable {
+        payload_key: "lessonPeriods",
+        domain: "academic-period",
+        table: "akademik_jam_pelajaran",
+        columns: &[
+            "id_jam_pelajaran",
+            "jam_ke",
+            "jam_mulai",
+            "jam_selesai",
+            "jenis",
+            "keterangan",
+            "is_aktif",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id_jam_pelajaran",
+        entity_column: "id_jam_pelajaran",
+        delete_missing: false,
+    },
+    SnapshotTable {
+        payload_key: "jpRates",
+        domain: "payroll",
+        table: "tarif_jp",
+        columns: &[
+            "id",
+            "id_mapel",
+            "id_guru",
+            "rate_per_jp",
+            "effective_date",
+            "status_aktif",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id",
         entity_column: "id",
         delete_missing: false,
     },
@@ -497,6 +555,8 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
             "total_overtime_index",
             "total_holiday_hours",
             "total_holiday_overtime_index",
+            "total_teaching_jp",
+            "teaching_salary",
             "rate_per_hour",
             "basic_salary",
             "overtime_salary",
@@ -758,6 +818,9 @@ const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
     ("academic-department", "create"),
     ("academic-department", "delete"),
     ("academic-department", "update"),
+    ("academic-period", "create"),
+    ("academic-period", "delete"),
+    ("academic-period", "update"),
     ("academic-subject", "create"),
     ("academic-subject", "delete"),
     ("academic-subject", "update"),
@@ -798,6 +861,7 @@ const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
     ("payroll", "bpjs-rule"),
     ("payroll", "create-run"),
     ("payroll", "delete"),
+    ("payroll", "jp-rate"),
     ("payroll", "overtime-rule"),
     ("payroll", "payroll-component"),
     ("payroll", "salary-config"),
@@ -817,6 +881,9 @@ const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
     ("teacher", "update"),
     ("teaching-journal", "delete"),
     ("teaching-journal", "save"),
+    ("teaching-schedule", "create"),
+    ("teaching-schedule", "delete"),
+    ("teaching-schedule", "update"),
     ("wa-notification", "cancel"),
     ("wa-notification", "queue"),
 ];
@@ -3249,6 +3316,25 @@ mod tests {
         assert!(!is_client_schema_outdated(CLIENT_SCHEMA_VERSION - 1));
         // Cloud kosong / belum bermigrasi.
         assert!(!is_client_schema_outdated(0));
+    }
+
+    /// Setiap tabel yang ditarik dari cloud adalah milik database asalnya, jadi
+    /// wajib dibuang saat perangkat pindah database. Tabel snapshot yang lolos
+    /// dari pembersihan tetap tampil di perangkat ini sementara outbox-nya sudah
+    /// dibuang — barisnya tidak akan pernah sampai ke database baru.
+    /// `setting_gex_system` satu-satunya pengecualian: dibersihkan per kunci.
+    #[test]
+    fn every_snapshot_table_is_purged_on_database_switch() {
+        let missing = SNAPSHOT_TABLES
+            .iter()
+            .map(|table| table.table)
+            .filter(|table| *table != "setting_gex_system")
+            .filter(|table| !storage::CLOUD_MIRRORED_TABLES.contains(table))
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "tabel snapshot tidak dibuang saat pindah database: {missing:?}"
+        );
     }
 
     /// `AutoSyncRunner` memakai bendera ini untuk memutuskan apakah

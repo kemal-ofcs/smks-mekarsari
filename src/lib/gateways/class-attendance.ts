@@ -189,3 +189,92 @@ export async function getRekonsiliasiPresensi(filter?: {
     anomalies: AttendanceAnomalyItem[];
   }>("/api/academic/attendance/reconciliation/query", "POST", filter || {});
 }
+
+/** Pengaturan jam pelajaran sekolah: jumlah per hari dan lama satu jam. */
+export interface JpSettings {
+  maxPerHari: number;
+  durasiMenit: number;
+  /** Pagar terluar yang dieja di kode; batas sekolah tidak boleh melampauinya. */
+  batasStruktural: number;
+}
+
+export async function getJpSettings(): Promise<JpSettings> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<JpSettings>("desktop_get_jp_settings");
+  }
+  return requestWebApi<JpSettings>("/api/settings/jp", "POST", {});
+}
+
+export async function saveJpSettings(
+  maxPerHari: number,
+  durasiMenit: number,
+): Promise<boolean> {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<{ sukses: boolean }>(
+      "desktop_save_jp_settings",
+      { maxPerHari, durasiMenit },
+    );
+    return result.sukses;
+  }
+  const response = await requestWebApi<{ sukses: boolean }>(
+    "/api/settings/jp",
+    "PUT",
+    { maxPerHari, durasiMenit },
+  );
+  return response.sukses;
+}
+
+/** Satu baris jadwal bel sekolah. */
+export interface LessonPeriodRow {
+  id_jam_pelajaran: string;
+  jam_ke: number;
+  jam_mulai: string;
+  jam_selesai: string;
+  jenis: "KBM" | "Istirahat" | "Upacara" | "Ekstrakurikuler";
+  keterangan: string;
+  is_aktif: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getLessonPeriods(): Promise<LessonPeriodRow[]> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<LessonPeriodRow[]>("desktop_get_lesson_periods");
+  }
+  const response = await requestWebApi<{ data: LessonPeriodRow[] }>(
+    "/api/academic/periods",
+    "POST",
+    {},
+  );
+  return response.data;
+}
+
+export async function saveLessonPeriod(
+  draft: Partial<LessonPeriodRow>,
+): Promise<{ sukses: boolean; id_jam_pelajaran?: string }> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<{ sukses: boolean; id_jam_pelajaran: string }>(
+      "desktop_save_lesson_period",
+      { draft },
+    );
+  }
+  return requestWebApi<{ sukses: boolean; id_jam_pelajaran?: string }>(
+    "/api/academic/periods",
+    "POST",
+    { action: "save", draft },
+  );
+}
+
+export async function deleteLessonPeriod(
+  idJamPelajaran: string,
+): Promise<{ sukses: boolean }> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<{ sukses: boolean }>("desktop_delete_lesson_period", {
+      idJamPelajaran,
+    });
+  }
+  return requestWebApi<{ sukses: boolean }>("/api/academic/periods", "POST", {
+    action: "delete",
+    id: idJamPelajaran,
+  });
+}

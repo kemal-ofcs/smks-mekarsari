@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 
 use super::{config::DesktopState, models::CommandError, storage, sync};
@@ -18,6 +18,35 @@ fn optional_text(value: &Value, key: &str) -> Option<String> {
 
 fn integer(value: &Value, key: &str, fallback: i64) -> i64 {
     value.get(key).and_then(Value::as_i64).unwrap_or(fallback)
+}
+
+/// Shift (jam scan) pilihan draft guru/siswa, bila draft mengirimnya.
+///
+/// Shift menentukan jendela scan masuk/pulang seorang personil. `None` berarti
+/// draft tidak memilih: baris baru jatuh ke shift 1 seperti sebelumnya, baris
+/// lama MEMPERTAHANKAN shift-nya — impor atau formulir lama yang tidak mengenal
+/// kolom ini tidak boleh diam-diam memindahkan semua orang ke shift 1. Shift
+/// yang dipilih wajib ada: `id_shift` yatim membuat setiap scan orang itu
+/// ditolak tanpa petunjuk apa pun di layar.
+fn chosen_shift(
+    transaction: &rusqlite::Transaction<'_>,
+    draft: &Value,
+) -> Result<Option<i64>, CommandError> {
+    let Some(id_shift) = draft.get("id_shift").and_then(Value::as_i64) else {
+        return Ok(None);
+    };
+    let ada = transaction
+        .prepare("SELECT 1 FROM tbl_shift WHERE id_shift = ?1 LIMIT 1;")
+        .map_err(|_| CommandError::internal())?
+        .exists(params![id_shift])
+        .map_err(|_| CommandError::internal())?;
+    if !ada {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Shift yang dipilih tidak ditemukan. Muat ulang halaman lalu pilih shift lagi.",
+        ));
+    }
+    Ok(Some(id_shift))
 }
 
 /// Id entitas akademik dibuat KLIEN, bukan AUTOINCREMENT.
@@ -1023,6 +1052,281 @@ pub fn delete_academic_assignment(state: &DesktopState, id: &str) -> Result<Valu
     Ok(json!({ "sukses": true }))
 }
 
+// ── 5b. Jadwal Mengajar Mingguan ────────────────────────────────────────────
+//
+// Tabel KETERANGAN: presensi kelas tetap bisa dicatat tanpa jadwal. Gunanya
+// memberi tombol isi-cepat di layar presensi, sehingga guru tidak memilih
+// ulang rombel, mapel, dan jam setiap hari.
+
+/// Hari dari sebuah tanggal, 1=Senin sampai 7=Minggu.
+///
+/// Dihitung SQLite (`strftime('%w')`, 0=Minggu), bukan di Rust maupun
+/// TypeScript: aritmetika tanggal yang dieja dua kali adalah cara paling mudah
+/// membuat dua platform tidak sepakat tentang hari apa sebuah tanggal itu.
+/// Tanggalnya selalu dikirim eksplisit oleh pemanggil, jadi tidak ada `now`
+/// yang bisa terjebak selisih UTC.
+const WEEKDAY_SQL: &str =
+    "CASE WHEN strftime('%w', ?1) = '0' THEN 7 ELSE CAST(strftime('%w', ?1) AS INTEGER) END";
+
+pub fn list_teaching_schedules(
+    state: &DesktopState,
+    filter: &Value,
+) -> Result<Value, CommandError> {
+    let conn = storage::database(&state.data_dir)?;
+
+    let id_rombel = optional_text(filter, "id_rombel");
+    let id_tahun_ajaran = optional_text(filter, "id_tahun_ajaran");
+    let id_guru = optional_text(filter, "id_guru");
+    // `tanggal` dan `hari` sama-sama opsional: layar presensi mengirim tanggal
+    // (harinya diturunkan di SQL), layar penyusunan mengirim harinya langsung.
+    let tanggal = optional_text(filter, "tanggal");
+    let hari = filter.get("hari").and_then(Value::as_i64);
+
+    // Tanpa LIMIT: jadwal mingguan sebesar jumlah rombel dikali jam pelajaran,
+    // bukan tabel yang tumbuh setiap hari operasional.
+    let sql = format!(
+        r#"
+        SELECT j.id_jadwal, j.id_tahun_ajaran, j.id_rombel, j.id_mapel, j.id_guru,
+               j.hari, j.jam_ke, j.is_aktif, j.created_at, j.updated_at,
+               COALESCE(r.nama_rombel, ''), COALESCE(m.nama_mapel, ''),
+               COALESCE(p.nama, '')
+        FROM jadwal_mengajar j
+        LEFT JOIN akademik_rombel r ON r.id_rombel = j.id_rombel
+        LEFT JOIN akademik_mapel m ON m.id_mapel = j.id_mapel
+        LEFT JOIN master_data p ON p.id_unik = j.id_guru
+        WHERE (?1 IS NULL OR j.id_rombel = ?1)
+          AND (?2 IS NULL OR j.id_tahun_ajaran = ?2)
+          AND (?3 IS NULL OR j.id_guru = ?3)
+          AND (?4 IS NULL OR j.hari = ?4)
+        ORDER BY j.hari, CAST(j.jam_ke AS INTEGER), j.jam_ke;
+        "#
+    );
+
+    // Hari diturunkan lebih dulu supaya query utamanya tetap satu bentuk.
+    let hari_terpakai = match (hari, tanggal.as_deref()) {
+        (Some(nilai), _) => Some(nilai),
+        (None, Some(tanggal)) => conn
+            .query_row(
+                &format!("SELECT {WEEKDAY_SQL};"),
+                params![tanggal],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|_| CommandError::internal())?,
+        _ => None,
+    };
+
+    let mut stmt = conn.prepare(&sql).map_err(|_| CommandError::internal())?;
+    let rows = stmt
+        .query_map(
+            params![id_rombel, id_tahun_ajaran, id_guru, hari_terpakai],
+            |row| {
+                Ok(json!({
+                    "id_jadwal": row.get::<_, String>(0)?,
+                    "id_tahun_ajaran": row.get::<_, String>(1)?,
+                    "id_rombel": row.get::<_, String>(2)?,
+                    "id_mapel": row.get::<_, String>(3)?,
+                    "id_guru": row.get::<_, String>(4)?,
+                    "hari": row.get::<_, i64>(5)?,
+                    "jam_ke": row.get::<_, String>(6)?,
+                    "is_aktif": row.get::<_, i64>(7)?,
+                    "created_at": row.get::<_, String>(8)?,
+                    "updated_at": row.get::<_, String>(9)?,
+                    "nama_rombel": row.get::<_, String>(10)?,
+                    "nama_mapel": row.get::<_, String>(11)?,
+                    "nama_guru": row.get::<_, String>(12)?,
+                }))
+            },
+        )
+        .map_err(|_| CommandError::internal())?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+
+    Ok(json!(rows))
+}
+
+pub fn save_teaching_schedule(
+    state: &DesktopState,
+    draft: &Value,
+) -> Result<Value, CommandError> {
+    let id_masuk = text(draft, "id_jadwal").to_owned();
+    let is_new = id_masuk.is_empty();
+    let id = if is_new {
+        new_academic_id("jdw")
+    } else {
+        id_masuk
+    };
+
+    let id_tahun_ajaran = text(draft, "id_tahun_ajaran").to_owned();
+    let id_rombel = text(draft, "id_rombel").to_owned();
+    let id_mapel = text(draft, "id_mapel").to_owned();
+    let id_guru = text(draft, "id_guru").to_owned();
+    let hari = draft.get("hari").and_then(Value::as_i64).unwrap_or(0);
+    let is_aktif = if draft.get("is_aktif").and_then(Value::as_i64) == Some(0) {
+        0
+    } else {
+        1
+    };
+
+    if id_tahun_ajaran.is_empty()
+        || id_rombel.is_empty()
+        || id_mapel.is_empty()
+        || id_guru.is_empty()
+    {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Tahun ajaran, rombel, mata pelajaran, dan guru wajib diisi.",
+        ));
+    }
+    if !(1..=7).contains(&hari) {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Hari harus di antara 1 (Senin) dan 7 (Minggu).",
+        ));
+    }
+
+    // `jam_ke` memakai validator yang SAMA dengan presensi kelas, termasuk
+    // batas sekolah — jadwal yang menunjuk jam ke-9 pada sekolah berjam
+    // pelajaran 8 hanya akan menghasilkan tombol isi-cepat yang ditolak saat
+    // presensi disimpan.
+    let jam_ke = crate::desktop::class_attendance::normalize_jam_ke_public(text(draft, "jam_ke"))?;
+
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    // Bentrok dinilai dengan cakupan yang SAMA seperti presensi: rombel +
+    // mapel + hari, bukan seluruh rombel. Pelajaran Agama memang memecah satu
+    // rombel pada jam yang sama, dan kelas gabungan memakai satu guru di dua
+    // rombel sekaligus.
+    let tersimpan: Vec<String> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT jam_ke FROM jadwal_mengajar
+                 WHERE id_tahun_ajaran = ?1 AND id_rombel = ?2 AND id_mapel = ?3
+                   AND hari = ?4 AND is_aktif = 1 AND id_jadwal <> ?5;",
+            )
+            .map_err(|_| CommandError::internal())?;
+        let rows = stmt
+            .query_map(
+                params![id_tahun_ajaran, id_rombel, id_mapel, hari, id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|_| CommandError::internal())?;
+        rows.filter_map(Result::ok).collect()
+    };
+    if is_aktif == 1 {
+        if let Some(bentrok) = tersimpan
+            .iter()
+            .find(|lain| crate::desktop::class_attendance::jam_ke_overlaps_public(&jam_ke, lain))
+        {
+            return Err(CommandError::new(
+                "DUPLICATE_SCHEDULE",
+                format!(
+                    "Jadwal mapel ini pada hari tersebut sudah memakai jam ke-{bentrok}, yang beririsan dengan jam ke-{jam_ke}."
+                ),
+            ));
+        }
+    }
+
+    let now = sqlite_now(&tx);
+    let created_at = tx
+        .query_row(
+            "SELECT created_at FROM jadwal_mengajar WHERE id_jadwal = ?1;",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .unwrap_or_else(|| now.clone());
+
+    tx.execute(
+        r#"
+        INSERT INTO jadwal_mengajar (
+            id_jadwal, id_tahun_ajaran, id_rombel, id_mapel, id_guru,
+            hari, jam_ke, is_aktif, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        ON CONFLICT(id_jadwal) DO UPDATE SET
+            id_tahun_ajaran = excluded.id_tahun_ajaran,
+            id_rombel = excluded.id_rombel,
+            id_mapel = excluded.id_mapel,
+            id_guru = excluded.id_guru,
+            hari = excluded.hari,
+            jam_ke = excluded.jam_ke,
+            is_aktif = excluded.is_aktif,
+            updated_at = excluded.updated_at;
+        "#,
+        params![
+            id,
+            id_tahun_ajaran,
+            id_rombel,
+            id_mapel,
+            id_guru,
+            hari,
+            jam_ke,
+            is_aktif,
+            created_at,
+            now
+        ],
+    )
+    .map_err(|_| CommandError::new("SAVE_FAILED", "Gagal menyimpan jadwal mengajar."))?;
+
+    let client_id = sync::ensure_client_id(state)?;
+    let op = if is_new { "create" } else { "update" };
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "teaching-schedule",
+        op,
+        &id,
+        &json!({
+            "id_jadwal": id,
+            "id_tahun_ajaran": id_tahun_ajaran,
+            "id_rombel": id_rombel,
+            "id_mapel": id_mapel,
+            "id_guru": id_guru,
+            "hari": hari,
+            "jam_ke": jam_ke,
+            "is_aktif": is_aktif,
+            "created_at": created_at,
+            "updated_at": now,
+        }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true, "id_jadwal": id }))
+}
+
+/// Menghapus satu baris jadwal.
+///
+/// Tanpa pemeriksaan "sedang dipakai": presensi yang sudah tersimpan memegang
+/// rombel, mapel, guru, dan jamnya sendiri. Menghapus jadwalnya hanya
+/// menghilangkan tombol isi-cepat.
+pub fn delete_teaching_schedule(state: &DesktopState, id: &str) -> Result<Value, CommandError> {
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    tx.execute(
+        "DELETE FROM jadwal_mengajar WHERE id_jadwal = ?1;",
+        params![id],
+    )
+    .map_err(|_| CommandError::new("DELETE_FAILED", "Gagal menghapus jadwal mengajar."))?;
+
+    let client_id = sync::ensure_client_id(state)?;
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "teaching-schedule",
+        "delete",
+        id,
+        &json!({ "id_jadwal": id }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true }))
+}
+
 // ── 6. Guru (PTK) ───────────────────────────────────────────────────────────
 
 pub fn list_teachers(state: &DesktopState) -> Result<Value, CommandError> {
@@ -1091,7 +1395,7 @@ pub fn save_teacher(state: &DesktopState, draft: &Value) -> Result<Value, Comman
         optional_text(draft, "status_kepegawaian").unwrap_or_else(|| "Honorer".to_owned());
     let no_hp = optional_text(draft, "no_hp");
     let lp = optional_text(draft, "lp").unwrap_or_else(|| "L".to_owned());
-    let id_shift = integer(draft, "id_shift", 1);
+    let id_shift = chosen_shift(&tx, draft)?;
     let status_aktif = optional_text(draft, "status_aktif").unwrap_or_else(|| "Aktif".to_owned());
 
     if nama.is_empty() {
@@ -1131,13 +1435,13 @@ pub fn save_teacher(state: &DesktopState, draft: &Value) -> Result<Value, Comman
             id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp,
             id_shift, status_aktif, tanggal_daftar, catatan, token_absensi, qr_code,
             status_qr, jenis_personil, status_backup
-        ) VALUES (?1, ?2, ?3, 'Tenaga Pengajar', 'Guru', ?4, ?5, ?6, ?7, date('now','+7 hours'), 'Data PTK Sekolah', ?8, ?9, 'Generated', 'GURU', 'NORMAL')
+        ) VALUES (?1, ?2, ?3, 'Tenaga Pengajar', 'Guru', ?4, ?5, COALESCE(?6, 1), ?7, date('now','+7 hours'), 'Data PTK Sekolah', ?8, ?9, 'Generated', 'GURU', 'NORMAL')
         ON CONFLICT(id_unik) DO UPDATE SET
             kode_karyawan = excluded.kode_karyawan,
             nama = excluded.nama,
             no_hp = excluded.no_hp,
             lp = excluded.lp,
-            id_shift = excluded.id_shift,
+            id_shift = COALESCE(?6, master_data.id_shift),
             status_aktif = excluded.status_aktif,
             token_absensi = excluded.token_absensi,
             qr_code = excluded.qr_code,
@@ -1253,7 +1557,7 @@ pub fn list_students(state: &DesktopState, id_rombel: Option<&str>) -> Result<Va
                s.nama_wali, s.no_whatsapp_wali, s.alamat, s.angkatan, s.status,
                s.created_at, s.updated_at,
                r.nama_rombel, r.tingkat,
-               m.token_absensi, m.qr_code, m.status_qr
+               m.token_absensi, m.qr_code, m.status_qr, m.id_shift
         FROM siswa_data s
         JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
         LEFT JOIN master_data m ON m.id_unik = s.id_siswa
@@ -1283,6 +1587,7 @@ pub fn list_students(state: &DesktopState, id_rombel: Option<&str>) -> Result<Va
                 "token_absensi": row.get::<_, Option<String>>(15)?,
                 "qr_code": row.get::<_, Option<String>>(16)?,
                 "status_qr": row.get::<_, Option<String>>(17)?,
+                "id_shift": row.get::<_, Option<i64>>(18)?,
             }))
         })
         .map_err(|_| CommandError::internal())?
@@ -1328,6 +1633,7 @@ pub fn save_student(state: &DesktopState, draft: &Value) -> Result<Value, Comman
         }
     };
     let alamat = optional_text(draft, "alamat");
+    let id_shift = chosen_shift(&tx, draft)?;
     let angkatan = integer(draft, "angkatan", 2026);
     let status = optional_text(draft, "status").unwrap_or_else(|| "Aktif".to_owned());
 
@@ -1389,11 +1695,12 @@ pub fn save_student(state: &DesktopState, draft: &Value) -> Result<Value, Comman
             id_unik, kode_karyawan, nama, divisi, jabatan_status, lp,
             id_shift, status_aktif, tanggal_daftar, catatan, token_absensi, qr_code,
             status_qr, jenis_personil, status_backup
-        ) VALUES (?1, ?2, ?3, 'Peserta Didik', 'Siswa', ?4, 1, ?5, date('now','+7 hours'), 'Data Siswa Sekolah', ?6, ?7, 'Generated', 'SISWA', 'NORMAL')
+        ) VALUES (?1, ?2, ?3, 'Peserta Didik', 'Siswa', ?4, COALESCE(?8, 1), ?5, date('now','+7 hours'), 'Data Siswa Sekolah', ?6, ?7, 'Generated', 'SISWA', 'NORMAL')
         ON CONFLICT(id_unik) DO UPDATE SET
             kode_karyawan = excluded.kode_karyawan,
             nama = excluded.nama,
             lp = excluded.lp,
+            id_shift = COALESCE(?8, master_data.id_shift),
             status_aktif = excluded.status_aktif,
             token_absensi = excluded.token_absensi,
             qr_code = excluded.qr_code,
@@ -1407,7 +1714,8 @@ pub fn save_student(state: &DesktopState, draft: &Value) -> Result<Value, Comman
             jk,
             if status == "Aktif" { "Aktif" } else { "Nonaktif" },
             token,
-            qr_code
+            qr_code,
+            id_shift
         ],
     )
     .map_err(|e| CommandError::new("DB_ERROR", format!("Gagal menyimpan identitas personil siswa: {e}")))?;
@@ -1655,6 +1963,89 @@ pub fn get_student_photo(state: &DesktopState, id_siswa: &str) -> Result<Value, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, RwLock};
+
+    fn fixture() -> (tempfile::TempDir, DesktopState) {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        storage::initialize(directory.path()).expect("local schema");
+        let state = DesktopState {
+            server_origin: RwLock::new("http://localhost:3000".to_string()),
+            offline_max_age_hours: 24,
+            data_dir: directory.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            turso_config: RwLock::new(None),
+            session: Mutex::new(None),
+            vault_lock: Mutex::new(()),
+        };
+        storage::database(&state.data_dir)
+            .expect("database lokal")
+            .execute_batch(
+                "INSERT INTO tbl_shift (id_shift, kode_shift, nama_shift, jam_masuk, jam_pulang, jam_kerja_normal_menit)
+                   VALUES (1, 1, 'Pagi', '07:00', '15:00', 420), (2, 2, 'Siswa Siang', '12:00', '17:00', 240);
+                 INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel)
+                   VALUES ('rom-1', 'ta-1', 10, 'X-A');",
+            )
+            .expect("seed shift & rombel");
+        // Aplikasi menyemai identitas klien saat konfigurasi, sebelum ada
+        // transaksi terbuka (`seed_client_identity`); test meniru urutan itu.
+        sync::ensure_client_id(&state).expect("identitas klien");
+        (directory, state)
+    }
+
+    fn shift_of(state: &DesktopState, id: &str) -> i64 {
+        storage::database(&state.data_dir)
+            .expect("database lokal")
+            .query_row(
+                "SELECT id_shift FROM master_data WHERE id_unik = ?1;",
+                params![id],
+                |row| row.get(0),
+            )
+            .expect("baris master_data")
+    }
+
+    /// Jam scan siswa ditentukan shift-nya. Dulu siswa SELALU ditulis ke shift 1
+    /// dan formulir tidak bisa mengubahnya, sehingga setiap scan di luar jendela
+    /// shift 1 ditolak tanpa jalan keluar.
+    #[test]
+    fn shift_siswa_bisa_dipilih_dan_dipertahankan_saat_edit() {
+        let (_dir, state) = fixture();
+
+        let dibuat = save_student(
+            &state,
+            &json!({ "nama_lengkap": "Siswa Siang", "id_rombel": "rom-1", "id_shift": 2 }),
+        )
+        .expect("siswa baru");
+        let id = dibuat["id_siswa"].as_str().expect("id siswa").to_owned();
+        assert_eq!(shift_of(&state, &id), 2);
+
+        // Draft tanpa `id_shift` (formulir lama, impor tanpa kolom shift)
+        // tidak boleh memindahkan siswa ke shift 1.
+        save_student(
+            &state,
+            &json!({ "id_siswa": id, "nama_lengkap": "Siswa Siang", "id_rombel": "rom-1" }),
+        )
+        .expect("edit tanpa shift");
+        assert_eq!(shift_of(&state, &id), 2);
+
+        let ditolak = save_student(
+            &state,
+            &json!({ "nama_lengkap": "Siswa Lain", "id_rombel": "rom-1", "id_shift": 99 }),
+        )
+        .expect_err("shift yatim harus ditolak");
+        assert_eq!(ditolak.code, "VALIDATION_ERROR");
+    }
+
+    #[test]
+    fn shift_guru_dipertahankan_bila_draft_tidak_memilih() {
+        let (_dir, state) = fixture();
+        let dibuat = save_teacher(&state, &json!({ "nama": "Guru Siang", "id_shift": 2 }))
+            .expect("guru baru");
+        let id = dibuat["id_guru"].as_str().expect("id guru").to_owned();
+
+        save_teacher(&state, &json!({ "id_guru": id, "nama": "Guru Siang" }))
+            .expect("edit tanpa shift");
+        assert_eq!(shift_of(&state, &id), 2);
+    }
 
     /// Batas foto siswa WAJIB sama dengan `MAX_STUDENT_PHOTO_SIZE` di
     /// `sync-schema.ts`. Foto yang lolos di perangkat tetapi ditolak validator

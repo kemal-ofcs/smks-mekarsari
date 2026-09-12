@@ -2,8 +2,8 @@ import type { Client } from "@libsql/client";
 import { BRANDING } from "@/lib/constants/branding";
 import { runDatabaseMigrations } from "./db-migrations";
 
-export const CURRENT_SCHEMA_VERSION = 21;
-export const REQUIRED_TABLE_COUNT = 51;
+export const CURRENT_SCHEMA_VERSION = 25;
+export const REQUIRED_TABLE_COUNT = 54;
 
 export async function isDatabaseSchemaReady(client: Client) {
   try {
@@ -23,10 +23,12 @@ export async function isDatabaseSchemaReady(client: Client) {
             'company_profile', 'id_card_template',
             'salary_configs', 'overtime_tier_rules', 'payroll_components',
             'tax_rules', 'bpjs_rules', 'payroll_runs', 'payroll_items', 'payroll_audit_logs',
+            'tarif_jp',
             'password_reset_request', 'app_mail_config', 'absensi_foto',
             'hari_libur_whitelist',
             'akademik_tahun_ajaran', 'akademik_jurusan', 'akademik_rombel',
-            'akademik_mapel', 'akademik_guru_mapel', 'guru_data', 'siswa_data',
+            'akademik_mapel', 'akademik_guru_mapel', 'akademik_jam_pelajaran',
+            'jadwal_mengajar', 'guru_data', 'siswa_data',
             'presensi_mapel', 'presensi_mapel_detail',
             'jurnal_mengajar', 'leger_kehadiran', 'siswa_foto',
             'notifikasi_wa', 'app_wa_config', 'bk_kasus', 'bk_sesi'

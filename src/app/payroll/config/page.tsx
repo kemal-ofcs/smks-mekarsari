@@ -23,6 +23,15 @@ import {
 } from "@/lib/gateways/payroll";
 import { syncNow } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
+import {
+  APPLIES_TO_ALL,
+  isStudentPersonnel,
+  labelAppliesTo,
+  PAYROLL_CALC_TYPE_LABEL,
+  PAYROLL_CALC_TYPES,
+  type PayrollCalcType,
+  TEACHER_EMPLOYMENT_STATUSES,
+} from "@/lib/validations/payroll-policy";
 
 const IDR = new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -52,6 +61,7 @@ export default function PayrollConfigPage() {
   const [draftSalary, setDraftSalary] = useState<Partial<SalaryConfigRow>>({
     id_karyawan: "",
     rate_per_hour: 25000,
+    rate_per_jp: 0,
     ptkp_status: "TK/0",
     effective_date: new Date().toISOString().slice(0, 10),
   });
@@ -73,6 +83,28 @@ export default function PayrollConfigPage() {
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  // Siswa tinggal di `master_data` yang sama dengan guru dan karyawan, dan
+  // daftar personil mengambil tabel itu apa adanya. Tanpa saringan ini, daftar
+  // penerima gaji dan penerima tunjangan memuat seluruh siswa sekolah.
+  const payrollPersonnel = employees.filter(
+    (emp) => !isStudentPersonnel(emp.jenis_personil),
+  );
+
+  const namaPersonil = (id: string): string => {
+    const found = payrollPersonnel.find((emp) => String(emp.id_unik) === id);
+    return found ? String(found.nama) : id;
+  };
+
+  // Divisi diambil dari data personil yang ada, bukan daftar tetap: nama divisi
+  // memang ditulis sekolahnya sendiri.
+  const divisiList = Array.from(
+    new Set(
+      payrollPersonnel
+        .map((emp) => String(emp.divisi ?? "").trim())
+        .filter((divisi) => divisi !== ""),
+    ),
+  ).sort();
 
   const loadSalaryData = useCallback(async () => {
     setLoadingSalary(true);
@@ -294,7 +326,7 @@ export default function PayrollConfigPage() {
         ) : null}
 
         {/* Sub-modul Navigasi */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Link
             href="/payroll/config/overtime-rules"
             className="p-4 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl transition flex items-center justify-between group"
@@ -305,6 +337,23 @@ export default function PayrollConfigPage() {
               </div>
               <div className="text-xs text-slate-500 mt-0.5">
                 Pengali Hari Kerja vs Hari Libur
+              </div>
+            </div>
+            <Icon
+              name="arrow-right"
+              className="w-4 h-4 text-slate-500 group-hover:text-sky-400 transition"
+            />
+          </Link>
+          <Link
+            href="/payroll/config/jp-rates"
+            className="p-4 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl transition flex items-center justify-between group"
+          >
+            <div>
+              <div className="text-sm font-semibold text-slate-200 group-hover:text-sky-400 transition">
+                Tarif Honor per Jam Pelajaran
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Tarif per mapel, dan tarif khusus per guru
               </div>
             </div>
             <Icon
@@ -586,19 +635,19 @@ export default function PayrollConfigPage() {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-center text-xs font-mono text-slate-400">
-                          {comp.calc_type === "FIXED"
-                            ? "Nominal Tetap"
-                            : "Persentase Gaji"}
+                          {PAYROLL_CALC_TYPE_LABEL[
+                            comp.calc_type as PayrollCalcType
+                          ] ?? comp.calc_type}
                         </td>
                         <td className="py-3 px-4 text-right font-mono font-bold text-slate-200">
-                          {comp.calc_type === "FIXED"
-                            ? IDR.format(comp.default_value)
-                            : `${comp.default_value}%`}
+                          {comp.calc_type === "PERCENTAGE"
+                            ? `${comp.default_value}%`
+                            : IDR.format(comp.default_value)}
+                          {comp.calc_type === "PER_JP" ? " / JP" : ""}
+                          {comp.calc_type === "PER_HADIR" ? " / hari" : ""}
                         </td>
                         <td className="py-3 px-4 text-xs text-slate-400">
-                          {comp.applies_to === "ALL"
-                            ? "Semua Karyawan"
-                            : comp.applies_to}
+                          {labelAppliesTo(comp.applies_to, namaPersonil)}
                         </td>
                         <td className="py-3 px-4 text-center space-x-2">
                           <button
@@ -659,7 +708,7 @@ export default function PayrollConfigPage() {
                     className="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-sky-500 font-normal"
                   >
                     <option value="">-- Pilih Karyawan --</option>
-                    {employees.map((emp) => (
+                    {payrollPersonnel.map((emp) => (
                       <option
                         key={String(emp.id_unik)}
                         value={String(emp.id_unik)}
@@ -691,6 +740,27 @@ export default function PayrollConfigPage() {
                       className="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-sky-500 font-mono font-normal"
                     />
                   </label>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">
+                    <span>Tarif Bawaan (Rp / JP)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={draftSalary.rate_per_jp ?? 0}
+                      onChange={(e) =>
+                        setDraftSalary((prev) => ({
+                          ...prev,
+                          rate_per_jp: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-sky-500 font-mono font-normal"
+                    />
+                  </label>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Honor per jam pelajaran yang dipakai bila mapel yang diajar
+                    belum punya tarif sendiri. Nol berarti tidak dibayar per JP.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">
@@ -824,18 +894,73 @@ export default function PayrollConfigPage() {
                       onChange={(e) =>
                         setDraftComp((prev) => ({
                           ...prev,
-                          calc_type: e.target.value as "FIXED" | "PERCENTAGE",
+                          calc_type: e.target.value as PayrollCalcType,
                         }))
                       }
                       className="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-sky-500 font-normal"
                     >
-                      <option value="FIXED">Nominal Tetap (Rp)</option>
-                      <option value="PERCENTAGE">
-                        Persentase (%) Gaji Pokok
-                      </option>
+                      {PAYROLL_CALC_TYPES.map((calcType) => (
+                        <option key={calcType} value={calcType}>
+                          {PAYROLL_CALC_TYPE_LABEL[calcType]}
+                        </option>
+                      ))}
                     </select>
                   </label>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">
+                  <span>Berlaku Untuk</span>
+                  <select
+                    value={draftComp.applies_to ?? APPLIES_TO_ALL}
+                    onChange={(e) =>
+                      setDraftComp((prev) => ({
+                        ...prev,
+                        applies_to: e.target.value,
+                      }))
+                    }
+                    className="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-sky-500 font-normal"
+                  >
+                    <option value={APPLIES_TO_ALL}>
+                      Semua Personil Digaji
+                    </option>
+                    <optgroup label="Kelompok">
+                      <option value="PERSONIL:Guru">Semua Guru</option>
+                      <option value="PERSONIL:Pegawai">
+                        Semua Karyawan (non-guru)
+                      </option>
+                      {TEACHER_EMPLOYMENT_STATUSES.map((status) => (
+                        <option key={status} value={`STATUS:${status}`}>
+                          Guru berstatus {status}
+                        </option>
+                      ))}
+                      {divisiList.map((divisi) => (
+                        <option key={divisi} value={`DIVISI:${divisi}`}>
+                          Divisi {divisi}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Perorangan">
+                      {payrollPersonnel.map((emp) => (
+                        <option
+                          key={String(emp.id_unik)}
+                          value={String(emp.id_unik)}
+                        >
+                          {String(emp.nama)} (
+                          {emp.divisi ? String(emp.divisi) : "Divisi -"})
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </label>
+                <p className="mt-1 text-xs text-slate-500">
+                  Kelompok dinilai saat payroll dihitung, jadi guru yang baru
+                  masuk ikut terhitung tanpa komponennya disunting lagi. Pilih
+                  perorangan untuk tunjangan yang memang milik satu orang —
+                  tunjangan wali kelas, atau gaji pokok tetap seorang guru.
+                  Siswa tidak pernah menerima komponen payroll.
+                </p>
               </div>
 
               <div>

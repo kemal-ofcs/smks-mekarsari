@@ -20,6 +20,8 @@ export interface SiswaInput {
   alamat?: string | null;
   angkatan?: number;
   status?: string;
+  /** Shift yang menentukan jendela jam scan. Kosong = pertahankan yang ada. */
+  id_shift?: number;
 }
 
 export async function getDaftarSiswa(id_rombel?: string) {
@@ -41,13 +43,20 @@ export async function getDaftarSiswa(id_rombel?: string) {
   return response.students;
 }
 
-export async function simpanSiswa(draft: SiswaInput) {
+/**
+ * `tundaSinkronisasi` dipakai impor massal: tanpa itu, 800 baris memicu 800
+ * siklus sinkronisasi. Pemanggilnya WAJIB memicu `syncNow()` sekali di akhir.
+ */
+export async function simpanSiswa(
+  draft: SiswaInput,
+  options: { tundaSinkronisasi?: boolean } = {},
+) {
   if (isDesktopRuntime()) {
     const result = await invokeDesktop<{ sukses: boolean; id_siswa: string }>(
       "desktop_save_student",
       { draft },
     );
-    kickDesktopSync();
+    if (!options.tundaSinkronisasi) kickDesktopSync();
     return result;
   }
   return requestWebApi<{ sukses: boolean; id_siswa: string }>(

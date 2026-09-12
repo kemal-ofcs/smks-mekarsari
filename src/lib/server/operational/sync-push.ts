@@ -1788,10 +1788,11 @@ async function applyPayroll(
       await transaction.execute({
         sql: `
           INSERT INTO salary_configs (
-            id, id_karyawan, rate_per_hour, ptkp_status, effective_date, created_by, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            id, id_karyawan, rate_per_hour, rate_per_jp, ptkp_status, effective_date, created_by, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id_karyawan, effective_date) DO UPDATE SET
             rate_per_hour = excluded.rate_per_hour,
+            rate_per_jp = excluded.rate_per_jp,
             ptkp_status = excluded.ptkp_status,
             created_by = excluded.created_by;
         `,
@@ -1799,6 +1800,7 @@ async function applyPayroll(
           id,
           text(row, "id_karyawan"),
           number(row, "rate_per_hour"),
+          number(row, "rate_per_jp", 0),
           text(row, "ptkp_status") || "TK/0",
           text(row, "effective_date"),
           text(row, "created_by") || actor.username,
@@ -1831,6 +1833,38 @@ async function applyPayroll(
             : null,
           number(row, "multiplier", 1.0),
           number(row, "is_active", 1),
+        ],
+      });
+    }
+  } else if (operation === "jp-rate") {
+    // Tarif honor per jam pelajaran. `id_guru` NULL berarti tarif umum mapel
+    // itu; tabelnya tanpa UNIQUE selain PK, jadi konflik offline tidak pernah
+    // membuat push macet — pemilihan tarifnya yang deterministik.
+    const row = (payload.jpRate ?? payload) as Record<string, unknown>;
+    const id = text(row, "id") || event.entityKey;
+    if (id) {
+      await transaction.execute({
+        sql: `
+          INSERT INTO tarif_jp (
+            id, id_mapel, id_guru, rate_per_jp, effective_date, status_aktif, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            id_mapel = excluded.id_mapel,
+            id_guru = excluded.id_guru,
+            rate_per_jp = excluded.rate_per_jp,
+            effective_date = excluded.effective_date,
+            status_aktif = excluded.status_aktif,
+            updated_at = excluded.updated_at;
+        `,
+        args: [
+          id,
+          text(row, "id_mapel"),
+          text(row, "id_guru") || null,
+          number(row, "rate_per_jp"),
+          text(row, "effective_date"),
+          number(row, "status_aktif", 1),
+          text(row, "created_at") || new Date().toISOString(),
+          text(row, "updated_at") || new Date().toISOString(),
         ],
       });
     }
@@ -1926,6 +1960,7 @@ async function applyPayroll(
       "payroll_components",
       "tax_rules",
       "bpjs_rules",
+      "tarif_jp",
     ];
     if (id && deletable.includes(table)) {
       await transaction.execute({
@@ -1971,10 +2006,11 @@ async function applyPayroll(
                 id, payroll_run_id, id_karyawan, nama_karyawan, divisi, ptkp_status,
                 total_regular_hours, total_overtime_hours, total_overtime_index,
                 total_holiday_hours, total_holiday_overtime_index,
+                total_teaching_jp, teaching_salary,
                 rate_per_hour, basic_salary, overtime_salary, gross_salary,
                 total_allowances, total_deductions, bpjs_employee_total, bpjs_company_total,
                 pph21_amount, net_salary, breakdown_snapshot, created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO NOTHING;
             `,
             args: [
@@ -1992,6 +2028,10 @@ async function applyPayroll(
               // benar: mereka belum pernah memisahkan jam hari libur.
               number(item, "total_holiday_hours"),
               number(item, "total_holiday_overtime_index"),
+              // Alasan yang sama untuk honor mengajar (v22): klien lama tidak
+              // mengirimnya, dan 0 memang arti yang benar bagi mereka.
+              number(item, "total_teaching_jp"),
+              number(item, "teaching_salary"),
               number(item, "rate_per_hour"),
               number(item, "basic_salary"),
               number(item, "overtime_salary"),

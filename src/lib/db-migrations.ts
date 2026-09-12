@@ -25,6 +25,10 @@ const CLASS_ATTENDANCE_MIGRATION_VERSION = 18;
 const TEACHING_JOURNAL_AND_LEDGER_MIGRATION_VERSION = 19;
 const PHASE_4_MIGRATION_VERSION = 20;
 const SHIFT_TIME_RULES_MIGRATION_VERSION = 21;
+const TEACHING_JP_RATE_MIGRATION_VERSION = 22;
+const LESSON_PERIOD_MIGRATION_VERSION = 23;
+const TEACHING_SCHEDULE_MIGRATION_VERSION = 24;
+const PER_JP_ALLOWANCE_MIGRATION_VERSION = 25;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -735,6 +739,7 @@ export async function runDatabaseMigrations(client: Client) {
       id TEXT PRIMARY KEY,
       id_karyawan TEXT NOT NULL,
       rate_per_hour INTEGER NOT NULL CHECK (rate_per_hour >= 0),
+      rate_per_jp INTEGER NOT NULL DEFAULT 0 CHECK (rate_per_jp >= 0),
       ptkp_status TEXT NOT NULL DEFAULT 'TK/0'
         CHECK (ptkp_status IN ('TK/0','TK/1','TK/2','TK/3','K/0','K/1','K/2','K/3')),
       effective_date TEXT NOT NULL,
@@ -762,7 +767,8 @@ export async function runDatabaseMigrations(client: Client) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       category TEXT NOT NULL CHECK (category IN ('ALLOWANCE', 'DEDUCTION')),
-      calc_type TEXT NOT NULL CHECK (calc_type IN ('FIXED', 'PERCENTAGE')),
+      calc_type TEXT NOT NULL
+        CHECK (calc_type IN ('FIXED', 'PERCENTAGE', 'PER_JP', 'PER_HADIR')),
       default_value REAL NOT NULL DEFAULT 0 CHECK (default_value >= 0),
       applies_to TEXT NOT NULL DEFAULT 'ALL',
       is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
@@ -1386,6 +1392,170 @@ export async function runDatabaseMigrations(client: Client) {
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'shift-time-rules-v2', ?);`,
     args: [SHIFT_TIME_RULES_MIGRATION_VERSION, now],
+  });
+
+  // ── v22: Honor mengajar per jam pelajaran ──
+  //
+  // `id_guru` NULL berarti tarif berlaku untuk siapa pun yang mengajar mapel
+  // itu; diisi berarti tarif khusus guru tersebut dan menang atas tarif umum.
+  // SENGAJA tanpa UNIQUE selain PK: dua perangkat offline boleh membuat tarif
+  // untuk mapel yang sama, dan sebuah UNIQUE akan membuat push-nya gagal
+  // permanen. Cerminan DDL di `storage.rs` dan `turso.rs`.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS tarif_jp (
+      id TEXT PRIMARY KEY,
+      id_mapel TEXT NOT NULL,
+      id_guru TEXT,
+      rate_per_jp INTEGER NOT NULL CHECK (rate_per_jp >= 0),
+      effective_date TEXT NOT NULL,
+      status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // Tarif JP bawaan per orang, dan pembekuan honor mengajar di slip. Ketiganya
+  // ditambahkan lewat ALTER karena tabelnya sudah ada di database lama, dan
+  // pembuatan tabel yang dilewati begitu saja tidak pernah menambah kolom.
+  if (!(await hasColumn(client, "salary_configs", "rate_per_jp"))) {
+    await client.execute(
+      "ALTER TABLE salary_configs ADD COLUMN rate_per_jp INTEGER NOT NULL DEFAULT 0;",
+    );
+  }
+  if (!(await hasColumn(client, "payroll_items", "total_teaching_jp"))) {
+    await client.execute(
+      "ALTER TABLE payroll_items ADD COLUMN total_teaching_jp INTEGER NOT NULL DEFAULT 0;",
+    );
+  }
+  if (!(await hasColumn(client, "payroll_items", "teaching_salary"))) {
+    await client.execute(
+      "ALTER TABLE payroll_items ADD COLUMN teaching_salary INTEGER NOT NULL DEFAULT 0;",
+    );
+  }
+
+  // Baris versi ini WAJIB dicatat: `isDatabaseSchemaReady` membandingkan
+  // MAX(version) dengan CURRENT_SCHEMA_VERSION, sehingga menaikkan konstanta
+  // tanpa mencatat barisnya membuat aplikasi menganggap database selamanya
+  // belum siap dan menjalankan ulang seluruh migrasi pada setiap permintaan.
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'teaching-jp-rate', ?);`,
+    args: [TEACHING_JP_RATE_MIGRATION_VERSION, now],
+  });
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_tarif_jp_lookup ON tarif_jp(id_mapel, effective_date DESC);",
+  );
+
+  // ── v23: Jadwal bel sekolah (jam pelajaran ke berapa, pukul berapa) ──
+  //
+  // Tabel KETERANGAN: presensi kelas tetap menyimpan `jam_ke` dan honor tetap
+  // dihitung per jam pelajaran, jadi baris yang belum lengkap tidak pernah
+  // menghalangi presensi. Tanpa UNIQUE pada `jam_ke` — dua perangkat offline
+  // boleh mendaftarkan jam yang sama, dan UNIQUE akan membuat push-nya gagal
+  // permanen. Cerminan DDL di `storage.rs` dan `turso.rs`.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS akademik_jam_pelajaran (
+      id_jam_pelajaran TEXT PRIMARY KEY,
+      jam_ke INTEGER NOT NULL CHECK (jam_ke >= 1),
+      jam_mulai TEXT NOT NULL,
+      jam_selesai TEXT NOT NULL,
+      jenis TEXT NOT NULL DEFAULT 'KBM'
+        CHECK (jenis IN ('KBM', 'Istirahat', 'Upacara', 'Ekstrakurikuler')),
+      keterangan TEXT,
+      is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_jam_pelajaran_urut ON akademik_jam_pelajaran(jam_ke, jam_mulai);",
+  );
+
+  // ── v24: Jadwal mengajar mingguan per rombel ──
+  //
+  // Seperti jadwal bel, tabel ini KETERANGAN: presensi kelas tetap bisa
+  // dicatat tanpa jadwal, dan jadwal hanya memberi tombol isi-cepat. `hari`
+  // 1=Senin sampai 7=Minggu, diturunkan dari tanggal lewat SQL supaya tidak ada
+  // aritmetika tanggal yang dieja dua kali. Tanpa UNIQUE — dua perangkat
+  // offline boleh menyusun jadwal yang sama.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS jadwal_mengajar (
+      id_jadwal TEXT PRIMARY KEY,
+      id_tahun_ajaran TEXT NOT NULL,
+      id_rombel TEXT NOT NULL,
+      id_mapel TEXT NOT NULL,
+      id_guru TEXT NOT NULL,
+      hari INTEGER NOT NULL CHECK (hari BETWEEN 1 AND 7),
+      jam_ke TEXT NOT NULL,
+      is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_jadwal_mengajar_lookup ON jadwal_mengajar(id_tahun_ajaran, id_rombel, hari);",
+  );
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'teaching-schedule', ?);`,
+    args: [TEACHING_SCHEDULE_MIGRATION_VERSION, now],
+  });
+
+  // ── v25: Tunjangan per JP dan per hari hadir ──
+  //
+  // SQLite tidak bisa mengubah CHECK lewat ALTER, jadi `payroll_components`
+  // dibangun ulang. Tanpa ini hanya pemasangan BARU yang bisa memakai kedua
+  // jenis itu; pemasangan lama akan menolaknya di titik simpan, dan pada jalur
+  // sinkronisasi penolakan itu mengunci outbox secara permanen.
+  //
+  // Idempoten lewat pemeriksaan teks DDL-nya sendiri. Tidak ada baris yang
+  // perlu diperbaiki lebih dulu: nilai lama tetap sah pada CHECK baru.
+  // Cerminan `ensure_payroll_calc_type_values` di `storage.rs` dan `turso.rs`.
+  const komponenDdl = await client.execute({
+    sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'payroll_components';",
+  });
+  const ddlKomponen = String(komponenDdl.rows[0]?.sql ?? "");
+  if (ddlKomponen && !ddlKomponen.includes("'PER_JP'")) {
+    const kolom =
+      "id, name, category, calc_type, default_value, applies_to, is_active, created_at";
+    await client.batch(
+      [
+        "DROP TABLE IF EXISTS payroll_components__rebuild;",
+        `CREATE TABLE payroll_components__rebuild (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          category TEXT NOT NULL CHECK (category IN ('ALLOWANCE', 'DEDUCTION')),
+          calc_type TEXT NOT NULL
+            CHECK (calc_type IN ('FIXED', 'PERCENTAGE', 'PER_JP', 'PER_HADIR')),
+          default_value REAL NOT NULL DEFAULT 0 CHECK (default_value >= 0),
+          applies_to TEXT NOT NULL DEFAULT 'ALL',
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );`,
+        `INSERT INTO payroll_components__rebuild (${kolom}) SELECT ${kolom} FROM payroll_components;`,
+        "DROP TABLE payroll_components;",
+        "ALTER TABLE payroll_components__rebuild RENAME TO payroll_components;",
+      ],
+      "write",
+    );
+  }
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'payroll-per-jp-allowance', ?);`,
+    args: [PER_JP_ALLOWANCE_MIGRATION_VERSION, now],
+  });
+
+  // Baris versi WAJIB dicatat: `isDatabaseSchemaReady` membandingkan
+  // MAX(version) dengan CURRENT_SCHEMA_VERSION.
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'lesson-period-schedule', ?);`,
+    args: [LESSON_PERIOD_MIGRATION_VERSION, now],
   });
 
   await client.execute(

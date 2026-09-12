@@ -78,6 +78,7 @@ export function PayrollRecapTable({
     let hadir = 0;
     let regHours = 0;
     let otHours = 0;
+    let teachingJp = 0;
     let gross = 0;
     let net = 0;
 
@@ -85,11 +86,12 @@ export function PayrollRecapTable({
       hadir += r.total_hadir;
       regHours += r.total_regular_hours;
       otHours += r.total_overtime_hours;
+      teachingJp += r.total_teaching_jp;
       gross += r.est_gross_salary;
       net += r.est_net_salary;
     }
 
-    return { hadir, regHours, otHours, gross, net };
+    return { hadir, regHours, otHours, teachingJp, gross, net };
   }, [filtered]);
 
   return (
@@ -134,6 +136,7 @@ export function PayrollRecapTable({
               <th className="py-3 px-4 text-center">Hadir</th>
               <th className="py-3 px-4 text-right">Jam Reguler</th>
               <th className="py-3 px-4 text-right">Jam Lembur</th>
+              <th className="py-3 px-4 text-right">JP Mengajar</th>
               <th className="py-3 px-4 text-right">Rate / Jam</th>
               <th className="py-3 px-4 text-right">Gaji Pokok</th>
               <th className="py-3 px-4 text-right">Upah Lembur</th>
@@ -144,13 +147,13 @@ export function PayrollRecapTable({
           <tbody className="divide-y divide-slate-800">
             {isLoading ? (
               <tr>
-                <td colSpan={10} className="py-8 text-center text-slate-500">
+                <td colSpan={11} className="py-8 text-center text-slate-500">
                   Memuat data rekap payroll...
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={10} className="py-8 text-center text-slate-500">
+                <td colSpan={11} className="py-8 text-center text-slate-500">
                   Tidak ada data karyawan yang cocok.
                 </td>
               </tr>
@@ -180,6 +183,23 @@ export function PayrollRecapTable({
                   </td>
                   <td className="py-3 px-4 text-right font-mono text-amber-400 font-semibold">
                     {row.total_overtime_hours.toFixed(1)} j
+                  </td>
+                  <td className="py-3 px-4 text-right font-mono text-sky-300">
+                    {row.total_teaching_jp > 0 ? (
+                      <>
+                        {row.total_teaching_jp} JP
+                        {row.unrated_teaching_jp > 0 ? (
+                          <span
+                            className="ml-1 text-amber-300"
+                            title={`${row.unrated_teaching_jp} JP belum punya tarif, jadi tidak menambah honor.`}
+                          >
+                            ⚠
+                          </span>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
                   </td>
                   <td className="py-3 px-4 text-right font-mono text-slate-400">
                     {IDR.format(row.rate_per_hour)}
@@ -221,6 +241,9 @@ export function PayrollRecapTable({
                 </td>
                 <td className="py-3 px-4 text-right font-mono text-amber-400">
                   {totals.otHours.toFixed(1)} j
+                </td>
+                <td className="py-3 px-4 text-right font-mono text-sky-300">
+                  {totals.teachingJp > 0 ? `${totals.teachingJp} JP` : "-"}
                 </td>
                 <td className="py-3 px-4 text-right">-</td>
                 <td className="py-3 px-4 text-right font-mono">-</td>
@@ -368,6 +391,20 @@ export function PayrollRecapTable({
                   {IDR.format(selectedRow.est_overtime_salary)}
                 </span>
               </div>
+              {selectedRow.total_teaching_jp > 0 && (
+                <div className="flex justify-between py-1 border-b border-white/5">
+                  <span className="text-slate-300">
+                    Honor Mengajar ({selectedRow.total_teaching_jp} JP terparaf
+                    {selectedRow.unrated_teaching_jp > 0
+                      ? `, ${selectedRow.unrated_teaching_jp} JP belum bertarif`
+                      : ""}
+                    )
+                  </span>
+                  <span className="font-mono font-medium text-sky-300">
+                    {IDR.format(selectedRow.teaching_salary)}
+                  </span>
+                </div>
+              )}
               {selectedRow.est_total_allowance > 0 && (
                 <div className="flex justify-between py-1 border-b border-white/5">
                   <span className="text-slate-300">Tunjangan Tambahan</span>
