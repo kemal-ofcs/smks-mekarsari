@@ -19,6 +19,7 @@ import {
   saveJpRate,
 } from "@/lib/gateways/payroll";
 import { syncNow } from "@/lib/gateways/sync-status";
+import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import { isTeacherPersonnel } from "@/lib/validations/payroll-policy";
 
@@ -38,6 +39,8 @@ const IDR = new Intl.NumberFormat("id-ID", {
 export default function JpRatesPage() {
   // Penjaga anti klik ganda (Aturan 5). Dideklarasikan di ATAS, sebelum setiap
   // early return, supaya urutan hook tidak pernah berubah antar-render.
+  // Konfirmasi aksi merusak memakai dialog APLIKASI, bukan dialog bawaan peramban.
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const isSubmittingRef = useRef(false);
 
   const isHydrated = useHydrated();
@@ -156,11 +159,15 @@ export default function JpRatesPage() {
   const handleDelete = async (row: JpRateRow) => {
     if (isSubmittingRef.current) return;
     if (
-      !confirm(
-        `Hapus tarif ${IDR.format(row.rate_per_jp)} per JP untuk ${
+      !(await konfirmasi({
+        title: "Hapus tarif per JP ini?",
+        description: `Tarif ${IDR.format(row.rate_per_jp)} per JP untuk ${
           row.nama_mapel || row.id_mapel
-        }?`,
-      )
+        } dihapus permanen.`,
+        preserved:
+          "Slip gaji yang sudah terbit tetap memakai tarif yang tersimpan di dalamnya.",
+        confirmLabel: "Ya, hapus",
+      }))
     ) {
       return;
     }
@@ -474,6 +481,8 @@ export default function JpRatesPage() {
           </Modal>
         ) : null}
       </div>
+
+      {dialogKonfirmasi}
     </AppShell>
   );
 }

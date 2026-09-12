@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-promote-pmb-registrant"
+description = "Enables the desktop_promote_pmb_registrant command without any pre-configured scope."
+commands.allow = ["desktop_promote_pmb_registrant"]
+
+[[permission]]
+identifier = "deny-desktop-promote-pmb-registrant"
+description = "Denies the desktop_promote_pmb_registrant command without any pre-configured scope."
+commands.deny = ["desktop_promote_pmb_registrant"]

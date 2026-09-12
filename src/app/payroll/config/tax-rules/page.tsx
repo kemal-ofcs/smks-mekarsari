@@ -17,6 +17,7 @@ import {
   type TaxRuleRow,
 } from "@/lib/gateways/payroll";
 import { syncNow } from "@/lib/gateways/sync-status";
+import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
 const IDR = new Intl.NumberFormat("id-ID", {
@@ -30,6 +31,8 @@ export default function TaxRulesPage() {
   // dijadwalkan, sehingga dua klik dalam satu tick React sama-sama membaca
   // nilai lama dan keduanya lolos. Dideklarasikan di ATAS, sebelum setiap
   // early return, supaya urutan hook tidak pernah berubah antar-render.
+  // Konfirmasi aksi merusak memakai dialog APLIKASI, bukan dialog bawaan peramban.
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const isSubmittingRef = useRef(false);
 
   const isHydrated = useHydrated();
@@ -132,7 +135,16 @@ export default function TaxRulesPage() {
 
   const handleDelete = async (id: string, label: string) => {
     if (isSubmittingRef.current) return;
-    if (!confirm(`Hapus lapisan tarif pajak "${label}"?`)) return;
+    if (
+      !(await konfirmasi({
+        title: "Hapus lapisan tarif pajak ini?",
+        description: `Lapisan tarif "${label}" dihapus permanen dari tabel pajak.`,
+        preserved:
+          "Batch payroll yang sudah dijalankan menyimpan tarif yang dipakainya sendiri.",
+        confirmLabel: "Ya, hapus",
+      }))
+    )
+      return;
     setSaving(true);
     setFeedback(null);
     isSubmittingRef.current = true;
@@ -595,6 +607,8 @@ export default function TaxRulesPage() {
           </Modal>
         ) : null}
       </div>
+
+      {dialogKonfirmasi}
     </AppShell>
   );
 }

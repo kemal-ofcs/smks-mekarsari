@@ -199,6 +199,11 @@ export default function SiswaPage() {
     });
     if (!ok) return;
 
+    // Penjaga klik ganda: state penanda proses baru terlihat setelah
+    // render berikutnya, sehingga dua klik cepat sama-sama melewatinya.
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
     try {
       await hapusSiswa(id);
       setFeedback({
@@ -211,6 +216,8 @@ export default function SiswaPage() {
         tone: "error",
         message: err instanceof Error ? err.message : "Gagal menghapus siswa.",
       });
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 

@@ -1145,6 +1145,93 @@ export const operationalSyncEventSchema = z.union([
       })
       .strict(),
   ),
+  // ── v28: Modul nilai akademik ──
+  //
+  // Kedua enum di bawah (`semester`, `jenis`) dieja SAMA PERSIS dengan CHECK
+  // constraint `nilai_penilaian` di kedua jalur provisioning. Nilai yang lolos
+  // di sini tetapi ditolak CHECK akan menghentikan push-nya di `failed` dengan
+  // `next_retry_at = NULL` — hilang tanpa jalan pulih dari UI.
+  eventSchema(
+    "grade",
+    "create",
+    z
+      .object({
+        id_penilaian: shortText.min(1),
+        id_tahun_ajaran: shortText.min(1),
+        semester: z.enum(["Ganjil", "Genap"]),
+        id_rombel: shortText.min(1),
+        id_mapel: shortText.min(1),
+        id_guru: shortText.min(1),
+        jenis: z.enum(["Tugas", "Ulangan Harian", "Praktik", "UTS", "UAS"]),
+        nama_penilaian: shortText.min(1),
+        tanggal: shortText.min(1),
+        bobot: z.number().int().min(1).max(100),
+        kkm: z.number().int().min(0).max(100),
+        nilai_maks: z.number().int().min(1).max(1000),
+        catatan: optionalLongText,
+        created_at: optionalShortText,
+        updated_at: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "grade",
+    "update",
+    z
+      .object({
+        id_penilaian: shortText.min(1),
+        id_tahun_ajaran: shortText.min(1),
+        semester: z.enum(["Ganjil", "Genap"]),
+        id_rombel: shortText.min(1),
+        id_mapel: shortText.min(1),
+        id_guru: shortText.min(1),
+        jenis: z.enum(["Tugas", "Ulangan Harian", "Praktik", "UTS", "UAS"]),
+        nama_penilaian: shortText.min(1),
+        tanggal: shortText.min(1),
+        bobot: z.number().int().min(1).max(100),
+        kkm: z.number().int().min(0).max(100),
+        nilai_maks: z.number().int().min(1).max(1000),
+        catatan: optionalLongText,
+        created_at: optionalShortText,
+        updated_at: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "grade",
+    "delete",
+    z.object({ id_penilaian: shortText.min(1) }).strict(),
+  ),
+  eventSchema(
+    "grade-detail",
+    "save",
+    z
+      .object({
+        id_nilai: shortText.min(1),
+        id_penilaian: shortText.min(1),
+        id_siswa: shortText.min(1),
+        // `skor` NULLABLE dengan sengaja: NULL berarti BELUM DINILAI, bukan
+        // nol. Anak yang belum sempat mengumpulkan tugas bukan anak yang
+        // mendapat nol, dan memaksa nilai bawaan 0 di sini akan menurunkan
+        // rata-ratanya hanya karena gurunya belum selesai menilai.
+        skor: optionalNumber,
+        keterangan: optionalLongText,
+        created_at: optionalShortText,
+        updated_at: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "grade-detail",
+    "delete",
+    z
+      .object({
+        id_nilai: optionalShortText,
+        id_penilaian: optionalShortText,
+        id_siswa: optionalShortText,
+      })
+      .strict(),
+  ),
   eventSchema(
     "attendance-ledger",
     "freeze",

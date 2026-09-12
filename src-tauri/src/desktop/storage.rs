@@ -949,6 +949,50 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         ON presensi_mapel_detail(id_presensi_mapel);
       CREATE INDEX IF NOT EXISTS idx_local_presensi_mapel_detail_siswa
         ON presensi_mapel_detail(id_siswa, created_at);
+
+      -- ── v28: Modul nilai akademik ──
+      --
+      -- Kolomnya WAJIB sama persis dengan sisi cloud (`turso.rs` dan
+      -- `db-migrations.ts`) dan dengan daftar di `SNAPSHOT_TABLES`. Kolom yang
+      -- hanya ada di satu sisi membuat push gagal "no such column" pada
+      -- perangkat yang tidak memilikinya — `audit:schema` bagian 4 yang
+      -- memeriksanya.
+      --
+      -- Tanpa UNIQUE dan tanpa FOREIGN KEY: keduanya tabel tersinkronisasi.
+      CREATE TABLE IF NOT EXISTS nilai_penilaian (
+        id_penilaian TEXT PRIMARY KEY,
+        id_tahun_ajaran TEXT NOT NULL,
+        semester TEXT NOT NULL CHECK (semester IN ('Ganjil', 'Genap')),
+        id_rombel TEXT NOT NULL,
+        id_mapel TEXT NOT NULL,
+        id_guru TEXT NOT NULL,
+        jenis TEXT NOT NULL
+          CHECK (jenis IN ('Tugas', 'Ulangan Harian', 'Praktik', 'UTS', 'UAS')),
+        nama_penilaian TEXT NOT NULL,
+        tanggal TEXT NOT NULL,
+        bobot INTEGER NOT NULL DEFAULT 1,
+        kkm INTEGER NOT NULL DEFAULT 75,
+        nilai_maks INTEGER NOT NULL DEFAULT 100,
+        catatan TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      -- `skor` NULL berarti BELUM DINILAI, bukan nol.
+      CREATE TABLE IF NOT EXISTS nilai_siswa (
+        id_nilai TEXT PRIMARY KEY,
+        id_penilaian TEXT NOT NULL,
+        id_siswa TEXT NOT NULL,
+        skor REAL,
+        keterangan TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_local_nilai_penilaian_kelas
+        ON nilai_penilaian(id_tahun_ajaran, semester, id_rombel, id_mapel);
+      CREATE INDEX IF NOT EXISTS idx_local_nilai_siswa_penilaian
+        ON nilai_siswa(id_penilaian);
+      CREATE INDEX IF NOT EXISTS idx_local_nilai_siswa_siswa
+        ON nilai_siswa(id_siswa, created_at);
       INSERT OR IGNORE INTO desktop_schema_migration (version, name, applied_at)
       VALUES (7, 'desktop-class-attendance-foundation', unixepoch());
       CREATE TABLE IF NOT EXISTS jurnal_mengajar (
@@ -1443,6 +1487,11 @@ pub(crate) const CLOUD_MIRRORED_TABLES: &[&str] = &[
     "presensi_mapel_detail",
     "jurnal_mengajar",
     "leger_kehadiran",
+    // v28 — nilai akademik. Ikut dibuang saat pindah database: skor seorang
+    // anak milik sekolah tempat ia bersekolah, dan membiarkannya tertinggal
+    // membuat nilai dari database lama muncul di kelas database baru.
+    "nilai_penilaian",
+    "nilai_siswa",
     // Di luar snapshot tetapi tetap milik database asalnya: foto didorong ke
     // cloud lewat outbox dan antrean WA berisi nomor wali siswa database lama.
     "absensi_foto",

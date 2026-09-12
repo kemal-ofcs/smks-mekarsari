@@ -256,6 +256,41 @@ export const PERMISSION_CATALOG = [
     name: "Hapus Kasus Bimbingan Konseling (BK)",
     group: "Kesiswaan",
   },
+  {
+    key: "pmb.view",
+    name: "Lihat Pendaftar PMB",
+    group: "Kesiswaan",
+  },
+  {
+    key: "pmb.manage",
+    name: "Kelola Gelombang & Verifikasi PMB",
+    group: "Kesiswaan",
+  },
+  {
+    key: "pmb.delete",
+    name: "Hapus Pendaftar PMB",
+    group: "Kesiswaan",
+  },
+  {
+    key: "pmb.promote",
+    name: "Jadikan Pendaftar Sebagai Siswa",
+    group: "Kesiswaan",
+  },
+  {
+    key: "grades.view",
+    name: "Lihat Nilai Akademik",
+    group: "Akademik",
+  },
+  {
+    key: "grades.manage",
+    name: "Kelola Penilaian & Input Nilai",
+    group: "Akademik",
+  },
+  {
+    key: "grades.delete",
+    name: "Hapus Penilaian Beserta Nilainya",
+    group: "Akademik",
+  },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_CATALOG)[number]["key"];
@@ -305,6 +340,19 @@ export const SENSITIVE_MUTATION_PERMISSIONS = new Set<PermissionKey>([
   "notification.delete",
   // Menghapus kasus BK memusnahkan rekam jejak konseling dan kedisiplinan siswa.
   "counseling.delete",
+  // Menghapus pendaftar PMB memusnahkan berkas identitas seorang anak — kartu
+  // keluarga, akta kelahiran, ijazah — yang diunggah keluarganya dan tidak
+  // tersimpan di tempat lain mana pun di sistem ini.
+  "pmb.delete",
+  // Mengangkat pendaftar menjadi siswa membuat baris `master_data`, `siswa_data`,
+  // dan `id_card` sekaligus, lalu menyebarkannya ke SELURUH perangkat lewat
+  // sinkronisasi. Ia juga menerbitkan token QR yang langsung bisa dipakai
+  // memindai absensi. Bukan aksi yang pantas ikut paket bawaan Admin.
+  "pmb.promote",
+  // Menghapus satu penilaian memusnahkan skor SELURUH kelas untuk peristiwa itu,
+  // dan tidak ada jalan memulihkannya selain menilai ulang. Alasan yang sama
+  // dengan .
+  "grades.delete",
 ]);
 
 export const SYSTEM_ROLE_KEYS = [
@@ -342,6 +390,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     "attendance_dashboard.view",
     "notification.view",
     "counseling.view",
+    // Ikut paket bawaan operator supaya role yang sudah ada tidak terkunci dari
+    // halaman yang akan mereka pakai begitu modulnya hidup.
+    "grades.view",
   ],
   scanner: ["home.view", "scanner.use", "sync.view"],
 };

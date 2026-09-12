@@ -19,7 +19,7 @@ use super::{
 /// `CURRENT_SCHEMA_VERSION` di `web-desktop/src/lib/db-schema.ts` setiap kali
 /// migrasi baru ditambahkan, karena keduanya membaca tabel `schema_migration`
 /// yang sama di Turso.
-pub const CLIENT_SCHEMA_VERSION: i64 = 25;
+pub const CLIENT_SCHEMA_VERSION: i64 = 28;
 
 /// Hanya `cloud > client` yang berbahaya; `cloud <= client` adalah kondisi normal.
 fn is_client_schema_outdated(cloud_version: i64) -> bool {
@@ -807,9 +807,68 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
         entity_column: "id_leger",
         delete_missing: false,
     },
+    // ── v28: Modul nilai akademik ──
+    //
+    // Daftar kolomnya WAJIB sama persis dengan DDL lokal (`storage.rs`) dan
+    // cloud (`turso.rs` + `db-migrations.ts`). Setiap kolom di sini melintasi
+    // batas jaringan; kolom yang hanya ada di satu sisi membuat push gagal
+    // "no such column" pada perangkat yang tidak memilikinya. `audit:schema`
+    // bagian 4 yang memeriksanya.
+    SnapshotTable {
+        payload_key: "nilaiPenilaian",
+        domain: "grade",
+        table: "nilai_penilaian",
+        columns: &[
+            "id_penilaian",
+            "id_tahun_ajaran",
+            "semester",
+            "id_rombel",
+            "id_mapel",
+            "id_guru",
+            "jenis",
+            "nama_penilaian",
+            "tanggal",
+            "bobot",
+            "kkm",
+            "nilai_maks",
+            "catatan",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id_penilaian",
+        entity_column: "id_penilaian",
+        // `delete_missing: false`, sama seperti seluruh tabel akademik lain:
+        // penghapusan disebarkan lewat event outbox `grade/delete`, bukan
+        // disimpulkan dari ketiadaan baris di snapshot. Menyimpulkannya akan
+        // menghapus penilaian yang dibuat perangkat lain sebelum snapshot-nya
+        // sempat memuat baris itu.
+        delete_missing: false,
+    },
+    SnapshotTable {
+        payload_key: "nilaiSiswa",
+        domain: "grade-detail",
+        table: "nilai_siswa",
+        columns: &[
+            "id_nilai",
+            "id_penilaian",
+            "id_siswa",
+            "skor",
+            "keterangan",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id_nilai",
+        entity_column: "id_nilai",
+        delete_missing: false,
+    },
 ];
 
 const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
+    ("grade", "create"),
+    ("grade", "delete"),
+    ("grade", "update"),
+    ("grade-detail", "delete"),
+    ("grade-detail", "save"),
     ("academic-assignment", "create"),
     ("academic-assignment", "delete"),
     ("academic-class", "create"),

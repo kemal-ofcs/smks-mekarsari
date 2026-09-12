@@ -354,6 +354,10 @@ export default function ShiftPage() {
 
   const handleDeleteShift = async () => {
     if (!deleteConfirmShift) return;
+    // Penjaga klik ganda: state penanda proses baru terlihat setelah
+    // render berikutnya, sehingga dua klik cepat sama-sama melewatinya.
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setIsDeleting(true);
     setErrorMsg(null);
     try {
@@ -376,6 +380,7 @@ export default function ShiftPage() {
       setDeleteConfirmShift(null);
     } finally {
       setIsDeleting(false);
+      isSubmittingRef.current = false;
     }
   };
 

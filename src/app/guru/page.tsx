@@ -184,6 +184,12 @@ export default function GuruPage() {
     });
     if (!ok) return;
 
+    // Penjaga klik ganda dipasang SETELAH konfirmasi: dialognya sendiri sudah
+    // menahan klik kedua, dan mengunci sebelum itu membuat pembatalan
+    // meninggalkan penjaga yang tidak pernah dilepas.
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
     try {
       await hapusGuru(id);
       setFeedback({
@@ -197,6 +203,8 @@ export default function GuruPage() {
         message:
           err instanceof Error ? err.message : "Gagal menghapus profil guru.",
       });
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 

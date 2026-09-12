@@ -19,6 +19,7 @@ import {
   saveTeacherOvertimePolicy,
 } from "@/lib/gateways/payroll";
 import { syncNow } from "@/lib/gateways/sync-status";
+import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
 export default function OvertimeRulesPage() {
@@ -26,6 +27,8 @@ export default function OvertimeRulesPage() {
   // dijadwalkan, sehingga dua klik dalam satu tick React sama-sama membaca
   // nilai lama dan keduanya lolos. Dideklarasikan di ATAS, sebelum setiap
   // early return, supaya urutan hook tidak pernah berubah antar-render.
+  // Konfirmasi aksi merusak memakai dialog APLIKASI, bukan dialog bawaan peramban.
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const isSubmittingRef = useRef(false);
 
   const isHydrated = useHydrated();
@@ -164,7 +167,16 @@ export default function OvertimeRulesPage() {
 
   const handleDelete = async (id: string, name: string) => {
     if (isSubmittingRef.current) return;
-    if (!confirm(`Hapus jenjang lembur "${name}"?`)) return;
+    if (
+      !(await konfirmasi({
+        title: "Hapus jenjang lembur ini?",
+        description: `Jenjang lembur "${name}" dihapus permanen dari daftar.`,
+        preserved:
+          "Slip gaji yang sudah terbit tetap memakai indeks yang tersimpan di dalamnya.",
+        confirmLabel: "Ya, hapus",
+      }))
+    )
+      return;
     setSaving(true);
     setFeedback(null);
     isSubmittingRef.current = true;
@@ -638,6 +650,8 @@ export default function OvertimeRulesPage() {
           </Modal>
         ) : null}
       </div>
+
+      {dialogKonfirmasi}
     </AppShell>
   );
 }

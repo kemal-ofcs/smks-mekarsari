@@ -12,6 +12,7 @@ import {
   saveJpSettings,
   saveLessonPeriod,
 } from "@/lib/gateways/class-attendance";
+import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import {
   DEFAULT_JP_DURATION_MINUTES,
   DEFAULT_JP_MAX_PER_DAY,
@@ -31,6 +32,9 @@ import {
  * menjawab "sekolah ini sebenarnya punya berapa jam pelajaran".
  */
 export function JamPelajaranCard() {
+  // Konfirmasi aksi merusak memakai dialog APLIKASI, bukan dialog bawaan peramban.
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
+
   // Penjaga anti klik ganda (Aturan 5): `useState` baru berlaku pada render
   // berikutnya, sehingga dua klik dalam satu tick sama-sama lolos.
   const isSubmittingRef = useRef(false);
@@ -95,7 +99,16 @@ export function JamPelajaranCard() {
 
   const hapusBel = async (row: LessonPeriodRow) => {
     if (isSubmittingRef.current) return;
-    if (!confirm(`Hapus jam bel ke-${row.jam_ke}?`)) return;
+    if (
+      !(await konfirmasi({
+        title: "Hapus jam bel ini?",
+        description: `Jam bel ke-${row.jam_ke} dihapus dari daftar jam pelajaran.`,
+        preserved:
+          "Presensi mapel yang sudah tercatat pada jam itu tidak ikut terhapus.",
+        confirmLabel: "Ya, hapus",
+      }))
+    )
+      return;
     isSubmittingRef.current = true;
     try {
       await deleteLessonPeriod(row.id_jam_pelajaran);
@@ -438,6 +451,8 @@ export function JamPelajaranCard() {
           </form>
         </Modal>
       ) : null}
+
+      {dialogKonfirmasi}
     </section>
   );
 }

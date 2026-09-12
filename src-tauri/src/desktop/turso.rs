@@ -951,6 +951,23 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
         table: "leger_kehadiran",
         sql: "SELECT * FROM leger_kehadiran ORDER BY id_tahun_ajaran, semester, id_rombel, id_siswa\n-- sengaja-utuh: nilai resmi rapor yang sudah dibekukan; baris yang hilang akan dibekukan ulang dengan angka berbeda.\n;",
     },
+    // ── v28: Modul nilai akademik ──
+    //
+    // Daftar ini WAJIB 100% paritas dengan `SNAPSHOT_TABLES` di `sync.rs`: ia
+    // yang membangkitkan SELECT snapshot SEKALIGUS memasang trigger
+    // `sync_pulse` di cloud. Tabel yang hadir di satu daftar saja akan
+    // tersinkronisasi tanpa penghitung perubahan — atau punya penghitung yang
+    // tidak pernah dibaca siapa pun.
+    SnapshotSource {
+        payload_key: "nilaiPenilaian",
+        table: "nilai_penilaian",
+        sql: "SELECT * FROM nilai_penilaian ORDER BY id_tahun_ajaran, semester, id_rombel, id_mapel, tanggal\n-- sengaja-utuh: header penilaian harus lengkap; memotongnya membuat baris nilai di perangkat lain kehilangan induknya dan tampak seperti nilai yang tidak pernah dibuat.\n;",
+    },
+    SnapshotSource {
+        payload_key: "nilaiSiswa",
+        table: "nilai_siswa",
+        sql: "SELECT * FROM nilai_siswa ORDER BY id_penilaian, id_siswa\n-- sengaja-utuh: skor yang hilang dari snapshot tidak bisa dibedakan dari skor yang memang belum diisi, dan gurunya akan menilai ulang seluruh kelas.\n;",
+    },
 ];
 
 pub struct TursoClient {
@@ -2118,7 +2135,14 @@ impl TursoClient {
                 ('notification.delete', 'Batalkan / Hapus Antrean Notifikasi', 'Komunikasi', 'Membatalkan dan menghapus antrean notifikasi WhatsApp.', 1, 503),
                 ('counseling.view', 'Lihat Kasus Bimbingan Konseling (BK)', 'Kesiswaan', 'Melihat daftar dan riwayat kasus bimbingan konseling siswa.', 1, 600),
                 ('counseling.manage', 'Kelola Kasus & Sesi Konseling (BK)', 'Kesiswaan', 'Mencatat kasus baru dan menambah sesi bimbingan konseling.', 1, 601),
-                ('counseling.delete', 'Hapus Kasus Bimbingan Konseling (BK)', 'Kesiswaan', 'Menghapus catatan kasus dan sesi bimbingan konseling siswa.', 1, 602);"#,
+                ('counseling.delete', 'Hapus Kasus Bimbingan Konseling (BK)', 'Kesiswaan', 'Menghapus catatan kasus dan sesi bimbingan konseling siswa.', 1, 602),
+                ('pmb.view', 'Lihat Pendaftar PMB', 'Kesiswaan', 'Melihat daftar dan detail calon siswa yang mendaftar lewat situs publik.', 1, 700),
+                ('pmb.manage', 'Kelola Gelombang & Verifikasi PMB', 'Kesiswaan', 'Mengatur gelombang pendaftaran dan mengubah status verifikasi pendaftar.', 1, 701),
+                ('pmb.delete', 'Hapus Pendaftar PMB', 'Kesiswaan', 'Menghapus data pendaftar beserta seluruh berkas identitas yang diunggah.', 1, 702),
+                ('pmb.promote', 'Jadikan Pendaftar Sebagai Siswa', 'Kesiswaan', 'Mengangkat pendaftar yang diterima menjadi siswa aktif beserta kartu identitasnya.', 1, 703),
+                ('grades.view', 'Lihat Nilai Akademik', 'Akademik', 'Melihat daftar penilaian dan nilai siswa per mata pelajaran.', 1, 800),
+                ('grades.manage', 'Kelola Penilaian & Input Nilai', 'Akademik', 'Membuat penilaian baru dan menginput nilai siswa.', 1, 801),
+                ('grades.delete', 'Hapus Penilaian Beserta Nilainya', 'Akademik', 'Menghapus penilaian beserta seluruh nilai siswa di dalamnya.', 1, 802);"#,
                 vec![],
             ),
             // Seed Default Role Permissions untuk Role Superadmin (Role 1)
@@ -2617,6 +2641,194 @@ impl TursoClient {
             Statement::new("CREATE INDEX IF NOT EXISTS idx_notifikasi_wa_dedupe ON notifikasi_wa(dedupe_key);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_bk_kasus_siswa ON bk_kasus(id_siswa, id_tahun_ajaran);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_bk_sesi_kasus ON bk_sesi(id_kasus, tanggal);", vec![]),
+            // ── v26: Penerimaan Peserta Didik Baru (PMB) ──
+            //
+            // Definisi aslinya ada di `db-migrations.ts`; ketiga tabel ini
+            // dipakai situs publik (`web-public`), yang SENGAJA tidak punya
+            // satu pun `CREATE TABLE` supaya tidak menjadi jalur provisioning
+            // ketiga. Rust ikut membuatnya karena database yang lahir dari
+            // Desktop/Mobile harus tetap bisa melayani situs itu — persis
+            // alasan yang sama yang membuat Rust membuat `app_session`.
+            //
+            // CLOUD-ONLY: tidak pernah masuk SNAPSHOT_TABLES dan tidak pernah
+            // dibuat `storage.rs`. Berkas identitas seorang calon siswa tidak
+            // boleh tersalin ke SQLite setiap terminal pemindai di lobi.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS pmb_gelombang (
+                    id_gelombang TEXT PRIMARY KEY,
+                    nama TEXT NOT NULL,
+                    tahun_ajaran TEXT NOT NULL,
+                    tanggal_buka TEXT NOT NULL,
+                    tanggal_tutup TEXT NOT NULL,
+                    kuota INTEGER NOT NULL DEFAULT 0,
+                    biaya_pendaftaran INTEGER NOT NULL DEFAULT 0,
+                    is_aktif INTEGER NOT NULL DEFAULT 0 CHECK(is_aktif IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );"#,
+                vec![],
+            ),
+            // `id_siswa` sengaja TANPA FOREIGN KEY ke `siswa_data`: tabel itu
+            // ikut snapshot, dan `apply_table` boleh menghapus lalu menulis
+            // ulang barisnya saat rekonsiliasi. FK berkaskade akan menghapus
+            // jejak pendaftaran diam-diam, dan gejalanya tidak akan pernah
+            // tertelusur kembali ke sync.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS pmb_pendaftar (
+                    id_pendaftar TEXT PRIMARY KEY,
+                    nomor_pendaftaran TEXT NOT NULL,
+                    id_gelombang TEXT NOT NULL,
+                    nama_lengkap TEXT NOT NULL,
+                    nisn TEXT,
+                    jenis_kelamin TEXT CHECK(jenis_kelamin IN ('L', 'P')),
+                    tempat_lahir TEXT,
+                    tanggal_lahir TEXT,
+                    asal_sekolah TEXT,
+                    alamat TEXT,
+                    nama_wali TEXT NOT NULL,
+                    no_whatsapp_wali TEXT NOT NULL,
+                    email_wali TEXT,
+                    pilihan_jurusan TEXT,
+                    status TEXT NOT NULL DEFAULT 'Baru'
+                        CHECK(status IN ('Baru', 'Berkas Lengkap', 'Terverifikasi',
+                                         'Diterima', 'Ditolak', 'Dibatalkan', 'Terdaftar')),
+                    catatan_verifikator TEXT,
+                    diverifikasi_oleh TEXT,
+                    diverifikasi_at TEXT,
+                    id_siswa TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS pmb_berkas (
+                    id_berkas TEXT PRIMARY KEY,
+                    id_pendaftar TEXT NOT NULL,
+                    jenis TEXT NOT NULL
+                        CHECK(jenis IN ('kartu_keluarga', 'akta_lahir', 'ijazah', 'rapor',
+                                        'foto', 'lainnya')),
+                    nama_file TEXT NOT NULL,
+                    mime TEXT NOT NULL
+                        CHECK(mime IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')),
+                    ukuran_byte INTEGER NOT NULL,
+                    konten_base64 TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (id_pendaftar) REFERENCES pmb_pendaftar(id_pendaftar)
+                        ON DELETE CASCADE
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_pmb_pendaftar_gelombang ON pmb_pendaftar(id_gelombang, status, created_at DESC);", vec![]),
+            Statement::new("CREATE UNIQUE INDEX IF NOT EXISTS idx_pmb_pendaftar_nomor ON pmb_pendaftar(nomor_pendaftaran);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_pmb_berkas_pendaftar ON pmb_berkas(id_pendaftar);", vec![]),
+            // ── v27: Portal wali murid ──
+            //
+            // Definisi aslinya di `db-migrations.ts`; dipakai situs publik
+            // (`web-public`) yang sengaja tidak punya satu pun `CREATE TABLE`.
+            // Rust ikut membuatnya supaya database yang lahir dari
+            // Desktop/Mobile tetap bisa melayani portal itu.
+            //
+            // CLOUD-ONLY: sesi dan kode sekali-pakai milik orang tua siswa
+            // tidak boleh tersalin ke SQLite setiap terminal pemindai.
+            //
+            // Kode OTP disimpan sebagai hash SHA-256, tidak pernah bentuk
+            // aslinya — siapa pun yang bisa membaca database sekolah tidak
+            // boleh bisa masuk sebagai wali mana pun.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS wali_otp (
+                    id TEXT PRIMARY KEY,
+                    subjek TEXT NOT NULL CHECK(subjek IN ('wali', 'pmb')),
+                    subjek_id TEXT NOT NULL,
+                    tujuan_nomor TEXT NOT NULL,
+                    kode_hash TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'Menunggu'
+                        CHECK(status IN ('Menunggu', 'Terpakai', 'Kedaluwarsa', 'Dibatalkan')),
+                    delivery_status TEXT,
+                    delivery_error TEXT,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT
+                );"#,
+                vec![],
+            ),
+            // `id_siswa` SENGAJA tanpa FOREIGN KEY ke `siswa_data`: tabel itu
+            // ikut snapshot, dan `apply_table` boleh menghapus lalu menulis
+            // ulang barisnya saat rekonsiliasi. FK berkaskade akan menghapus
+            // sesi wali diam-diam di tengah pemakaian, dan gejalanya tidak akan
+            // pernah tertelusur kembali ke sinkronisasi.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS wali_session (
+                    session_id TEXT PRIMARY KEY,
+                    token_hash TEXT UNIQUE NOT NULL,
+                    id_siswa TEXT NOT NULL,
+                    no_whatsapp_wali TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    revoked_reason TEXT,
+                    user_agent_hash TEXT
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_wali_otp_subjek ON wali_otp(subjek, subjek_id, status, created_at DESC);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_wali_session_siswa ON wali_session(id_siswa, expires_at);", vec![]),
+            // ── v28: Modul nilai akademik ──
+            //
+            // Berbeda dari seluruh tabel Fase 5: kedua tabel ini IKUT
+            // SINKRONISASI dan melewati outbox. Karena itu TIDAK ADA UNIQUE
+            // selain primary key (dua guru offline boleh menilai kelas yang
+            // sama; penolakan cloud akan mematikan push-nya permanen dengan
+            // `next_retry_at = NULL`) dan TIDAK ADA FOREIGN KEY (`apply_table`
+            // menghapus lalu menulis ulang baris saat rekonsiliasi, dan urutan
+            // penerapan antar-tabel tidak dijamin — detail bisa tiba sebelum
+            // headernya).
+            //
+            // `kkm` dibekukan dari `akademik_mapel` saat penilaian dibuat, bukan
+            // di-join saat dibaca: KKM yang diubah admin di tengah semester
+            // tidak boleh mengubah penilaian yang sudah dilihat orang tua.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS nilai_penilaian (
+                    id_penilaian TEXT PRIMARY KEY,
+                    id_tahun_ajaran TEXT NOT NULL,
+                    semester TEXT NOT NULL CHECK (semester IN ('Ganjil', 'Genap')),
+                    id_rombel TEXT NOT NULL,
+                    id_mapel TEXT NOT NULL,
+                    id_guru TEXT NOT NULL,
+                    jenis TEXT NOT NULL
+                        CHECK (jenis IN ('Tugas', 'Ulangan Harian', 'Praktik', 'UTS', 'UAS')),
+                    nama_penilaian TEXT NOT NULL,
+                    tanggal TEXT NOT NULL,
+                    bobot INTEGER NOT NULL DEFAULT 1,
+                    kkm INTEGER NOT NULL DEFAULT 75,
+                    nilai_maks INTEGER NOT NULL DEFAULT 100,
+                    catatan TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );"#,
+                vec![],
+            ),
+            // `skor` NULL berarti BELUM DINILAI, bukan nol. Anak yang belum
+            // sempat mengumpulkan tugas bukan anak yang mendapat nol; setiap
+            // agregasi WAJIB `AVG(skor)` yang mengabaikan NULL, tidak pernah
+            // `COALESCE(skor, 0)`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS nilai_siswa (
+                    id_nilai TEXT PRIMARY KEY,
+                    id_penilaian TEXT NOT NULL,
+                    id_siswa TEXT NOT NULL,
+                    skor REAL,
+                    keterangan TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_nilai_penilaian_kelas ON nilai_penilaian(id_tahun_ajaran, semester, id_rombel, id_mapel);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_nilai_siswa_penilaian ON nilai_siswa(id_penilaian);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_nilai_siswa_siswa ON nilai_siswa(id_siswa, created_at);", vec![]),
             // Seed Default Overtime Rules
             Statement::new(crate::desktop::payroll_seed::OVERTIME_TIER_RULES_SEED_SQL, vec![]),
             // Seed Default Tax Rules (Pasal 17 & TER Baseline)
@@ -2635,7 +2847,10 @@ impl TursoClient {
                 (17, 'academic-unique-relaxation', datetime('now')),
                 (18, 'class-attendance-foundation', datetime('now')),
                 (19, 'teaching-journal-and-attendance-ledger', datetime('now')),
-                (20, 'phase-4-notification-and-counseling', datetime('now'));"#,
+                (20, 'phase-4-notification-and-counseling', datetime('now')),
+                (26, 'pmb-online', datetime('now')),
+                (27, 'wali-portal', datetime('now')),
+                (28, 'academic-grades', datetime('now'));"#,
                 vec![],
             ),
         ];
@@ -5576,6 +5791,135 @@ impl TursoClient {
     /// `src/lib/services/wa-notification.ts` dan WAJIB tetap sama — bawaan 200,
     /// maksimum 1000. Batas yang berbeda membuat Web dan aplikasi menampilkan
     /// potongan antrean yang berlainan untuk filter yang sama.
+    /// Batalkan satu antrean WhatsApp LANGSUNG di cloud.
+    ///
+    /// Pasangan cloud dari `cancel_wa_notification` di `wa_notification.rs`,
+    /// yang membatalkan baris di SQLite LOKAL. Keduanya ada karena keduanya
+    /// benar untuk pemakainya masing-masing, dan memakai yang keliru
+    /// menghasilkan tombol yang diam:
+    ///
+    ///   * Terminal pemindai membatalkan barisnya sendiri — baris itu memang
+    ///     lahir di SQLite-nya, dan pembatalannya menyusul lewat outbox.
+    ///   * Ponsel yang bukan terminal TIDAK pernah punya barisnya. `notifikasi_wa`
+    ///     ada di luar `SNAPSHOT_TABLES`: barisnya didorong ke cloud dan tidak
+    ///     pernah ditarik kembali. `UPDATE ... WHERE id_notifikasi = ?` di sana
+    ///     mengenai NOL baris, tidak mendaftarkan event outbox apa pun, dan
+    ///     mengembalikan sukses — tombol "Batalkan" yang tidak membatalkan apa
+    ///     pun, pada pesan yang akan tetap terkirim ke nomor wali seorang siswa.
+    ///
+    /// Syarat `status = 'Menunggu'` dipertahankan: pesan yang sudah terkirim
+    /// tidak bisa ditarik kembali, dan menandainya "Dibatalkan" hanya membuat
+    /// jejaknya berbohong.
+    pub async fn cancel_wa_notification_cloud(
+        &self,
+        id_notifikasi: &str,
+    ) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let hasil = self
+            .query_one(
+                "UPDATE notifikasi_wa SET status = 'Dibatalkan', updated_at = datetime('now') WHERE id_notifikasi = ? AND status = 'Menunggu';",
+                vec![json!(id_notifikasi)],
+            )
+            .await?;
+
+        if hasil.rows_affected == 0 {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Antrean tidak ditemukan, atau sudah terkirim sehingga tidak dapat dibatalkan.",
+            ));
+        }
+
+        Ok(json!({ "sukses": true }))
+    }
+
+    /// Antre satu pesan WhatsApp LANGSUNG di cloud.
+    ///
+    /// Alasannya sama dengan pembatalan di atas: halaman Mobile menampilkan
+    /// antrean CLOUD, jadi barisnya harus lahir di sana. Menulis ke SQLite
+    /// lokal akan membuat pesan yang baru diantre tidak muncul di layar yang
+    /// baru saja dipakai mengantrekannya, sampai siklus sinkronisasi berikutnya.
+    ///
+    /// `status` sengaja tidak diterima dari pemanggil: baris baru SELALU
+    /// `Menunggu`. Menerimanya berarti membuka jalan bagi klien untuk menulis
+    /// `Terkirim` pada pesan yang tidak pernah dikirim.
+    pub async fn queue_wa_notification_cloud(
+        &self,
+        draft: &Value,
+    ) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+
+        let teks = |kunci: &str| draft.get(kunci).and_then(Value::as_str).unwrap_or("").trim();
+
+        let jenis = teks("jenis");
+        // Daftar kanonik dieja di empat tempat yang wajib sama; nilai asing
+        // DITOLAK, tidak pernah dinormalkan. Menormalkannya mengubah bug klien
+        // menjadi pesan WhatsApp ke nomor wali seorang siswa — tidak bisa
+        // ditarik kembali, dan tanpa jejak bahwa ada yang salah.
+        const JENIS_SAH: &[&str] = &["scan_masuk", "scan_pulang", "bolos", "ambang_alfa"];
+        if !JENIS_SAH.contains(&jenis) {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                format!(
+                    "Jenis notifikasi '{jenis}' tidak dikenal. Gunakan salah satu dari: {}.",
+                    JENIS_SAH.join(", ")
+                ),
+            ));
+        }
+
+        let tujuan_nomor = normalize_operator_phone(teks("tujuan_nomor"));
+        if tujuan_nomor.is_empty() {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Nomor tujuan tidak valid. Gunakan format 08xxxxxxxxxx atau +62xxxxxxxxxx.",
+            ));
+        }
+
+        let isi_pesan = teks("isi_pesan");
+        if isi_pesan.is_empty() {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Isi pesan wajib diisi.",
+            ));
+        }
+
+        let id_notifikasi = {
+            let mut bytes = [0u8; 6];
+            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut bytes);
+            format!(
+                "wa-{}-{}",
+                crate::desktop::storage::now_epoch_seconds(),
+                hex::encode(bytes)
+            )
+        };
+        let id_siswa = draft.get("id_siswa").and_then(Value::as_str);
+        let dedupe_key = {
+            let mentah = teks("dedupe_key");
+            if mentah.is_empty() {
+                format!("manual:{id_notifikasi}")
+            } else {
+                mentah.to_owned()
+            }
+        };
+
+        self.query_one(
+            r#"INSERT INTO notifikasi_wa (
+                   id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor,
+                   isi_pesan, status, attempt_count, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, 'Menunggu', 0, datetime('now'), datetime('now'));"#,
+            vec![
+                json!(id_notifikasi),
+                json!(dedupe_key),
+                json!(jenis),
+                json!(id_siswa),
+                json!(tujuan_nomor),
+                json!(isi_pesan),
+            ],
+        )
+        .await?;
+
+        Ok(json!({ "sukses": true, "id_notifikasi": id_notifikasi }))
+    }
+
     pub async fn list_wa_notifications_cloud(
         &self,
         status: Option<&str>,
@@ -5974,6 +6318,417 @@ impl TursoClient {
         .await?;
         Ok(json!({ "sukses": true }))
     }
+
+    // ── Penerimaan Peserta Didik Baru (PMB) ────────────────────────────────
+    //
+    // Ketiga tabelnya CLOUD-ONLY, sama seperti Bimbingan Konseling: tidak ada
+    // di SQLite perangkat, tidak pernah lewat outbox, dan karenanya MENUNTUT
+    // JARINGAN. Layar yang membacanya wajib mengatakan itu saat offline — daftar
+    // kosong yang sebenarnya kegagalan tidak bisa dibedakan dari "belum ada
+    // pendaftar", dan panitia akan menyimpulkan yang salah pada hari pertama
+    // pendaftaran dibuka.
+
+    pub async fn list_pmb_waves(&self) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let res = self
+            .query_one(
+                r#"SELECT g.id_gelombang, g.nama, g.tahun_ajaran, g.tanggal_buka,
+                          g.tanggal_tutup, g.kuota, g.biaya_pendaftaran, g.is_aktif,
+                          g.created_at, g.updated_at,
+                          (SELECT COUNT(*) FROM pmb_pendaftar p
+                            WHERE p.id_gelombang = g.id_gelombang
+                              AND p.status NOT IN ('Ditolak', 'Dibatalkan')) AS terpakai
+                     FROM pmb_gelombang g
+                 ORDER BY g.tanggal_buka DESC
+                    LIMIT 200;"#,
+                vec![],
+            )
+            .await?;
+        Ok(json!({ "items": res.to_objects() }))
+    }
+
+    /// Simpan gelombang, dengan aturan aktif-tunggal yang atomik.
+    ///
+    /// Menonaktifkan yang lain dilakukan dalam batch yang SAMA, pola idempoten
+    /// yang sudah dipakai `akademik_tahun_ajaran.is_aktif`. Dua gelombang aktif
+    /// sekaligus membuat `readGelombangAktif` di situs publik memilih salah satu
+    /// berdasarkan urutan tanggal — pendaftar akan masuk ke gelombang yang tidak
+    /// diniatkan panitia, dan tidak ada yang menyadarinya sampai rekapnya dibuat.
+    pub async fn save_pmb_wave(&self, draft: &Value) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+
+        let id_masuk = draft
+            .get("idGelombang")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        let nama = teks_wajib(draft, "nama", "Nama gelombang wajib diisi.")?;
+        let tahun_ajaran =
+            teks_wajib(draft, "tahunAjaran", "Tahun ajaran gelombang wajib diisi.")?;
+        let tanggal_buka = teks_wajib(draft, "tanggalBuka", "Tanggal buka wajib diisi.")?;
+        let tanggal_tutup = teks_wajib(draft, "tanggalTutup", "Tanggal tutup wajib diisi.")?;
+
+        if tanggal_tutup < tanggal_buka {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Tanggal tutup tidak boleh mendahului tanggal buka.",
+            ));
+        }
+
+        let kuota = draft.get("kuota").and_then(Value::as_i64).unwrap_or(0).max(0);
+        let biaya = draft
+            .get("biayaPendaftaran")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(0);
+        let aktif = i64::from(
+            draft
+                .get("isAktif")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        );
+
+        let id = if id_masuk.is_empty() {
+            new_pmb_id("gel")
+        } else {
+            id_masuk
+        };
+
+        let mut statements = vec![Statement::new(
+            r#"INSERT INTO pmb_gelombang (
+                   id_gelombang, nama, tahun_ajaran, tanggal_buka, tanggal_tutup,
+                   kuota, biaya_pendaftaran, is_aktif, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+               ON CONFLICT(id_gelombang) DO UPDATE SET
+                   nama = excluded.nama,
+                   tahun_ajaran = excluded.tahun_ajaran,
+                   tanggal_buka = excluded.tanggal_buka,
+                   tanggal_tutup = excluded.tanggal_tutup,
+                   kuota = excluded.kuota,
+                   biaya_pendaftaran = excluded.biaya_pendaftaran,
+                   is_aktif = excluded.is_aktif,
+                   updated_at = datetime('now');"#,
+            vec![
+                json!(id),
+                json!(nama),
+                json!(tahun_ajaran),
+                json!(tanggal_buka),
+                json!(tanggal_tutup),
+                json!(kuota),
+                json!(biaya),
+                json!(aktif),
+            ],
+        )];
+
+        if aktif == 1 {
+            statements.push(Statement::new(
+                "UPDATE pmb_gelombang SET is_aktif = 0, updated_at = datetime('now') WHERE id_gelombang <> ?;",
+                vec![json!(id)],
+            ));
+        }
+
+        self.execute_pipeline(statements).await?;
+        Ok(json!({ "idGelombang": id }))
+    }
+
+    /// Hapus gelombang yang belum pernah dipakai mendaftar.
+    ///
+    /// Gelombang yang sudah punya pendaftar TIDAK boleh hilang: `id_gelombang`
+    /// di `pmb_pendaftar` sengaja tanpa foreign key (dua tabel yang sama-sama
+    /// cloud-only pun tetap dipisah agar penghapusan gelombang tidak pernah
+    /// berkaskade ke berkas identitas anak orang), sehingga tidak ada apa pun di
+    /// tingkat database yang mencegahnya. Aturannya ditegakkan di sini.
+    pub async fn delete_pmb_wave(&self, id_gelombang: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let terpakai = self
+            .query_one(
+                "SELECT COUNT(*) AS total FROM pmb_pendaftar WHERE id_gelombang = ?;",
+                vec![json!(id_gelombang)],
+            )
+            .await?
+            .to_objects()
+            .into_iter()
+            .next()
+            .and_then(|row| row.get("total").and_then(Value::as_i64))
+            .unwrap_or(0);
+
+        if terpakai > 0 {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                &format!(
+                    "Gelombang ini sudah memiliki {terpakai} pendaftar dan tidak dapat dihapus. Nonaktifkan saja bila sudah tidak dipakai."
+                ),
+            ));
+        }
+
+        self.query_one(
+            "DELETE FROM pmb_gelombang WHERE id_gelombang = ?;",
+            vec![json!(id_gelombang)],
+        )
+        .await?;
+        Ok(json!({ "sukses": true }))
+    }
+
+    /// Daftar pendaftar.
+    ///
+    /// `konten_base64` TIDAK pernah ikut — hanya jumlah berkasnya. Satu berkas
+    /// sampai 500 KB; seratus pendaftar akan membuat balasannya puluhan megabyte
+    /// dan halaman ini dibuka panitia berkali-kali sehari. Aturan yang sama
+    /// dengan `photo_base64` di riwayat reset password.
+    pub async fn list_pmb_registrants(
+        &self,
+        id_gelombang: Option<&str>,
+        status: Option<&str>,
+        search: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let mut sql = String::from(
+            r#"
+            SELECT p.id_pendaftar, p.nomor_pendaftaran, p.id_gelombang, p.nama_lengkap,
+                   p.nisn, p.jenis_kelamin, p.asal_sekolah, p.pilihan_jurusan,
+                   p.nama_wali, p.no_whatsapp_wali, p.status, p.id_siswa,
+                   p.created_at, p.updated_at,
+                   COALESCE(g.nama, '') AS nama_gelombang,
+                   (SELECT COUNT(*) FROM pmb_berkas b
+                     WHERE b.id_pendaftar = p.id_pendaftar) AS jumlah_berkas
+              FROM pmb_pendaftar p
+              LEFT JOIN pmb_gelombang g ON g.id_gelombang = p.id_gelombang
+             WHERE 1=1
+            "#,
+        );
+        let mut args: Vec<Value> = Vec::new();
+
+        if let Some(gel) = id_gelombang.filter(|g| !g.trim().is_empty() && *g != "Semua") {
+            sql.push_str(" AND p.id_gelombang = ?");
+            args.push(json!(gel.trim()));
+        }
+        if let Some(st) = status.filter(|s| !s.trim().is_empty() && *s != "Semua") {
+            sql.push_str(" AND p.status = ?");
+            args.push(json!(st.trim()));
+        }
+        if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
+            sql.push_str(
+                " AND (p.nama_lengkap LIKE ? OR p.nomor_pendaftaran LIKE ? OR p.nisn LIKE ? OR p.nama_wali LIKE ?)",
+            );
+            let pattern = format!("%{}%", q.trim());
+            for _ in 0..4 {
+                args.push(json!(pattern));
+            }
+        }
+
+        sql.push_str(" ORDER BY p.created_at DESC");
+        let max_rows = limit.unwrap_or(100).clamp(1, 500);
+        sql.push_str(&format!(" LIMIT {max_rows};"));
+
+        let res = self.query_one(&sql, args).await?;
+        Ok(json!({ "items": res.to_objects() }))
+    }
+
+    /// Detail satu pendaftar beserta DAFTAR berkasnya — tanpa isi berkasnya.
+    pub async fn get_pmb_registrant(&self, id_pendaftar: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let pendaftar = self
+            .query_one(
+                r#"SELECT p.*, COALESCE(g.nama, '') AS nama_gelombang
+                     FROM pmb_pendaftar p
+                     LEFT JOIN pmb_gelombang g ON g.id_gelombang = p.id_gelombang
+                    WHERE p.id_pendaftar = ?
+                    LIMIT 1;"#,
+                vec![json!(id_pendaftar)],
+            )
+            .await?
+            .to_objects()
+            .into_iter()
+            .next();
+
+        let Some(pendaftar) = pendaftar else {
+            return Err(CommandError::new(
+                "NOT_FOUND",
+                "Data pendaftar tidak ditemukan.",
+            ));
+        };
+
+        let berkas = self
+            .query_one(
+                r#"SELECT id_berkas, jenis, nama_file, mime, ukuran_byte, created_at
+                     FROM pmb_berkas
+                    WHERE id_pendaftar = ?
+                 ORDER BY jenis ASC
+                    LIMIT 20;"#,
+                vec![json!(id_pendaftar)],
+            )
+            .await?;
+
+        Ok(json!({ "pendaftar": pendaftar, "berkas": berkas.to_objects() }))
+    }
+
+    /// Satu berkas beserta isinya, diambil saat panitia benar-benar membukanya.
+    pub async fn get_pmb_file(&self, id_berkas: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let berkas = self
+            .query_one(
+                "SELECT id_berkas, jenis, nama_file, mime, ukuran_byte, konten_base64 FROM pmb_berkas WHERE id_berkas = ? LIMIT 1;",
+                vec![json!(id_berkas)],
+            )
+            .await?
+            .to_objects()
+            .into_iter()
+            .next();
+
+        // `to_objects()` menghasilkan `HashMap`, bukan `Value`; dibungkus di
+        // sini supaya bentuk balasannya sama dengan command lain.
+        berkas
+            .map(|baris| json!(baris))
+            .ok_or_else(|| CommandError::new("NOT_FOUND", "Berkas tidak ditemukan."))
+    }
+
+    /// Ubah status verifikasi seorang pendaftar.
+    ///
+    /// `Terdaftar` TIDAK bisa dicapai lewat jalur ini — status itu hanya lahir
+    /// dari promosi yang benar-benar membuat baris siswa, dan menyetelnya dengan
+    /// tangan akan menghasilkan pendaftar yang tampak sudah menjadi siswa
+    /// padahal tidak ada baris `master_data` mana pun yang mewakilinya.
+    pub async fn update_pmb_status(
+        &self,
+        id_pendaftar: &str,
+        status: &str,
+        catatan: Option<&str>,
+        operator: &str,
+    ) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+
+        const STATUS_MANUAL: &[&str] = &[
+            "Baru",
+            "Berkas Lengkap",
+            "Terverifikasi",
+            "Diterima",
+            "Ditolak",
+            "Dibatalkan",
+        ];
+        if !STATUS_MANUAL.contains(&status) {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Status pendaftar tidak dikenali.",
+            ));
+        }
+
+        let terpengaruh = self
+            .query_one(
+                r#"UPDATE pmb_pendaftar
+                      SET status = ?,
+                          catatan_verifikator = ?,
+                          diverifikasi_oleh = ?,
+                          diverifikasi_at = datetime('now'),
+                          updated_at = datetime('now')
+                    WHERE id_pendaftar = ?
+                      AND status <> 'Terdaftar';"#,
+                vec![
+                    json!(status),
+                    json!(catatan.map(str::trim).filter(|c| !c.is_empty())),
+                    json!(operator),
+                    json!(id_pendaftar),
+                ],
+            )
+            .await?;
+
+        if terpengaruh.rows_affected == 0 {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Pendaftar tidak ditemukan, atau sudah terlanjur diangkat menjadi siswa.",
+            ));
+        }
+
+        Ok(json!({ "sukses": true }))
+    }
+
+    /// Tandai pendaftar sudah menjadi siswa.
+    ///
+    /// Dipanggil SETELAH baris siswanya benar-benar dibuat. Syarat `status =
+    /// 'Diterima'` di klausa WHERE adalah pencegah promosi ganda yang sebenarnya:
+    /// menyembunyikan tombolnya di UI hanya menyembunyikannya dari orang yang
+    /// sopan, sementara dua klik cepat pada perangkat lambat tetap mengirim dua
+    /// permintaan. Yang kedua tidak akan menemukan baris berstatus `Diterima`.
+    pub async fn mark_pmb_registered(
+        &self,
+        id_pendaftar: &str,
+        id_siswa: &str,
+    ) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let hasil = self
+            .query_one(
+                r#"UPDATE pmb_pendaftar
+                      SET status = 'Terdaftar',
+                          id_siswa = ?,
+                          updated_at = datetime('now')
+                    WHERE id_pendaftar = ?
+                      AND status = 'Diterima';"#,
+                vec![json!(id_siswa), json!(id_pendaftar)],
+            )
+            .await?;
+
+        if hasil.rows_affected == 0 {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Hanya pendaftar berstatus 'Diterima' yang dapat diangkat menjadi siswa.",
+            ));
+        }
+
+        Ok(json!({ "sukses": true }))
+    }
+
+    /// Hapus pendaftar beserta seluruh berkasnya.
+    ///
+    /// `pmb_berkas` ber-CASCADE ke `pmb_pendaftar`, jadi berkasnya ikut terhapus
+    /// oleh database. Pendaftar yang sudah menjadi siswa TIDAK boleh dihapus:
+    /// barisnya adalah satu-satunya jejak dari mana siswa itu berasal.
+    pub async fn delete_pmb_registrant(&self, id_pendaftar: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let hasil = self
+            .query_one(
+                "DELETE FROM pmb_pendaftar WHERE id_pendaftar = ? AND status <> 'Terdaftar';",
+                vec![json!(id_pendaftar)],
+            )
+            .await?;
+
+        if hasil.rows_affected == 0 {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Pendaftar tidak ditemukan, atau sudah menjadi siswa sehingga jejaknya dipertahankan.",
+            ));
+        }
+
+        Ok(json!({ "sukses": true }))
+    }
+}
+
+/// Teks wajib dari draft JSON, dengan pesan yang menyebut kolomnya.
+fn teks_wajib(draft: &Value, kunci: &str, pesan: &str) -> Result<String, CommandError> {
+    let nilai = draft
+        .get(kunci)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    if nilai.is_empty() {
+        return Err(CommandError::new("VALIDATION_ERROR", pesan));
+    }
+    Ok(nilai)
+}
+
+/// Id baris PMB: `<prefix>-<epoch ms>-<48 bit acak>`.
+///
+/// Bentuk yang sama dengan `new_payroll_id`, dan lahir dari kegagalan yang sama:
+/// id epoch-DETIK telanjang bertabrakan di dalam satu penyimpanan massal.
+fn new_pmb_id(prefix: &str) -> String {
+    let mut bytes = [0u8; 6];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut bytes);
+    format!(
+        "{prefix}-{}-{}",
+        crate::desktop::storage::now_epoch_seconds(),
+        hex::encode(bytes)
+    )
 }
 
 fn extract_attendance_row_params(row: &Value, id_sesi: &str) -> Vec<Value> {
@@ -8938,6 +9693,151 @@ async fn apply_event_to_turso(
                         json!(catatan), json!(created_at), json!(updated_at)
                     ],
                 ).await?;
+            }
+        }
+        ("grade", "create") | ("grade", "update") => {
+            let row = payload
+                .get("grade")
+                .or_else(|| payload.get("nilaiPenilaian"))
+                .unwrap_or(payload);
+            let id = row
+                .get("id_penilaian")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                let teks = |kunci: &str| row.get(kunci).and_then(Value::as_str).unwrap_or("");
+                let angka = |kunci: &str, bawaan: i64| {
+                    row.get(kunci).and_then(Value::as_i64).unwrap_or(bawaan)
+                };
+
+                turso
+                    .query_one(
+                        r#"INSERT INTO nilai_penilaian (
+                            id_penilaian, id_tahun_ajaran, semester, id_rombel, id_mapel,
+                            id_guru, jenis, nama_penilaian, tanggal, bobot, kkm,
+                            nilai_maks, catatan, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id_penilaian) DO UPDATE SET
+                            id_tahun_ajaran = excluded.id_tahun_ajaran,
+                            semester = excluded.semester,
+                            id_rombel = excluded.id_rombel,
+                            id_mapel = excluded.id_mapel,
+                            id_guru = excluded.id_guru,
+                            jenis = excluded.jenis,
+                            nama_penilaian = excluded.nama_penilaian,
+                            tanggal = excluded.tanggal,
+                            bobot = excluded.bobot,
+                            -- `kkm` TIDAK ikut diperbarui dari `excluded`: ia
+                            -- dibekukan saat penilaian dibuat. KKM yang diubah
+                            -- admin di tengah semester tidak boleh mengubah
+                            -- penilaian yang sudah dilihat orang tua.
+                            nilai_maks = excluded.nilai_maks,
+                            catatan = excluded.catatan,
+                            updated_at = excluded.updated_at;"#,
+                        vec![
+                            json!(id),
+                            json!(teks("id_tahun_ajaran")),
+                            json!(teks("semester")),
+                            json!(teks("id_rombel")),
+                            json!(teks("id_mapel")),
+                            json!(teks("id_guru")),
+                            json!(teks("jenis")),
+                            json!(teks("nama_penilaian")),
+                            json!(teks("tanggal")),
+                            json!(angka("bobot", 1)),
+                            json!(angka("kkm", 75)),
+                            json!(angka("nilai_maks", 100)),
+                            json!(row.get("catatan").and_then(Value::as_str)),
+                            json!(teks("created_at")),
+                            json!(teks("updated_at")),
+                        ],
+                    )
+                    .await?;
+            }
+        }
+        ("grade", "delete") => {
+            let id = payload
+                .get("id_penilaian")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                // Detailnya dihapus lebih dulu. Tidak ada FOREIGN KEY yang
+                // melakukannya — tabel tersinkronisasi sengaja tanpa FK — jadi
+                // urutan ini yang mencegah baris nilai yatim yang tetap ditarik
+                // setiap perangkat tanpa induk mana pun.
+                turso
+                    .query_one(
+                        "DELETE FROM nilai_siswa WHERE id_penilaian = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
+                turso
+                    .query_one(
+                        "DELETE FROM nilai_penilaian WHERE id_penilaian = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
+            }
+        }
+        ("grade-detail", "save") => {
+            let row = payload
+                .get("grade_detail")
+                .or_else(|| payload.get("nilaiSiswa"))
+                .unwrap_or(payload);
+            let id = row
+                .get("id_nilai")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                // `skor` sengaja dibaca sebagai Option: NULL berarti BELUM
+                // DINILAI, bukan nol. `unwrap_or(0.0)` di sini akan memberi nol
+                // kepada setiap anak yang gurunya belum sempat menilai, dan
+                // angka itu ikut tersinkronisasi ke seluruh perangkat.
+                let skor = row.get("skor").and_then(Value::as_f64);
+
+                turso
+                    .query_one(
+                        r#"INSERT INTO nilai_siswa (
+                            id_nilai, id_penilaian, id_siswa, skor, keterangan,
+                            created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id_nilai) DO UPDATE SET
+                            skor = excluded.skor,
+                            keterangan = excluded.keterangan,
+                            updated_at = excluded.updated_at;"#,
+                        vec![
+                            json!(id),
+                            json!(row.get("id_penilaian").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("id_siswa").and_then(Value::as_str).unwrap_or("")),
+                            json!(skor),
+                            json!(row.get("keterangan").and_then(Value::as_str)),
+                            json!(row.get("created_at").and_then(Value::as_str).unwrap_or("")),
+                            json!(row.get("updated_at").and_then(Value::as_str).unwrap_or("")),
+                        ],
+                    )
+                    .await?;
+            }
+        }
+        ("grade-detail", "delete") => {
+            // Siswa yang keluar dari rombel setelah penilaian dibuat. Tanpa
+            // event ini barisnya tetap hidup di cloud dan tarikan berikutnya
+            // mengembalikannya ke setiap perangkat — nilai seorang anak muncul
+            // di kelas yang sudah ia tinggalkan.
+            let id = payload
+                .get("id_nilai")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        "DELETE FROM nilai_siswa WHERE id_nilai = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
             }
         }
         ("class-attendance-detail", "delete") => {

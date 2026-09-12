@@ -17,6 +17,7 @@ pub mod academic;
 pub mod attendance_dashboard;
 pub mod attendance_ledger;
 pub mod class_attendance;
+pub mod grades;
 pub mod payroll;
 pub mod portability;
 pub mod teaching_journal;

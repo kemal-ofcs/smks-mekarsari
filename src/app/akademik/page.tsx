@@ -132,6 +132,12 @@ export default function AkademikPage() {
   // Menjadikannya dependency akan membuat `useCallback` lahir ulang setiap kali
   // filter berubah, dan efek `sppg:sync-completed` ikut terpasang ulang di
   // setiap perubahan itu.
+  // Penjaga klik ganda (aturan 5). Halaman ini punya tiga handler yang menulis:
+  // mengaktifkan tahun ajaran, menghapus baris akademik, dan menyimpan formulir.
+  // Ketiganya sebelumnya tanpa penjaga karena nama gatewaynya berbahasa
+  // Indonesia dan lolos dari daftar kata kerja audit yang saat itu hanya
+  // berbahasa Inggris.
+  const isSubmittingRef = useRef(false);
   const selectedTaRef = useRef(selectedTaForRombel);
   const selectedRombelRef = useRef(selectedRombelForPenugasan);
   useEffect(() => {
@@ -302,7 +308,8 @@ export default function AkademikPage() {
 
   // Actions
   const handleSetActiveTA = async (id: string) => {
-    if (!canManage) return;
+    if (!canManage || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     try {
       await aktifkanTahunAjaran(id);
       setFeedback({
@@ -318,6 +325,8 @@ export default function AkademikPage() {
             ? err.message
             : "Gagal mengaktifkan tahun ajaran.",
       });
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 
@@ -332,6 +341,8 @@ export default function AkademikPage() {
       confirmLabel: "Ya, hapus",
     });
     if (!ok) return;
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
 
     try {
       if (type === "tahun_ajaran") await hapusTahunAjaran(id);
@@ -347,12 +358,15 @@ export default function AkademikPage() {
         tone: "error",
         message: err instanceof Error ? err.message : "Gagal menghapus data.",
       });
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 
   const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManage) return;
+    if (!canManage || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setSaving(true);
     try {
       if (modalType === "tahun_ajaran") {
@@ -376,6 +390,7 @@ export default function AkademikPage() {
       });
     } finally {
       setSaving(false);
+      isSubmittingRef.current = false;
     }
   };
 

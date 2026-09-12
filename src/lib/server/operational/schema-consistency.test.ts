@@ -44,7 +44,10 @@ describe("Schema Consistency & Zero-Drift Guard", () => {
         'jadwal_mengajar', 'guru_data', 'siswa_data',
         'presensi_mapel', 'presensi_mapel_detail',
         'jurnal_mengajar', 'leger_kehadiran', 'siswa_foto',
-        'notifikasi_wa', 'app_wa_config', 'bk_kasus', 'bk_sesi'
+        'notifikasi_wa', 'app_wa_config', 'bk_kasus', 'bk_sesi',
+        'pmb_gelombang', 'pmb_pendaftar', 'pmb_berkas',
+        'wali_otp', 'wali_session',
+        'nilai_penilaian', 'nilai_siswa'
       );
     `);
     const tableCount = Number(tablesRes.rows[0]?.count ?? 0);

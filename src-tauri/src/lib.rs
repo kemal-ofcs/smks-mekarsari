@@ -219,6 +219,20 @@ pub fn run() {
             desktop::commands::desktop_delete_counseling_case,
             desktop::commands::desktop_add_counseling_session,
             desktop::commands::desktop_delete_counseling_session,
+            desktop::commands::desktop_list_pmb_waves,
+            desktop::commands::desktop_save_pmb_wave,
+            desktop::commands::desktop_delete_pmb_wave,
+            desktop::commands::desktop_list_pmb_registrants,
+            desktop::commands::desktop_get_pmb_registrant,
+            desktop::commands::desktop_get_pmb_file,
+            desktop::commands::desktop_update_pmb_status,
+            desktop::commands::desktop_delete_pmb_registrant,
+            desktop::commands::desktop_promote_pmb_registrant,
+            desktop::commands::desktop_list_assessments,
+            desktop::commands::desktop_get_assessment,
+            desktop::commands::desktop_save_assessment,
+            desktop::commands::desktop_save_scores,
+            desktop::commands::desktop_delete_assessment,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| {

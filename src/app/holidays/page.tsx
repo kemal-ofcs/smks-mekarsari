@@ -249,6 +249,10 @@ export default function HolidaysPage() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
+    // Penjaga klik ganda: state penanda proses baru terlihat setelah
+    // render berikutnya, sehingga dua klik cepat sama-sama melewatinya.
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setSaving(true);
     try {
       await hapusHariLibur(deleteTarget.id_libur);
@@ -266,6 +270,7 @@ export default function HolidaysPage() {
       });
     } finally {
       setSaving(false);
+      isSubmittingRef.current = false;
     }
   };
 

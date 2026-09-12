@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-list-pmb-registrants"
+description = "Enables the desktop_list_pmb_registrants command without any pre-configured scope."
+commands.allow = ["desktop_list_pmb_registrants"]
+
+[[permission]]
+identifier = "deny-desktop-list-pmb-registrants"
+description = "Denies the desktop_list_pmb_registrants command without any pre-configured scope."
+commands.deny = ["desktop_list_pmb_registrants"]

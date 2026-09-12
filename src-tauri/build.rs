@@ -203,6 +203,20 @@ const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_delete_counseling_case",
     "desktop_add_counseling_session",
     "desktop_delete_counseling_session",
+    "desktop_list_pmb_waves",
+    "desktop_save_pmb_wave",
+    "desktop_delete_pmb_wave",
+    "desktop_list_pmb_registrants",
+    "desktop_get_pmb_registrant",
+    "desktop_get_pmb_file",
+    "desktop_update_pmb_status",
+    "desktop_delete_pmb_registrant",
+    "desktop_promote_pmb_registrant",
+    "desktop_list_assessments",
+    "desktop_get_assessment",
+    "desktop_save_assessment",
+    "desktop_save_scores",
+    "desktop_delete_assessment",
 ];
 
 fn local_build_values() -> HashMap<String, String> {

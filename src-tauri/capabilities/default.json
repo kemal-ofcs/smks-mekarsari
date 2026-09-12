@@ -207,6 +207,20 @@
     "allow-desktop-update-counseling-case",
     "allow-desktop-delete-counseling-case",
     "allow-desktop-add-counseling-session",
-    "allow-desktop-delete-counseling-session"
+    "allow-desktop-delete-counseling-session",
+    "allow-desktop-list-pmb-waves",
+    "allow-desktop-save-pmb-wave",
+    "allow-desktop-delete-pmb-wave",
+    "allow-desktop-list-pmb-registrants",
+    "allow-desktop-get-pmb-registrant",
+    "allow-desktop-get-pmb-file",
+    "allow-desktop-update-pmb-status",
+    "allow-desktop-delete-pmb-registrant",
+    "allow-desktop-promote-pmb-registrant",
+    "allow-desktop-list-assessments",
+    "allow-desktop-get-assessment",
+    "allow-desktop-save-assessment",
+    "allow-desktop-save-scores",
+    "allow-desktop-delete-assessment"
   ]
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-save-pmb-wave"
+description = "Enables the desktop_save_pmb_wave command without any pre-configured scope."
+commands.allow = ["desktop_save_pmb_wave"]
+
+[[permission]]
+identifier = "deny-desktop-save-pmb-wave"
+description = "Denies the desktop_save_pmb_wave command without any pre-configured scope."
+commands.deny = ["desktop_save_pmb_wave"]

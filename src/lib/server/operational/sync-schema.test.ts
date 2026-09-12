@@ -515,3 +515,120 @@ describe("skema sinkronisasi akademik", () => {
     }
   });
 });
+
+/**
+ * Modul nilai (v28) — tabel TERSINKRONISASI pertama sejak Fase 4.
+ *
+ * Yang diuji di sini bukan bentuk Zod-nya melainkan satu invarian yang paling
+ * mudah salah dan paling mahal: `skor` NULL berarti BELUM DINILAI, bukan nol.
+ */
+describe("sync schema modul nilai", () => {
+  function gradeEvent(payload: Record<string, unknown>) {
+    return {
+      eventId: `evt-${"c".repeat(64)}`,
+      clientId: `desktop-${"d".repeat(64)}`,
+      domain: "grade-detail",
+      operation: "save",
+      entityKey: "nis-1",
+      payload,
+      baseRevision: null,
+      createdAt: 1_786_300_000,
+    };
+  }
+
+  test("skor null diterima — belum dinilai bukan nol", () => {
+    const hasil = operationalSyncEventSchema.safeParse(
+      gradeEvent({
+        id_nilai: "nis-1",
+        id_penilaian: "nil-1",
+        id_siswa: "sis-1",
+        skor: null,
+      }),
+    );
+    expect(hasil.success).toBe(true);
+  });
+
+  test("skor angka diterima", () => {
+    expect(
+      operationalSyncEventSchema.safeParse(
+        gradeEvent({
+          id_nilai: "nis-1",
+          id_penilaian: "nil-1",
+          id_siswa: "sis-1",
+          skor: 87.5,
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  test("kolom asing ditolak — schema strict", () => {
+    expect(
+      operationalSyncEventSchema.safeParse(
+        gradeEvent({
+          id_nilai: "nis-1",
+          id_penilaian: "nil-1",
+          id_siswa: "sis-1",
+          skor: 80,
+          nilai_huruf: "A",
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  test("jenis penilaian di luar CHECK constraint ditolak", () => {
+    const hasil = operationalSyncEventSchema.safeParse({
+      eventId: `evt-${"e".repeat(64)}`,
+      clientId: `desktop-${"f".repeat(64)}`,
+      domain: "grade",
+      operation: "create",
+      entityKey: "nil-1",
+      payload: {
+        id_penilaian: "nil-1",
+        id_tahun_ajaran: "ta-1",
+        semester: "Ganjil",
+        id_rombel: "rom-1",
+        id_mapel: "map-1",
+        id_guru: "gur-1",
+        // Nilai asing. Kalau lolos di sini, CHECK constraint cloud yang
+        // menolaknya — dan penolakan itu menghentikan push-nya di `failed`
+        // dengan `next_retry_at = NULL`, hilang tanpa jalan pulih dari UI.
+        jenis: "Kuis Dadakan",
+        nama_penilaian: "UH 1",
+        tanggal: "2026-09-01",
+        bobot: 1,
+        kkm: 75,
+        nilai_maks: 100,
+      },
+      baseRevision: null,
+      createdAt: 1_786_300_000,
+    });
+    expect(hasil.success).toBe(false);
+  });
+
+  test("semester di luar CHECK constraint ditolak", () => {
+    const hasil = operationalSyncEventSchema.safeParse({
+      eventId: `evt-${"e".repeat(64)}`,
+      clientId: `desktop-${"f".repeat(64)}`,
+      domain: "grade",
+      operation: "create",
+      entityKey: "nil-1",
+      payload: {
+        id_penilaian: "nil-1",
+        id_tahun_ajaran: "ta-1",
+        semester: "Pendek",
+        id_rombel: "rom-1",
+        id_mapel: "map-1",
+        id_guru: "gur-1",
+        jenis: "UTS",
+        nama_penilaian: "UTS",
+        tanggal: "2026-09-01",
+        bobot: 1,
+        kkm: 75,
+        nilai_maks: 100,
+      },
+      baseRevision: null,
+      createdAt: 1_786_300_000,
+    });
+    expect(hasil.success).toBe(false);
+  });
+});

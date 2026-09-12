@@ -29,6 +29,9 @@ const TEACHING_JP_RATE_MIGRATION_VERSION = 22;
 const LESSON_PERIOD_MIGRATION_VERSION = 23;
 const TEACHING_SCHEDULE_MIGRATION_VERSION = 24;
 const PER_JP_ALLOWANCE_MIGRATION_VERSION = 25;
+const PMB_MIGRATION_VERSION = 26;
+const WALI_PORTAL_MIGRATION_VERSION = 27;
+const GRADES_MIGRATION_VERSION = 28;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -1558,6 +1561,217 @@ export async function runDatabaseMigrations(client: Client) {
     args: [LESSON_PERIOD_MIGRATION_VERSION, now],
   });
 
+  // ── v26: Penerimaan Peserta Didik Baru (PMB) ──
+  //
+  // Ketiganya CLOUD-ONLY: tidak pernah masuk `SNAPSHOT_TABLES`, tidak pernah
+  // dibuat `storage.rs`, dan tidak pernah melewati outbox. Presedennya
+  // `password_reset_request` dan `app_mail_config`, dengan alasan yang sama
+  // persis — berkas identitas seorang calon siswa tidak boleh tersalin ke
+  // SQLite setiap terminal pemindai di lobi sekolah.
+  //
+  // Konsekuensinya PMB MENUNTUT JARINGAN, dan setiap layar yang membacanya
+  // wajib mengatakan itu saat offline alih-alih menampilkan daftar kosong.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS pmb_gelombang (
+      id_gelombang TEXT PRIMARY KEY,
+      nama TEXT NOT NULL,
+      tahun_ajaran TEXT NOT NULL,
+      tanggal_buka TEXT NOT NULL,
+      tanggal_tutup TEXT NOT NULL,
+      kuota INTEGER NOT NULL DEFAULT 0,
+      biaya_pendaftaran INTEGER NOT NULL DEFAULT 0,
+      is_aktif INTEGER NOT NULL DEFAULT 0 CHECK(is_aktif IN (0, 1)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  // PK TEXT buatan aplikasi (`pmb-<epoch>-<48 bit acak>`), bukan AUTOINCREMENT:
+  // pola yang sama dengan `new_payroll_id`, yang lahir karena id epoch-detik
+  // telanjang sudah pernah bertabrakan di dalam satu penyimpanan massal.
+  //
+  // `id_siswa` sengaja TANPA FOREIGN KEY ke `siswa_data`. Tabel itu ikut
+  // snapshot, dan `apply_table` boleh menghapus lalu menulis ulang barisnya
+  // saat rekonsiliasi — sebuah FK berkaskade akan menghapus jejak pendaftaran
+  // diam-diam, dan gejalanya tidak akan pernah tertelusur ke sync.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS pmb_pendaftar (
+      id_pendaftar TEXT PRIMARY KEY,
+      nomor_pendaftaran TEXT NOT NULL,
+      id_gelombang TEXT NOT NULL,
+      nama_lengkap TEXT NOT NULL,
+      nisn TEXT,
+      jenis_kelamin TEXT CHECK(jenis_kelamin IN ('L', 'P')),
+      tempat_lahir TEXT,
+      tanggal_lahir TEXT,
+      asal_sekolah TEXT,
+      alamat TEXT,
+      nama_wali TEXT NOT NULL,
+      no_whatsapp_wali TEXT NOT NULL,
+      email_wali TEXT,
+      pilihan_jurusan TEXT,
+      status TEXT NOT NULL DEFAULT 'Baru'
+        CHECK(status IN ('Baru', 'Berkas Lengkap', 'Terverifikasi',
+                         'Diterima', 'Ditolak', 'Dibatalkan', 'Terdaftar')),
+      catatan_verifikator TEXT,
+      diverifikasi_oleh TEXT,
+      diverifikasi_at TEXT,
+      id_siswa TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  // `konten_base64` TIDAK boleh ikut query daftar. Satu berkas sampai 500 KB;
+  // seratus pendaftar membuat balasannya puluhan megabyte. Aturan yang sama
+  // dengan `photo_base64` di riwayat reset password.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS pmb_berkas (
+      id_berkas TEXT PRIMARY KEY,
+      id_pendaftar TEXT NOT NULL,
+      jenis TEXT NOT NULL
+        CHECK(jenis IN ('kartu_keluarga', 'akta_lahir', 'ijazah', 'rapor',
+                        'foto', 'lainnya')),
+      nama_file TEXT NOT NULL,
+      mime TEXT NOT NULL
+        CHECK(mime IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')),
+      ukuran_byte INTEGER NOT NULL,
+      konten_base64 TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (id_pendaftar) REFERENCES pmb_pendaftar(id_pendaftar)
+        ON DELETE CASCADE
+    );
+  `);
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'pmb-online', ?);`,
+    args: [PMB_MIGRATION_VERSION, now],
+  });
+
+  // ── v27: Portal wali murid ──
+  //
+  // Dua tabel cloud-only lagi, alasan yang sama dengan PMB: sesi dan kode
+  // sekali-pakai milik orang tua siswa tidak boleh tersalin ke SQLite setiap
+  // terminal pemindai.
+  //
+  // Kode OTP disimpan sebagai hash SHA-256, tidak pernah bentuk aslinya —
+  // siapa pun yang bisa membaca database sekolah tidak boleh bisa masuk sebagai
+  // wali mana pun. Aturan yang sama dengan `token_hash` pada
+  // `password_reset_request` dan kode pemulihan Superadmin.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS wali_otp (
+      id TEXT PRIMARY KEY,
+      subjek TEXT NOT NULL CHECK(subjek IN ('wali', 'pmb')),
+      subjek_id TEXT NOT NULL,
+      tujuan_nomor TEXT NOT NULL,
+      kode_hash TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'Menunggu'
+        CHECK(status IN ('Menunggu', 'Terpakai', 'Kedaluwarsa', 'Dibatalkan')),
+      delivery_status TEXT,
+      delivery_error TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT
+    );
+  `);
+
+  // `id_siswa` SENGAJA tanpa FOREIGN KEY ke `siswa_data`.
+  //
+  // Tabel itu ikut snapshot, dan `apply_table` boleh menghapus lalu menulis
+  // ulang barisnya saat rekonsiliasi. Sebuah FK berkaskade akan menghapus sesi
+  // wali diam-diam di tengah pemakaian, dan gejalanya ("kadang tiba-tiba
+  // logout") tidak akan pernah tertelusur kembali ke sinkronisasi.
+  //
+  // `no_whatsapp_wali` dibekukan saat sesi lahir supaya perubahan nomor di
+  // `siswa_data` langsung membuat sesi lama tidak sah pada pemeriksaan
+  // berikutnya — nomor berubah berarti walinya mungkin orang yang berbeda.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS wali_session (
+      session_id TEXT PRIMARY KEY,
+      token_hash TEXT UNIQUE NOT NULL,
+      id_siswa TEXT NOT NULL,
+      no_whatsapp_wali TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      revoked_at TEXT,
+      revoked_reason TEXT,
+      user_agent_hash TEXT
+    );
+  `);
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'wali-portal', ?);`,
+    args: [WALI_PORTAL_MIGRATION_VERSION, now],
+  });
+
+  // ── v28: Modul nilai akademik ──
+  //
+  // Berbeda dari seluruh tabel Fase 5: kedua tabel ini IKUT SINKRONISASI dan
+  // melewati outbox. Konsekuensinya mengikat:
+  //
+  //   * TIDAK ADA UNIQUE selain primary key. Dua guru offline boleh menilai
+  //     kelas yang sama; penolakan cloud akan menghentikan event-nya di
+  //     `failed` dengan `next_retry_at = NULL` dan datanya hilang tanpa jalan
+  //     pulih dari UI. Keunikan ditegakkan `assert_unique` di lapisan aplikasi.
+  //   * TIDAK ADA FOREIGN KEY. `apply_table` menghapus lalu menulis ulang baris
+  //     saat rekonsiliasi, dan urutan penerapan antar-tabel tidak dijamin —
+  //     detail bisa tiba sebelum headernya.
+  //   * Primary key TEXT buatan klien, bukan AUTOINCREMENT.
+  //
+  // `kkm` dibekukan dari `akademik_mapel.kkm` saat penilaian dibuat, bukan
+  // di-join saat dibaca: KKM yang diubah admin di tengah semester tidak boleh
+  // mengubah penilaian yang sudah berlangsung dan sudah dilihat orang tua.
+  // Pola yang sama dengan `payroll_runs` yang menyimpan tarif yang dipakainya.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS nilai_penilaian (
+      id_penilaian TEXT PRIMARY KEY,
+      id_tahun_ajaran TEXT NOT NULL,
+      semester TEXT NOT NULL CHECK (semester IN ('Ganjil', 'Genap')),
+      id_rombel TEXT NOT NULL,
+      id_mapel TEXT NOT NULL,
+      id_guru TEXT NOT NULL,
+      jenis TEXT NOT NULL
+        CHECK (jenis IN ('Tugas', 'Ulangan Harian', 'Praktik', 'UTS', 'UAS')),
+      nama_penilaian TEXT NOT NULL,
+      tanggal TEXT NOT NULL,
+      bobot INTEGER NOT NULL DEFAULT 1,
+      kkm INTEGER NOT NULL DEFAULT 75,
+      nilai_maks INTEGER NOT NULL DEFAULT 100,
+      catatan TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  // `skor` NULL berarti BELUM DINILAI, bukan nol.
+  //
+  // Ini perbedaan yang paling mudah salah dan paling mahal di modul ini: anak
+  // yang belum sempat mengumpulkan tugas bukan anak yang mendapat nol. Setiap
+  // agregasi WAJIB memakai `AVG(skor)` yang mengabaikan NULL, tidak pernah
+  // `COALESCE(skor, 0)` — yang kedua menurunkan rata-rata seorang anak karena
+  // gurunya belum selesai menilai.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS nilai_siswa (
+      id_nilai TEXT PRIMARY KEY,
+      id_penilaian TEXT NOT NULL,
+      id_siswa TEXT NOT NULL,
+      skor REAL,
+      keterangan TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'academic-grades', ?);`,
+    args: [GRADES_MIGRATION_VERSION, now],
+  });
+
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_presensi_mapel_lookup ON presensi_mapel(id_tahun_ajaran, id_rombel, id_mapel, tanggal);",
   );
@@ -1643,5 +1857,37 @@ export async function runDatabaseMigrations(client: Client) {
   );
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_salary_configs_karyawan ON salary_configs(id_karyawan, effective_date DESC);",
+  );
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_pmb_pendaftar_gelombang ON pmb_pendaftar(id_gelombang, status, created_at DESC);",
+  );
+  // Nomor pendaftaran dihasilkan MESIN dan dipakai pendaftar untuk memeriksa
+  // statusnya. Unique aman di sini justru karena tabel ini tidak pernah
+  // melewati outbox: ia ditulis langsung dalam keadaan online, sehingga
+  // bentroknya muncul saat itu juga sebagai error yang bisa dijawab — bukan
+  // sebagai push yang mati permanen dengan `next_retry_at = NULL`.
+  await client.execute(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pmb_pendaftar_nomor ON pmb_pendaftar(nomor_pendaftaran);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_pmb_berkas_pendaftar ON pmb_berkas(id_pendaftar);",
+  );
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_wali_otp_subjek ON wali_otp(subjek, subjek_id, status, created_at DESC);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_wali_session_siswa ON wali_session(id_siswa, expires_at);",
+  );
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_nilai_penilaian_kelas ON nilai_penilaian(id_tahun_ajaran, semester, id_rombel, id_mapel);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_nilai_siswa_penilaian ON nilai_siswa(id_penilaian);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_nilai_siswa_siswa ON nilai_siswa(id_siswa, created_at);",
   );
 }

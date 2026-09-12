@@ -3,7 +3,6 @@
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime, isMobileRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop } from "@/lib/runtime/desktop-commands";
-import { assertTersediaDiMobile } from "@/lib/runtime/mobile-unsupported";
 import type {
   WaConfig,
   WaConfigDraft,
@@ -66,7 +65,18 @@ export async function listWaNotificationsGateway(
 export async function queueWaNotificationGateway(
   draft: WaNotificationDraft,
 ): Promise<{ sukses: boolean; id_notifikasi: string }> {
-  assertTersediaDiMobile("Tinjauan notifikasi WhatsApp");
+  // Mobile menulis ke CLOUD, bukan SQLite lokal — alasan yang sama dengan
+  // `listWaNotificationsGateway` di atas. Halaman Mobile menampilkan antrean
+  // cloud, jadi baris yang baru diantre harus lahir di sana; menulisnya ke
+  // lokal membuat pesan itu tidak muncul di layar yang baru saja dipakai
+  // mengantrekannya, dan orang akan mengantre dua kali. Guard POSITIF —
+  // satu-satunya bentuk yang dikenali `splitMobileBranch` di audit kontrak.
+  if (isMobileRuntime()) {
+    return invokeDesktop<{ sukses: boolean; id_notifikasi: string }>(
+      "mobile_queue_wa_notification",
+      { draft },
+    );
+  }
   if (isDesktopRuntime()) {
     return invokeDesktop<{ sukses: boolean; id_notifikasi: string }>(
       "desktop_queue_wa_notification",
@@ -85,7 +95,17 @@ export async function cancelWaNotificationGateway(
   idNotifikasi: string,
   alasan?: string,
 ): Promise<{ sukses: boolean }> {
-  assertTersediaDiMobile("Tinjauan notifikasi WhatsApp");
+  // Mobile membatalkan di CLOUD. `desktop_cancel_wa_notification` membatalkan
+  // baris di SQLite LOKAL, dan ponsel yang bukan terminal pemindai tidak pernah
+  // punya baris itu — `notifikasi_wa` di luar `SNAPSHOT_TABLES`, didorong ke
+  // cloud dan tidak pernah ditarik kembali. Memakainya di sini menghasilkan
+  // tombol "Batalkan" yang mengembalikan sukses tanpa membatalkan apa pun, pada
+  // pesan yang tetap terkirim ke nomor wali seorang siswa.
+  if (isMobileRuntime()) {
+    return invokeDesktop<{ sukses: boolean }>("mobile_cancel_wa_notification", {
+      idNotifikasi,
+    });
+  }
   if (isDesktopRuntime()) {
     return invokeDesktop<{ sukses: boolean }>(
       "desktop_cancel_wa_notification",
@@ -101,7 +121,6 @@ export async function cancelWaNotificationGateway(
 }
 
 export async function getWaConfigGateway(): Promise<WaConfig> {
-  assertTersediaDiMobile("Tinjauan notifikasi WhatsApp");
   if (isDesktopRuntime()) {
     return invokeDesktop<WaConfig>("desktop_get_wa_config");
   }
@@ -117,7 +136,6 @@ export async function getWaConfigGateway(): Promise<WaConfig> {
 export async function saveWaConfigGateway(
   draft: WaConfigDraft,
 ): Promise<{ sukses: boolean }> {
-  assertTersediaDiMobile("Tinjauan notifikasi WhatsApp");
   if (isDesktopRuntime()) {
     return invokeDesktop<{ sukses: boolean }>("desktop_save_wa_config", {
       draft,

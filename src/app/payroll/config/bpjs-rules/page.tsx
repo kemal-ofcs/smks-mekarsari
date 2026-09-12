@@ -17,6 +17,7 @@ import {
   saveBpjsRule,
 } from "@/lib/gateways/payroll";
 import { syncNow } from "@/lib/gateways/sync-status";
+import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
 const IDR = new Intl.NumberFormat("id-ID", {
@@ -30,6 +31,8 @@ export default function BpjsRulesPage() {
   // dijadwalkan, sehingga dua klik dalam satu tick React sama-sama membaca
   // nilai lama dan keduanya lolos. Dideklarasikan di ATAS, sebelum setiap
   // early return, supaya urutan hook tidak pernah berubah antar-render.
+  // Konfirmasi aksi merusak memakai dialog APLIKASI, bukan dialog bawaan peramban.
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const isSubmittingRef = useRef(false);
 
   const isHydrated = useHydrated();
@@ -120,7 +123,16 @@ export default function BpjsRulesPage() {
 
   const handleDelete = async (id: string, name: string) => {
     if (isSubmittingRef.current) return;
-    if (!confirm(`Hapus aturan program BPJS "${name}"?`)) return;
+    if (
+      !(await konfirmasi({
+        title: "Hapus aturan BPJS ini?",
+        description: `Aturan program BPJS "${name}" dihapus permanen dari daftar tarif.`,
+        preserved:
+          "Batch payroll yang sudah dijalankan tetap memakai tarif yang tersimpan di dalamnya.",
+        confirmLabel: "Ya, hapus",
+      }))
+    )
+      return;
     setSaving(true);
     setFeedback(null);
     isSubmittingRef.current = true;
@@ -510,6 +522,8 @@ export default function BpjsRulesPage() {
           </Modal>
         ) : null}
       </div>
+
+      {dialogKonfirmasi}
     </AppShell>
   );
 }

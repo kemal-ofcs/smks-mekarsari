@@ -1,0 +1,30 @@
+import type { NextRequest } from "next/server";
+import { requireWebPermission } from "@/lib/server/auth/authorize";
+import {
+  ensureServerDatabaseInitialized,
+  getServerDatabase,
+} from "@/lib/server/db";
+import {
+  noStoreJson,
+  readJsonBody,
+  toApiErrorResponse,
+} from "@/lib/server/http/api-response";
+import { assertSameOriginMutation } from "@/lib/server/http/request-security";
+import { listAssessments } from "@/lib/services/grades";
+import type { PenilaianFilter } from "@/types/grades";
+
+export const runtime = "nodejs";
+
+export async function POST(request: NextRequest) {
+  try {
+    assertSameOriginMutation(request);
+    await requireWebPermission(request, "grades.view");
+    await ensureServerDatabaseInitialized();
+
+    const filter = await readJsonBody<PenilaianFilter>(request);
+    const hasil = await listAssessments(getServerDatabase(), filter);
+    return noStoreJson({ sukses: true, items: hasil.items });
+  } catch (error) {
+    return toApiErrorResponse(error);
+  }
+}

@@ -3096,6 +3096,217 @@ pub async fn desktop_delete_counseling_session(
         .await
 }
 
+/// Daftar gelombang PMB (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_list_pmb_waves(
+    state: State<'_, DesktopState>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.view")?;
+    state.get_turso_client()?.list_pmb_waves().await
+}
+
+/// Membuat atau memperbarui gelombang PMB (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_save_pmb_wave(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.manage")?;
+    state.get_turso_client()?.save_pmb_wave(&draft).await
+}
+
+/// Menghapus gelombang PMB yang belum punya pendaftar (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_delete_pmb_wave(
+    state: State<'_, DesktopState>,
+    id_gelombang: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.manage")?;
+    state
+        .get_turso_client()?
+        .delete_pmb_wave(&id_gelombang)
+        .await
+}
+
+/// Daftar calon siswa yang mendaftar lewat situs publik (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_list_pmb_registrants(
+    state: State<'_, DesktopState>,
+    id_gelombang: Option<String>,
+    status: Option<String>,
+    search: Option<String>,
+    limit: Option<i64>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.view")?;
+    state
+        .get_turso_client()?
+        .list_pmb_registrants(
+            id_gelombang.as_deref(),
+            status.as_deref(),
+            search.as_deref(),
+            limit,
+        )
+        .await
+}
+
+/// Detail satu pendaftar beserta daftar berkasnya — tanpa isi berkasnya (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_get_pmb_registrant(
+    state: State<'_, DesktopState>,
+    id_pendaftar: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.view")?;
+    state
+        .get_turso_client()?
+        .get_pmb_registrant(&id_pendaftar)
+        .await
+}
+
+/// Satu berkas pendaftar beserta isinya, diambil saat benar-benar dibuka (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_get_pmb_file(
+    state: State<'_, DesktopState>,
+    id_berkas: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.view")?;
+    state.get_turso_client()?.get_pmb_file(&id_berkas).await
+}
+
+/// Mengubah status verifikasi seorang pendaftar (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_update_pmb_status(
+    state: State<'_, DesktopState>,
+    id_pendaftar: String,
+    status: String,
+    catatan: Option<String>,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "pmb.manage")?;
+    state
+        .get_turso_client()?
+        .update_pmb_status(
+            &id_pendaftar,
+            &status,
+            catatan.as_deref(),
+            &operator.username,
+        )
+        .await
+}
+
+/// Menghapus pendaftar beserta berkasnya (Cloud-Only, Izin Sensitif).
+#[tauri::command]
+pub async fn desktop_delete_pmb_registrant(
+    state: State<'_, DesktopState>,
+    id_pendaftar: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.delete")?;
+    state
+        .get_turso_client()?
+        .delete_pmb_registrant(&id_pendaftar)
+        .await
+}
+
+/// Mengangkat pendaftar yang diterima menjadi siswa aktif.
+///
+/// Ini SATU-SATUNYA command PMB yang menyentuh data tersinkronisasi, dan ia
+/// tidak menulis satu baris pun sendiri: pembuatan siswa diserahkan utuh ke
+/// `academic::save_student`, jalur yang sudah teruji dan yang menangani
+/// `master_data`, `siswa_data`, baris `id_card`, token QR acak, serta
+/// pendaftaran outbox-nya sekaligus. Menulis ulang rangkaian itu di sini adalah
+/// tempat lahir siswa hantu tanpa QR.
+///
+/// Urutannya disengaja: siswanya dibuat LEBIH DULU, barisnya di cloud ditandai
+/// sesudahnya. Kalau penandaan gagal, yang tersisa adalah siswa yang sudah ada
+/// beserta pendaftar yang masih berstatus `Diterima` — panitia akan mencoba
+/// lagi, dan `assert_unique` pada NIS akan menolak duplikatnya. Urutan
+/// sebaliknya akan menghasilkan pendaftar yang tercatat `Terdaftar` tanpa siswa
+/// mana pun yang mewakilinya, dan tidak ada yang akan mencarinya lagi.
+#[tauri::command]
+pub async fn desktop_promote_pmb_registrant(
+    state: State<'_, DesktopState>,
+    id_pendaftar: String,
+    id_rombel: String,
+    id_shift: Option<i64>,
+    angkatan: Option<i64>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "pmb.promote")?;
+    // Cakupan data nyata: aksi ini membuat baris `master_data` + `siswa_data` +
+    // `id_card`. Least privilege berjalan dua arah — jangan meminta izin yang
+    // terlalu luas, dan jangan menyembunyikan tulisan berdampak luas di balik
+    // izin yang sempit.
+    require_permission(&state, "students.manage")?;
+
+    if id_rombel.trim().is_empty() {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Rombel tujuan wajib dipilih sebelum pendaftar diangkat menjadi siswa.",
+        ));
+    }
+
+    let turso = state.get_turso_client()?;
+    let detail = turso.get_pmb_registrant(&id_pendaftar).await?;
+    let pendaftar = detail
+        .get("pendaftar")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let status = pendaftar
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if status != "Diterima" {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "Hanya pendaftar berstatus 'Diterima' yang dapat diangkat menjadi siswa.",
+        ));
+    }
+
+    let ambil = |kunci: &str| -> Option<String> {
+        pendaftar
+            .get(kunci)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|nilai| !nilai.is_empty())
+            .map(str::to_owned)
+    };
+
+    let mut draft = serde_json::json!({
+        "nama_lengkap": ambil("nama_lengkap").unwrap_or_default(),
+        "nisn": ambil("nisn"),
+        "jenis_kelamin": ambil("jenis_kelamin").unwrap_or_else(|| "L".to_owned()),
+        "id_rombel": id_rombel.trim(),
+        "nama_wali": ambil("nama_wali"),
+        "no_whatsapp_wali": ambil("no_whatsapp_wali"),
+        "alamat": ambil("alamat"),
+        "status": "Aktif",
+    });
+
+    if let Some(shift) = id_shift {
+        draft["id_shift"] = serde_json::json!(shift);
+    }
+    if let Some(tahun) = angkatan {
+        draft["angkatan"] = serde_json::json!(tahun);
+    }
+
+    let hasil = super::academic::save_student(&state, &draft)?;
+    let id_siswa = hasil
+        .get("id_siswa")
+        .and_then(Value::as_str)
+        .or_else(|| hasil.get("id").and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_owned();
+
+    if id_siswa.is_empty() {
+        return Err(CommandError::new(
+            "INTERNAL_ERROR",
+            "Siswa berhasil dibuat tetapi identitasnya tidak terbaca. Periksa menu Siswa sebelum mencoba lagi.",
+        ));
+    }
+
+    turso.mark_pmb_registered(&id_pendaftar, &id_siswa).await?;
+
+    Ok(serde_json::json!({ "idSiswa": id_siswa }))
+}
+
 #[cfg(test)]
 mod tests_offline_login {
     use super::*;
@@ -3331,4 +3542,69 @@ mod tests_gabung_antrean_wa {
             Some(0)
         );
     }
+}
+
+// ── Modul nilai akademik (v28) ────────────────────────────────────────────
+//
+// Berbeda dari command PMB yang cloud-only: keempat command di bawah menulis
+// ke SQLite LOKAL dan mendaftarkan event outbox, sehingga bekerja penuh tanpa
+// jaringan. Guru menilai di kelas, dan kelas tidak selalu punya sinyal.
+
+/// Daftar penilaian pada satu rombel, mapel, dan semester.
+#[tauri::command]
+pub fn desktop_list_assessments(
+    state: State<'_, DesktopState>,
+    id_tahun_ajaran: String,
+    semester: String,
+    id_rombel: String,
+    id_mapel: Option<String>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "grades.view")?;
+    super::grades::list_assessments(
+        &state,
+        &id_tahun_ajaran,
+        &semester,
+        &id_rombel,
+        id_mapel.as_deref(),
+    )
+}
+
+/// Satu penilaian beserta skor seluruh siswa rombelnya.
+#[tauri::command]
+pub fn desktop_get_assessment(
+    state: State<'_, DesktopState>,
+    id_penilaian: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "grades.view")?;
+    super::grades::get_assessment(&state, &id_penilaian)
+}
+
+/// Membuat atau memperbarui satu penilaian.
+#[tauri::command]
+pub fn desktop_save_assessment(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "grades.manage")?;
+    super::grades::save_assessment(&state, &draft)
+}
+
+/// Menyimpan skor satu kelas sekaligus, dalam satu transaksi.
+#[tauri::command]
+pub fn desktop_save_scores(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "grades.manage")?;
+    super::grades::save_scores(&state, &draft)
+}
+
+/// Menghapus penilaian beserta seluruh nilainya (Izin Sensitif).
+#[tauri::command]
+pub fn desktop_delete_assessment(
+    state: State<'_, DesktopState>,
+    id_penilaian: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "grades.delete")?;
+    super::grades::delete_assessment(&state, &id_penilaian)
 }

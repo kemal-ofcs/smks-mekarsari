@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-delete-assessment"
+description = "Enables the desktop_delete_assessment command without any pre-configured scope."
+commands.allow = ["desktop_delete_assessment"]
+
+[[permission]]
+identifier = "deny-desktop-delete-assessment"
+description = "Denies the desktop_delete_assessment command without any pre-configured scope."
+commands.deny = ["desktop_delete_assessment"]

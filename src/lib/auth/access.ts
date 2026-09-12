@@ -26,7 +26,9 @@ export type AppArea =
   | "sync"
   | "dasbor_kehadiran"
   | "notifikasi_wa"
-  | "bimbingan_konseling";
+  | "bimbingan_konseling"
+  | "pmb"
+  | "nilai";
 
 export interface AccessSubject {
   isSuperadmin: boolean;
@@ -50,6 +52,8 @@ const AREA_PERMISSION: Record<
   dasbor_kehadiran: "attendance_dashboard.view",
   notifikasi_wa: "notification.view",
   bimbingan_konseling: "counseling.view",
+  pmb: "pmb.view",
+  nilai: "grades.view",
   karyawan: "employees.view",
   idcards: "employees.manage",
   shift: "shifts.view",

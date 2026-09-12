@@ -10,6 +10,7 @@ import {
   simpanJadwalMengajar,
   type TeachingScheduleRow,
 } from "@/lib/gateways/academic";
+import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { susunJamKe } from "@/lib/validations/class-attendance";
 
 /**
@@ -65,6 +66,8 @@ export function JadwalPanel({
   onFeedback,
 }: JadwalPanelProps) {
   // Penjaga anti klik ganda (Aturan 5), dideklarasikan sebelum early return.
+  // Konfirmasi aksi merusak memakai dialog APLIKASI, bukan dialog bawaan peramban.
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const isSubmittingRef = useRef(false);
 
   const [rows, setRows] = useState<TeachingScheduleRow[]>([]);
@@ -153,11 +156,15 @@ export function JadwalPanel({
   const hapus = async (row: TeachingScheduleRow) => {
     if (isSubmittingRef.current) return;
     if (
-      !confirm(
-        `Hapus jadwal ${row.nama_mapel || row.id_mapel} hari ${
+      !(await konfirmasi({
+        title: "Hapus jadwal mengajar ini?",
+        description: `Jadwal ${row.nama_mapel || row.id_mapel} hari ${
           HARI.find((h) => h.nilai === row.hari)?.label ?? row.hari
-        } jam ${row.jam_ke}?`,
-      )
+        } jam ${row.jam_ke} dihapus dari rombel ini.`,
+        preserved:
+          "Presensi mapel dan jurnal mengajar yang sudah tercatat tidak ikut terhapus.",
+        confirmLabel: "Ya, hapus",
+      }))
     ) {
       return;
     }
@@ -478,6 +485,8 @@ export function JadwalPanel({
           </form>
         </Modal>
       ) : null}
+
+      {dialogKonfirmasi}
     </div>
   );
 }

@@ -89,6 +89,12 @@ describe("dynamic RBAC migration", () => {
     expect(migrations.rows.map((row) => Number(row.version))).toEqual([
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
       22, 23, 24, 25,
+      // v26 — tabel PMB, dipakai situs publik `web-public`.
+      26,
+      // v27 — portal wali murid, dipakai situs publik `web-public`.
+      27,
+      // v28 — modul nilai akademik (tabel TERSINKRONISASI pertama sejak Fase 4).
+      28,
     ]);
 
     const sessionColumns = await client.execute(

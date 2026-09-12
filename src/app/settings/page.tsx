@@ -81,6 +81,7 @@ import {
 import { syncAppLogoCache, useAppLogo } from "@/lib/hooks/useAppLogo";
 import { syncAppNameCache } from "@/lib/hooks/useAppName";
 import { syncCompanyNameCache } from "@/lib/hooks/useCompanyName";
+import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import { useOnlineStatus } from "@/lib/hooks/useOnlineStatus";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
@@ -133,6 +134,8 @@ export default function SettingsPage() {
   // dijadwalkan, sehingga dua klik dalam satu tick React sama-sama membaca
   // nilai lama dan keduanya lolos. Dideklarasikan di ATAS, sebelum setiap
   // early return, supaya urutan hook tidak pernah berubah antar-render.
+  // Konfirmasi aksi merusak memakai dialog APLIKASI, bukan dialog bawaan peramban.
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const isSubmittingRef = useRef(false);
 
   const isHydrated = useHydrated();
@@ -678,9 +681,15 @@ export default function SettingsPage() {
 
   const handleTursoClear = async () => {
     if (
-      !confirm(
-        "Apakah Anda yakin ingin menghapus konfigurasi database cloud Turso dari perangkat ini?",
-      )
+      !(await konfirmasi({
+        title: "Hapus konfigurasi database cloud?",
+        description:
+          "Perangkat ini berhenti tersambung ke database sekolah sampai dikonfigurasi ulang.",
+        preserved:
+          "Data di cloud tidak terhapus; perangkat lain tetap tersambung seperti biasa.",
+        confirmLabel: "Ya, hapus konfigurasi",
+        tone: "danger",
+      }))
     ) {
       return;
     }
@@ -1345,6 +1354,8 @@ export default function SettingsPage() {
           </div>
         </Modal>
       ) : null}
+
+      {dialogKonfirmasi}
     </AppShell>
   );
 }

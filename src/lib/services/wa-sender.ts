@@ -1,56 +1,16 @@
 import "server-only";
 
 import type { Client } from "@libsql/client";
-
+import {
+  readFullWaConfig,
+  type StoredWaConfig,
+  sendViaProvider,
+} from "@/lib/services/wa-provider";
 import { WA_QUEUE_RETENTION_DAYS } from "@/lib/validations/wa-notification";
 
-interface StoredWaConfig {
-  id: string;
-  provider: "fonnte" | "wablas" | "custom";
-  apiKey: string;
-  apiUrl: string | null;
-  senderNumber: string | null;
-  isActive: boolean;
-  dailyLimit: number;
-  scanMasukEnabled: boolean;
-  scanPulangEnabled: boolean;
-  bolosEnabled: boolean;
-  ambangAlfaEnabled: boolean;
-}
-
-export async function readFullWaConfig(
-  client: Client,
-): Promise<StoredWaConfig | null> {
-  const result = await client.execute({
-    sql: `
-      SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit,
-             scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled
-      FROM app_wa_config
-      WHERE id = 'default'
-      LIMIT 1;
-    `,
-  });
-
-  const row = result.rows[0];
-  if (!row) return null;
-
-  return {
-    id: "default",
-    provider:
-      (String(row.provider ?? "fonnte") as StoredWaConfig["provider"]) ||
-      "fonnte",
-    apiKey: row.api_key == null ? "" : String(row.api_key).trim(),
-    apiUrl: row.api_url != null ? String(row.api_url).trim() : null,
-    senderNumber:
-      row.sender_number != null ? String(row.sender_number).trim() : null,
-    isActive: Number(row.is_active ?? 0) === 1,
-    dailyLimit: Number(row.daily_limit ?? 1000),
-    scanMasukEnabled: Number(row.scan_masuk_enabled ?? 0) === 1,
-    scanPulangEnabled: Number(row.scan_pulang_enabled ?? 0) === 1,
-    bolosEnabled: Number(row.bolos_enabled ?? 1) === 1,
-    ambangAlfaEnabled: Number(row.ambang_alfa_enabled ?? 1) === 1,
-  };
-}
+// Dipakai ulang oleh pemanggil lama yang mengimpornya dari modul ini.
+export { readFullWaConfig };
+export type { StoredWaConfig };
 
 /**
  * Hapus baris antrean cloud yang sudah selesai dan melewati masa retensi.
@@ -269,89 +229,4 @@ export async function drainWaQueue(
     skipped_quota: false,
     message: `Pengurasan antrean selesai: ${sentCount} terkirim, ${cancelledDedupeCount} dibatalkan (dedupe), ${cancelledDisabledCount} dibatalkan (jenis nonaktif), ${failedCount} gagal, ${purged} dipangkas.`,
   };
-}
-
-async function sendViaProvider(
-  config: StoredWaConfig,
-  targetPhone: string,
-  message: string,
-): Promise<void> {
-  // Format nomor kanonik: buang tanda '+' untuk kompatibilitas sebagian API lokal
-  const barePhone = targetPhone.replace(/[^\d]/g, "");
-
-  if (config.provider === "fonnte") {
-    const url = config.apiUrl?.trim() || "https://api.fonnte.com/send";
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: config.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        target: barePhone,
-        message: message,
-        countryCode: "62",
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Fonnte HTTP ${res.status}: ${body.slice(0, 200)}`);
-    }
-
-    const data = (await res.json().catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    if (data.status === false) {
-      throw new Error(
-        String(data.reason || data.detail || "Penolakan dari server Fonnte"),
-      );
-    }
-  } else if (config.provider === "wablas") {
-    const url =
-      config.apiUrl?.trim() || "https://tegal.wablas.com/api/send-message";
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: config.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        phone: barePhone,
-        message: message,
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Wablas HTTP ${res.status}: ${body.slice(0, 200)}`);
-    }
-  } else {
-    // Custom HTTP API
-    const url = config.apiUrl?.trim();
-    if (!url) {
-      throw new Error("URL custom endpoint belum diisi.");
-    }
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        target: barePhone,
-        phone: barePhone,
-        message: message,
-        device: config.senderNumber,
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(
-        `Custom Gateway HTTP ${res.status}: ${body.slice(0, 200)}`,
-      );
-    }
-  }
 }
