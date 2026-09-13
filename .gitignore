@@ -13,6 +13,12 @@
 # testing
 /coverage
 
+# playwright
+playwright-report/
+test-results/
+playwright/.auth/
+.env.test
+
 # next.js
 /.next/
 /out/

@@ -81,20 +81,45 @@ export async function refreshWebSession() {
     }
     return null;
   }
-  try {
-    const response = await fetch("/api/auth/session", {
-      method: "POST",
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-    const body = await readResponse(response);
-    const user = response.ok && body.sukses ? (body.operator ?? null) : null;
-    emit({ user, isLoading: false });
-    return user;
-  } catch {
-    emit({ user: null, isLoading: false });
-    return null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch("/api/auth/session", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const body = await readResponse(response);
+      if (response.ok && body.sukses) {
+        const user = body.operator ?? null;
+        emit({ user, isLoading: false });
+        return user;
+      }
+      // Jika 401 Unauthorized, session memang tidak valid/kadaluarsa
+      if (response.status === 401) {
+        emit({ user: null, isLoading: false });
+        return null;
+      }
+      // Jika error 5xx atau lainnya, retry transient
+      if (attempt < 2) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 400 * (attempt + 1)),
+        );
+        continue;
+      }
+      emit({ user: null, isLoading: false });
+      return null;
+    } catch {
+      if (attempt < 2) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 400 * (attempt + 1)),
+        );
+        continue;
+      }
+      emit({ user: null, isLoading: false });
+      return null;
+    }
   }
+  return null;
 }
 
 export async function loginWebSession(

@@ -23,13 +23,28 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const token = request.cookies.get(WEB_SESSION_COOKIE)?.value ?? "";
-  const operator = await readWebSession(token);
-  if (!operator) {
-    return noStoreJson({ sukses: false, operator: null }, 401);
-  }
+  try {
+    const token = request.cookies.get(WEB_SESSION_COOKIE)?.value ?? "";
+    const operator = await readWebSession(token);
+    if (!operator) {
+      return noStoreJson({ sukses: false, operator: null }, 401);
+    }
 
-  return noStoreJson({ sukses: true, operator });
+    return noStoreJson({ sukses: true, operator });
+  } catch (error) {
+    console.error(
+      "[POST /api/auth/session] Gagal memverifikasi session:",
+      error,
+    );
+    return noStoreJson(
+      {
+        sukses: false,
+        operator: null,
+        pesan: "Gagal terhubung ke database session.",
+      },
+      503,
+    );
+  }
 }
 
 export async function DELETE(request: NextRequest) {
