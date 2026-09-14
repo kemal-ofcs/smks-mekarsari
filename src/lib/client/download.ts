@@ -213,6 +213,6 @@ export async function downloadBlob(
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
-  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return { sukses: true, filename };
 }
