@@ -326,7 +326,8 @@ export default function LegerKehadiranPage() {
                     key={String(ta.id_tahun_ajaran)}
                     value={String(ta.id_tahun_ajaran)}
                   >
-                    {String(ta.tahun_ajaran)} ({String(ta.semester)})
+                    {String(ta.nama_tahun ?? ta.tahun_ajaran ?? "-")} (
+                    {String(ta.semester)})
                   </option>
                 ))}
               </select>
@@ -376,8 +377,11 @@ export default function LegerKehadiranPage() {
           <p className="text-sm text-slate-600">
             Tahun Ajaran:{" "}
             {
-              tahunAjaranList.find((t) => t.id_tahun_ajaran === selectedTa)
-                ?.tahun_ajaran as string
+              (tahunAjaranList.find((t) => t.id_tahun_ajaran === selectedTa)
+                ?.nama_tahun ||
+                tahunAjaranList.find((t) => t.id_tahun_ajaran === selectedTa)
+                  ?.tahun_ajaran ||
+                "-") as string
             }{" "}
             · Semester: {selectedSemester} · Rombel:{" "}
             {(rombelList.find((r) => r.id_rombel === selectedRombel)
