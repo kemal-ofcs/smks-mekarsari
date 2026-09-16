@@ -77,6 +77,59 @@ export async function aktifkanTahunAjaran(id: string) {
   });
 }
 
+// ── 1b. Unit satuan pendidikan ──────────────────────────────────────────────
+
+export interface UnitInput {
+  id_unit?: string;
+  nama_unit: string;
+  keterangan?: string | null;
+  urutan?: number;
+  status_aktif?: number;
+}
+
+export async function getDaftarUnit() {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<Record<string, unknown>[]>(
+      "desktop_get_academic_units",
+    );
+  }
+  const response = await requestWebApi<{
+    units: Record<string, unknown>[];
+  }>("/api/academic/units/query", "POST");
+  return response.units;
+}
+
+export async function simpanUnit(draft: UnitInput) {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<{ sukses: boolean; id_unit: string }>(
+      "desktop_save_academic_unit",
+      { draft },
+    );
+    kickDesktopSync();
+    return result;
+  }
+  return requestWebApi<{ sukses: boolean; id_unit: string }>(
+    "/api/academic/units",
+    "POST",
+    { draft },
+  );
+}
+
+export async function hapusUnit(id: string) {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<{ sukses: boolean }>(
+      "desktop_delete_academic_unit",
+      { id },
+    );
+    kickDesktopSync();
+    return result;
+  }
+  return requestWebApi<{ sukses: boolean }>("/api/academic/units", "POST", {
+    action: "delete",
+    id,
+  });
+}
+
 // ── 2. Jurusan ──────────────────────────────────────────────────────────────
 
 export interface JurusanInput {

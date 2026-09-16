@@ -8,8 +8,12 @@ import {
 } from "@/lib/operators/contact";
 import {
   isValidWaNotificationStatus,
+  parseAmbangAlfaDays,
+  parseAmbangAlfaLimit,
   WA_NOTIFICATION_STATUSES,
+  WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
   WA_NOTIFY_AMBANG_ALFA_KEY,
+  WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
   WA_NOTIFY_BOLOS_KEY,
   WA_NOTIFY_SCAN_MASUK_KEY,
   WA_NOTIFY_SCAN_PULANG_KEY,
@@ -205,6 +209,21 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
 
   const row = result.rows[0];
   if (!row) {
+    const settingsRes = await client.execute({
+      sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
+      args: [WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY, WA_NOTIFY_AMBANG_ALFA_DAYS_KEY],
+    });
+    const settingsMap = new Map<string, string>();
+    for (const r of settingsRes.rows) {
+      settingsMap.set(String(r.key), String(r.value ?? ""));
+    }
+    const ambangAlfaLimit = parseAmbangAlfaLimit(
+      settingsMap.get(WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY),
+    );
+    const ambangAlfaDays = parseAmbangAlfaDays(
+      settingsMap.get(WA_NOTIFY_AMBANG_ALFA_DAYS_KEY),
+    );
+
     return {
       id: "default",
       provider: "fonnte",
@@ -218,12 +237,29 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
       scanPulangEnabled: false,
       bolosEnabled: true,
       ambangAlfaEnabled: true,
+      ambangAlfaLimit,
+      ambangAlfaDays,
       createdAt: "",
       updatedAt: "",
     };
   }
 
   const rawKey = row.api_key == null ? "" : String(row.api_key).trim();
+  const settingsRes = await client.execute({
+    sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
+    args: [WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY, WA_NOTIFY_AMBANG_ALFA_DAYS_KEY],
+  });
+  const settingsMap = new Map<string, string>();
+  for (const r of settingsRes.rows) {
+    settingsMap.set(String(r.key), String(r.value ?? ""));
+  }
+  const ambangAlfaLimit = parseAmbangAlfaLimit(
+    settingsMap.get(WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY),
+  );
+  const ambangAlfaDays = parseAmbangAlfaDays(
+    settingsMap.get(WA_NOTIFY_AMBANG_ALFA_DAYS_KEY),
+  );
+
   return {
     id: "default",
     provider:
@@ -238,6 +274,8 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
     scanPulangEnabled: Number(row.scan_pulang_enabled ?? 0) === 1,
     bolosEnabled: Number(row.bolos_enabled ?? 1) === 1,
     ambangAlfaEnabled: Number(row.ambang_alfa_enabled ?? 1) === 1,
+    ambangAlfaLimit,
+    ambangAlfaDays,
     createdAt: row.created_at != null ? String(row.created_at) : "",
     updatedAt: row.updated_at != null ? String(row.updated_at) : "",
   };
@@ -301,30 +339,28 @@ export async function saveWaConfig(
     ],
   };
 
-  // Cerminkan keempat sakelar ke `setting_gex_system`.
-  //
-  // `app_wa_config` cloud-only, sehingga scanner Desktop/Mobile — yang
-  // mengantre di dalam transaksi SQLite lokal, mungkin tanpa jaringan — tidak
-  // akan pernah bisa membacanya. `setting_gex_system` ikut sinkronisasi, jadi
-  // salinan inilah yang sampai ke setiap terminal.
-  //
-  // Kontrolnya tetap SATU: layar ini. Cerminan ini turunan dan tidak boleh
-  // disunting langsung di tempat lain, karena dua penulis pada satu sakelar
-  // akan menghasilkan terminal yang mengantre sementara pengirimnya menolak
-  // — atau sebaliknya.
+  // Cerminkan keempat sakelar dan parameter ambang batas ke `setting_gex_system`.
   const cerminan: Array<{ sql: string; args: (string | number)[] }> = (
     [
-      [WA_NOTIFY_SCAN_MASUK_KEY, draft.scanMasukEnabled],
-      [WA_NOTIFY_SCAN_PULANG_KEY, draft.scanPulangEnabled],
-      [WA_NOTIFY_BOLOS_KEY, draft.bolosEnabled],
-      [WA_NOTIFY_AMBANG_ALFA_KEY, draft.ambangAlfaEnabled],
+      [WA_NOTIFY_SCAN_MASUK_KEY, draft.scanMasukEnabled ? "true" : "false"],
+      [WA_NOTIFY_SCAN_PULANG_KEY, draft.scanPulangEnabled ? "true" : "false"],
+      [WA_NOTIFY_BOLOS_KEY, draft.bolosEnabled ? "true" : "false"],
+      [WA_NOTIFY_AMBANG_ALFA_KEY, draft.ambangAlfaEnabled ? "true" : "false"],
+      [
+        WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
+        String(parseAmbangAlfaLimit(draft.ambangAlfaLimit)),
+      ],
+      [
+        WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
+        String(parseAmbangAlfaDays(draft.ambangAlfaDays)),
+      ],
     ] as const
-  ).map(([key, aktif]) => ({
+  ).map(([key, val]) => ({
     sql: `
       INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value;
     `,
-    args: [key, aktif ? "true" : "false"],
+    args: [key, val],
   }));
 
   // Satu batch: konfigurasi dan cerminannya wajib berubah bersama. Bila hanya

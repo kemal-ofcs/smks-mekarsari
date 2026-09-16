@@ -23,6 +23,7 @@ const HEADERS = [
   "jenis_personil",
   "tanggal_mulai_aktif",
   "tanggal_selesai_aktif",
+  "unit",
 ] as const;
 
 export async function readEmployeeWorkbook(
@@ -67,6 +68,7 @@ export async function readEmployeeWorkbook(
       jenis_personil: val(row, "jenis_personil") || "Pegawai",
       tanggal_mulai_aktif: val(row, "tanggal_mulai_aktif") || undefined,
       tanggal_selesai_aktif: val(row, "tanggal_selesai_aktif") || undefined,
+      unit: val(row, "unit") || undefined,
     };
 
     const message = firstValidationMessage(validateEmployeeDraft(draft));

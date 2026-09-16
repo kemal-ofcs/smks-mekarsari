@@ -61,6 +61,8 @@ export interface WaConfig {
   scanPulangEnabled: boolean;
   bolosEnabled: boolean;
   ambangAlfaEnabled: boolean;
+  ambangAlfaLimit?: number;
+  ambangAlfaDays?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -76,4 +78,6 @@ export interface WaConfigDraft {
   scanPulangEnabled: boolean;
   bolosEnabled: boolean;
   ambangAlfaEnabled: boolean;
+  ambangAlfaLimit?: number;
+  ambangAlfaDays?: number;
 }

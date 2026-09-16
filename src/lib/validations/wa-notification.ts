@@ -21,6 +21,12 @@ export const WA_NOTIFY_SCAN_PULANG_KEY = "wa_notify_scan_pulang";
 export const WA_NOTIFY_BOLOS_KEY = "wa_notify_bolos";
 export const WA_NOTIFY_AMBANG_ALFA_KEY = "wa_notify_ambang_alfa";
 
+/** Kunci setting dinamis untuk ambang jumlah alfa dan rentang hari evaluasi. */
+export const WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY = "wa_notify_ambang_alfa_limit";
+export const WA_NOTIFY_AMBANG_ALFA_DAYS_KEY = "wa_notify_ambang_alfa_days";
+export const DEFAULT_AMBANG_ALFA_LIMIT = 3;
+export const DEFAULT_AMBANG_ALFA_DAYS = 30;
+
 /** Jenis notifikasi yang dikenal sistem. */
 export const WA_NOTIFICATION_KINDS = [
   "scan_masuk",
@@ -115,4 +121,46 @@ export function waNotifyEnabled(
       ? settings.get(key)
       : (settings as Record<string, string>)[key];
   return settingEnabled(value);
+}
+
+/**
+ * Urai nilai konfigurasi ambang batas jumlah alfa dari string/number/Map/Record.
+ * Mengembalikan nilai integer positif (1-100), default 3 jika kosong/tidak valid.
+ */
+export function parseAmbangAlfaLimit(input: unknown): number {
+  let raw: unknown = input;
+  if (input instanceof Map) {
+    raw = input.get(WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY);
+  } else if (
+    input &&
+    typeof input === "object" &&
+    WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY in input
+  ) {
+    raw = (input as Record<string, unknown>)[WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY];
+  }
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 100
+    ? parsed
+    : DEFAULT_AMBANG_ALFA_LIMIT;
+}
+
+/**
+ * Urai nilai konfigurasi rentang hari evaluasi alfa dari string/number/Map/Record.
+ * Mengembalikan nilai integer positif (1-365), default 30 jika kosong/tidak valid.
+ */
+export function parseAmbangAlfaDays(input: unknown): number {
+  let raw: unknown = input;
+  if (input instanceof Map) {
+    raw = input.get(WA_NOTIFY_AMBANG_ALFA_DAYS_KEY);
+  } else if (
+    input &&
+    typeof input === "object" &&
+    WA_NOTIFY_AMBANG_ALFA_DAYS_KEY in input
+  ) {
+    raw = (input as Record<string, unknown>)[WA_NOTIFY_AMBANG_ALFA_DAYS_KEY];
+  }
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 365
+    ? parsed
+    : DEFAULT_AMBANG_ALFA_DAYS;
 }

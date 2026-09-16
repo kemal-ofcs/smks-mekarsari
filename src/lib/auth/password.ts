@@ -56,7 +56,7 @@ export function validatePasswordStrength(password: string) {
   return null;
 }
 
-async function hashPasswordValue(password: string) {
+export async function hashPasswordValue(password: string) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await derivePassword(password, salt, PASSWORD_ITERATIONS);
   return [

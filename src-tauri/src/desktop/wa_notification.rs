@@ -27,6 +27,27 @@ pub const WA_NOTIFY_SCAN_PULANG_KEY: &str = "wa_notify_scan_pulang";
 pub const WA_NOTIFY_BOLOS_KEY: &str = "wa_notify_bolos";
 pub const WA_NOTIFY_AMBANG_ALFA_KEY: &str = "wa_notify_ambang_alfa";
 
+/// Kunci setting dinamis untuk ambang jumlah alfa dan rentang hari evaluasi.
+pub const WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY: &str = "wa_notify_ambang_alfa_limit";
+pub const WA_NOTIFY_AMBANG_ALFA_DAYS_KEY: &str = "wa_notify_ambang_alfa_days";
+pub const DEFAULT_AMBANG_ALFA_LIMIT: i64 = 3;
+pub const DEFAULT_AMBANG_ALFA_DAYS: i64 = 30;
+
+/// Urai nilai batas alfa dan rentang hari dari tabel settings.
+pub fn parse_ambang_alfa_settings(settings: &HashMap<String, String>) -> (i64, i64) {
+    let limit = settings
+        .get(WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY)
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(DEFAULT_AMBANG_ALFA_LIMIT);
+    let days = settings
+        .get(WA_NOTIFY_AMBANG_ALFA_DAYS_KEY)
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(DEFAULT_AMBANG_ALFA_DAYS);
+    (limit, days)
+}
+
 /// Umur maksimal baris antrean yang sudah selesai, dalam hari.
 ///
 /// Hanya baris berstatus akhir (`Terkirim`/`Dibatalkan`) yang dipangkas.

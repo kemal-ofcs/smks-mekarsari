@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
       action?: string;
       draft?: {
         id_siswa?: string;
+        kode_karyawan?: string;
         nama_lengkap: string;
         nis?: string | null;
         nisn?: string | null;
@@ -33,6 +34,7 @@ export async function POST(request: NextRequest) {
         angkatan?: number;
         status?: string;
         id_shift?: number;
+        unit?: string;
       };
       id?: string;
     }>(request);

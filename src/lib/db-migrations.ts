@@ -32,6 +32,8 @@ const PER_JP_ALLOWANCE_MIGRATION_VERSION = 25;
 const PMB_MIGRATION_VERSION = 26;
 const WALI_PORTAL_MIGRATION_VERSION = 27;
 const GRADES_MIGRATION_VERSION = 28;
+const ACADEMIC_UNIT_MIGRATION_VERSION = 29;
+const WALI_KREDENSIAL_MIGRATION_VERSION = 30;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -476,6 +478,12 @@ export async function runDatabaseMigrations(client: Client) {
       "created_at",
       "ALTER TABLE payroll_components ADD COLUMN created_at TEXT;",
     ],
+    // Unit satuan pendidikan (schema versi 29). Cerminan `ensure_column` di
+    // `turso.rs`, sehingga database yang lahir dari jalur mana pun disembuhkan
+    // oleh klien mana pun yang menyentuhnya. Nullable: baris personil lama
+    // memang belum punya unit, dan NOT NULL akan menolak ALTER pada database
+    // yang sudah berisi.
+    ["master_data", "unit", "ALTER TABLE master_data ADD COLUMN unit TEXT;"],
   ] as const) {
     if (
       (await hasTable(client, table)) &&
@@ -1772,6 +1780,47 @@ export async function runDatabaseMigrations(client: Client) {
     args: [GRADES_MIGRATION_VERSION, now],
   });
 
+  // ── v29: Unit satuan pendidikan ──
+  //
+  // Daftar unit (TK, SD, SMP, ...) dikelola user di halaman Akademik, lalu
+  // dipakai sebagai dropdown di formulir peserta didik, guru/PTK, dan karyawan.
+  // SENGAJA tanpa UNIQUE pada `nama_unit`: tabel ini ikut sinkronisasi, dan dua
+  // perangkat offline yang mendaftarkan nama sama akan membuat push-nya gagal
+  // PERMANEN (`next_retry_at = NULL`). Duplikatnya dicegah di lapisan aplikasi.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS akademik_unit (
+      id_unit TEXT PRIMARY KEY,
+      nama_unit TEXT NOT NULL,
+      keterangan TEXT,
+      urutan INTEGER NOT NULL DEFAULT 0,
+      status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'academic-unit', ?);`,
+    args: [ACADEMIC_UNIT_MIGRATION_VERSION, now],
+  });
+
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS wali_kredensial (
+      id_siswa TEXT PRIMARY KEY,
+      password_hash TEXT NOT NULL,
+      changed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'wali-kredensial', ?);`,
+    args: [WALI_KREDENSIAL_MIGRATION_VERSION, now],
+  });
+
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_presensi_mapel_lookup ON presensi_mapel(id_tahun_ajaran, id_rombel, id_mapel, tanggal);",
   );
@@ -1889,5 +1938,13 @@ export async function runDatabaseMigrations(client: Client) {
   );
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_nilai_siswa_siswa ON nilai_siswa(id_siswa, created_at);",
+  );
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_akademik_unit_urut ON akademik_unit(status_aktif, urutan, nama_unit);",
+  );
+
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_wali_kredensial_siswa ON wali_kredensial(id_siswa);",
   );
 }

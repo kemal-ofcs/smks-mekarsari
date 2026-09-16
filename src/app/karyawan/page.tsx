@@ -19,6 +19,7 @@ import {
 } from "@/lib/client/employee-workbook";
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
+import { getDaftarUnit } from "@/lib/gateways/academic";
 import {
   generateTokenMassal,
   getDaftarKaryawan,
@@ -54,6 +55,7 @@ export default function KaryawanPage() {
     [],
   );
   const [shiftList, setShiftList] = useState<Record<string, unknown>[]>([]);
+  const [unitList, setUnitList] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>("");
   const [appliedSearch, setAppliedSearch] = useState<string>("");
@@ -102,16 +104,20 @@ export default function KaryawanPage() {
     async (silent = false) => {
       if (!silent) setLoading(true);
       try {
-        const [data, shifts] = await Promise.all([
+        const [data, shifts, units] = await Promise.all([
           getDaftarKaryawan({
             search: appliedSearch,
             divisi: filterDivisi || undefined,
             status_aktif: filterStatus || undefined,
           }),
           getDaftarShift(),
+          getDaftarUnit(),
         ]);
         setKaryawanList(data);
         setShiftList(shifts);
+        // Hanya unit aktif yang masuk dropdown; unit nonaktif tetap tersimpan
+        // pada personil lama supaya datanya tidak hilang saat dipensiunkan.
+        setUnitList(units.filter((u) => Number(u.status_aktif) === 1));
         setErrorMsg(null);
       } catch (err: unknown) {
         if (!silent) {
@@ -186,6 +192,7 @@ export default function KaryawanPage() {
       jenis_personil: "Pegawai",
       tanggal_mulai_aktif: todayStr,
       tanggal_selesai_aktif: "",
+      unit: "",
     });
     setFormErrors({});
     setErrorMsg(null);
@@ -211,6 +218,7 @@ export default function KaryawanPage() {
       jenis_personil: String(row.jenis_personil || "Pegawai"),
       tanggal_mulai_aktif: String(row.tanggal_mulai_aktif || ""),
       tanggal_selesai_aktif: String(row.tanggal_selesai_aktif || ""),
+      unit: String(row.unit || ""),
     });
     setFormErrors({});
     setErrorMsg(null);
@@ -1091,6 +1099,29 @@ export default function KaryawanPage() {
                   aria-invalid={!!formErrors.divisi}
                   className="min-h-10 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 text-white outline-none focus:border-sky-500"
                 />
+              </div>
+              <div>
+                <label
+                  htmlFor="employee-unit"
+                  className="text-slate-400 block mb-1 font-semibold"
+                >
+                  Unit:
+                </label>
+                <select
+                  id="employee-unit"
+                  value={formData.unit || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, unit: e.target.value })
+                  }
+                  className="min-h-10 w-full rounded-xl border border-slate-800 bg-slate-950 px-3 text-white outline-none focus:border-sky-500"
+                >
+                  <option value="">Tidak ditentukan</option>
+                  {unitList.map((u) => (
+                    <option key={String(u.id_unit)} value={String(u.nama_unit)}>
+                      {String(u.nama_unit)}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label

@@ -10,6 +10,8 @@ function kickDesktopSync() {
 
 export interface SiswaInput {
   id_siswa?: string;
+  /** Kode personil di `master_data`. Kosong = pakai NIS, lalu ID sebagai cadangan. */
+  kode_karyawan?: string;
   nama_lengkap: string;
   nis?: string | null;
   nisn?: string | null;
@@ -22,6 +24,8 @@ export interface SiswaInput {
   status?: string;
   /** Shift yang menentukan jendela jam scan. Kosong = pertahankan yang ada. */
   id_shift?: number;
+  /** Nama unit satuan pendidikan, bukan `id_unit`. Lihat `akademik_unit`. */
+  unit?: string;
 }
 
 export async function getDaftarSiswa(id_rombel?: string) {

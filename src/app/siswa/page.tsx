@@ -18,7 +18,7 @@ import {
 } from "@/lib/client/personnel-workbook";
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
-import { getDaftarRombel } from "@/lib/gateways/academic";
+import { getDaftarRombel, getDaftarUnit } from "@/lib/gateways/academic";
 import { getDaftarShift } from "@/lib/gateways/shift";
 import {
   getDaftarSiswa,
@@ -27,6 +27,14 @@ import {
   simpanSiswa,
 } from "@/lib/gateways/student";
 import { syncNow } from "@/lib/gateways/sync-status";
+import {
+  bulkIssueWaliPasswords,
+  getWaliCredentialStatus,
+  getWaliCredentialsForPrinting,
+  resetWaliPassword,
+  type WaliCredentialStatus,
+  type WaliSlipCredential,
+} from "@/lib/gateways/wali-credential";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { normalizeOperatorPhone } from "@/lib/operators/contact";
 import { STATUS_SISWA, shiftLabel } from "@/lib/validations/personnel";
@@ -35,6 +43,7 @@ export default function SiswaPage() {
   const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const canManage = hasPermission(user, "students.manage");
+  const canResetWali = hasPermission(user, "students.reset_wali_password");
 
   const [siswaList, setSiswaList] = useState<Record<string, unknown>[]>([]);
   const [rombelList, setRombelList] = useState<Record<string, unknown>[]>([]);
@@ -60,6 +69,12 @@ export default function SiswaPage() {
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Penanda mode edit BERDIRI SENDIRI, tidak diturunkan dari `formData.id_siswa`.
+  // Sejak ID bisa diketik saat menambah, `id_siswa` yang terisi tidak lagi
+  // berarti "sedang mengedit" — judul modal dan penguncian field ikut salah
+  // begitu operator mengetik karakter pertama ID-nya.
+  const [isEditing, setIsEditing] = useState(false);
+  const [unitList, setUnitList] = useState<Record<string, unknown>[]>([]);
   const [formData, setFormData] = useState<SiswaInput>({
     id_siswa: "",
     nama_lengkap: "",
@@ -82,15 +97,34 @@ export default function SiswaPage() {
     qrPng: string;
   } | null>(null);
 
+  // Wali Credential Modal State
+  const [waliModalData, setWaliModalData] = useState<{
+    student: Record<string, unknown>;
+    statusInfo: WaliCredentialStatus | null;
+    loading: boolean;
+    resetting: boolean;
+  } | null>(null);
+
+  // Bulk Slips Modal State
+  const [showBulkSlipModal, setShowBulkSlipModal] = useState(false);
+  const [bulkSlips, setBulkSlips] = useState<WaliSlipCredential[]>([]);
+  const [bulkSlipLoading, setBulkSlipLoading] = useState(false);
+  const [bulkIssuing, setBulkIssuing] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [sData, rData] = await Promise.all([
+      const [sData, rData, uData] = await Promise.all([
         getDaftarSiswa(filterRombel || undefined),
         getDaftarRombel(),
+        getDaftarUnit(),
       ]);
       setSiswaList(sData);
       setRombelList(rData);
+      // Hanya unit aktif yang masuk dropdown; unit nonaktif tetap tersimpan
+      // pada personil lama supaya datanya tidak hilang saat unit dipensiunkan.
+      setUnitList(uData.filter((u) => Number(u.status_aktif) === 1));
     } catch (err) {
       setFeedback({
         tone: "error",
@@ -163,11 +197,14 @@ export default function SiswaPage() {
       angkatan: new Date().getFullYear(),
       status: "Aktif",
       id_shift: shiftList[0] ? Number(shiftList[0].id_shift) : undefined,
+      unit: "",
     });
+    setIsEditing(false);
     setShowModal(true);
   };
 
   const handleOpenEdit = (item: Record<string, unknown>) => {
+    setIsEditing(true);
     setFormData({
       id_siswa: String(item.id_siswa),
       nama_lengkap: String(item.nama_lengkap),
@@ -183,6 +220,7 @@ export default function SiswaPage() {
       angkatan: Number(item.angkatan || new Date().getFullYear()),
       status: item.status ? String(item.status) : "Aktif",
       id_shift: item.id_shift ? Number(item.id_shift) : undefined,
+      unit: item.unit ? String(item.unit) : "",
     });
     setShowModal(true);
   };
@@ -357,6 +395,151 @@ export default function SiswaPage() {
   const shiftById = (idShift: unknown) =>
     shiftList.find((s) => Number(s.id_shift) === Number(idShift));
 
+  const handleCopyPassword = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {
+      // Abaikan jika clipboard API tidak tersedia
+    }
+  };
+
+  const handleOpenWaliCredential = async (student: Record<string, unknown>) => {
+    const idSiswa = String(student.id_siswa);
+    setWaliModalData({
+      student,
+      statusInfo: null,
+      loading: true,
+      resetting: false,
+    });
+    try {
+      const status = await getWaliCredentialStatus(idSiswa);
+      setWaliModalData((prev) =>
+        prev && String(prev.student.id_siswa) === idSiswa
+          ? { ...prev, statusInfo: status, loading: false }
+          : prev,
+      );
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Gagal memeriksa status akun wali.",
+      });
+      setWaliModalData(null);
+    }
+  };
+
+  const handleResetSingleWali = async () => {
+    if (!waliModalData || !canResetWali || isSubmittingRef.current) return;
+    const idSiswa = String(waliModalData.student.id_siswa);
+    const nama = String(waliModalData.student.nama_lengkap || "siswa ini");
+    const ok = await konfirmasi({
+      title: `Reset kata sandi akun wali untuk ${nama}?`,
+      description:
+        "Kata sandi wali akan dikembalikan ke formula bawaan (NISN/NIS + Unit), dan seluruh sesi login wali murid yang sedang aktif akan seketika dicabut/dikeluarkan.",
+      preserved:
+        "Data riwayat kehadiran, rekap, dan nilai siswa tidak terpengaruh.",
+      confirmLabel: "Ya, reset kata sandi",
+    });
+    if (!ok) return;
+
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setWaliModalData((prev) => (prev ? { ...prev, resetting: true } : null));
+
+    try {
+      const res = await resetWaliPassword(idSiswa);
+      setFeedback({
+        tone: "success",
+        message: `Kata sandi akun wali untuk ${nama} berhasil direset ke sandi bawaan: ${res.defaultPassword}`,
+      });
+      const updatedStatus = await getWaliCredentialStatus(idSiswa);
+      setWaliModalData((prev) =>
+        prev && String(prev.student.id_siswa) === idSiswa
+          ? { ...prev, statusInfo: updatedStatus, resetting: false }
+          : prev,
+      );
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Gagal mereset kata sandi akun wali.",
+      });
+      setWaliModalData((prev) => (prev ? { ...prev, resetting: false } : null));
+    } finally {
+      isSubmittingRef.current = false;
+    }
+  };
+
+  const handleOpenBulkSlips = async () => {
+    setShowBulkSlipModal(true);
+    setBulkSlipLoading(true);
+    try {
+      const ids = filteredStudents.map((s) => String(s.id_siswa));
+      const slips = await getWaliCredentialsForPrinting(
+        ids.length > 0 ? ids : undefined,
+      );
+      setBulkSlips(slips);
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Gagal memuat slip kredensial akun wali.",
+      });
+      setShowBulkSlipModal(false);
+    } finally {
+      setBulkSlipLoading(false);
+    }
+  };
+
+  const handleExecuteBulkIssue = async () => {
+    if (!canResetWali || isSubmittingRef.current) return;
+    const ok = await konfirmasi({
+      title: "Terbitkan Kredensial Wali Massal?",
+      description:
+        "Sistem akan menginisialisasi kata sandi bawaan bagi semua siswa terpilih yang belum memiliki catatan kredensial. Akun wali yang sudah pernah mengganti kata sandi tidak akan diubah.",
+      confirmLabel: "Ya, terbitkan massal",
+    });
+    if (!ok) return;
+
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setBulkIssuing(true);
+
+    try {
+      const ids = filteredStudents.map((s) => String(s.id_siswa));
+      const res = await bulkIssueWaliPasswords(
+        ids.length > 0 ? ids : undefined,
+      );
+      setFeedback({
+        tone: "success",
+        message: `Berhasil menerbitkan kredensial untuk ${res.count} akun wali murid.`,
+      });
+      const slips = await getWaliCredentialsForPrinting(
+        ids.length > 0 ? ids : undefined,
+      );
+      setBulkSlips(slips);
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Gagal menerbitkan kredensial massal.",
+      });
+    } finally {
+      isSubmittingRef.current = false;
+      setBulkIssuing(false);
+    }
+  };
+
   // Gerbang area: setiap halaman lain melakukan hal yang sama. Backend sudah
   // menegakkan izinnya lewat require_permission/requireWebPermission, tetapi
   // tanpa ini halaman data siswa tetap terbuka lewat URL bagi role yang tidak
@@ -432,6 +615,17 @@ export default function SiswaPage() {
                     <span>Template</span>
                   </button>
                 </>
+              ) : null}
+              {canResetWali ? (
+                <button
+                  type="button"
+                  onClick={() => void handleOpenBulkSlips()}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-sky-500/40 bg-slate-800 px-4 py-2 text-sm font-semibold text-sky-300 transition hover:bg-slate-700"
+                  title="Lihat status dan cetak slip kata sandi portal wali murid"
+                >
+                  <Icon name="lock" className="size-4" />
+                  <span>Akun Wali & Cetak Slip</span>
+                </button>
               ) : null}
               {canManage ? (
                 <button
@@ -644,6 +838,18 @@ export default function SiswaPage() {
                             >
                               <Icon name="scanner" className="size-4" />
                             </button>
+                            {canResetWali ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleOpenWaliCredential(item)
+                                }
+                                className="rounded-lg bg-amber-500/10 p-2 text-amber-400 hover:bg-amber-500/20"
+                                title="Kelola & Reset Sandi Akun Wali"
+                              >
+                                <Icon name="lock" className="size-4" />
+                              </button>
+                            ) : null}
                             {canManage ? (
                               <>
                                 <button
@@ -680,17 +886,70 @@ export default function SiswaPage() {
           <Modal
             isOpen={true}
             onClose={() => setShowModal(false)}
-            title={
-              formData.id_siswa
-                ? "Edit Data Peserta Didik"
-                : "Tambah Siswa Baru"
-            }
+            title={isEditing ? "Edit Data Peserta Didik" : "Tambah Siswa Baru"}
             maxWidth="max-w-xl"
           >
             <form
               onSubmit={(e) => void handleSave(e)}
               className="flex flex-col gap-4 py-2"
             >
+              <div>
+                <label
+                  htmlFor="siswa-id"
+                  className="block text-xs font-semibold text-slate-300"
+                >
+                  ID Unik
+                </label>
+                <input
+                  id="siswa-id"
+                  type="text"
+                  value={formData.id_siswa || ""}
+                  readOnly={isEditing}
+                  disabled={isEditing}
+                  placeholder="Kosongkan untuk dibuatkan otomatis"
+                  onChange={(e) =>
+                    setFormData({ ...formData, id_siswa: e.target.value })
+                  }
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {isEditing
+                    ? "ID tidak dapat diubah. Ia menjadi kunci absensi, kartu, nilai, dan QR yang sudah tercetak."
+                    : "Boleh diisi sendiri. Dikosongkan berarti sistem yang membuatkannya."}
+                </p>
+              </div>
+              <div>
+                <label
+                  htmlFor="siswa-unit"
+                  className="block text-xs font-semibold text-slate-300"
+                >
+                  Unit
+                </label>
+                <select
+                  id="siswa-unit"
+                  value={formData.unit || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, unit: e.target.value })
+                  }
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                >
+                  <option value="">Tidak ditentukan</option>
+                  {unitList.map((u) => (
+                    <option
+                      key={String(u.id_unit)}
+                      value={String(u.nama_unit)}
+                      className="bg-slate-900"
+                    >
+                      {String(u.nama_unit)}
+                    </option>
+                  ))}
+                </select>
+                {unitList.length === 0 ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Belum ada unit. Tambahkan lewat menu Akademik → Unit.
+                  </p>
+                ) : null}
+              </div>
               <div>
                 <label
                   htmlFor="siswa-nama"
@@ -1017,6 +1276,336 @@ export default function SiswaPage() {
               >
                 Tutup
               </button>
+            </div>
+          </Modal>
+        ) : null}
+        {/* Modal Status & Reset Kredensial Wali */}
+        {waliModalData ? (
+          <Modal
+            isOpen={true}
+            onClose={() => setWaliModalData(null)}
+            title="Kelola Akun Portal Wali Murid"
+            subtitle={String(waliModalData.student.nama_lengkap || "")}
+            maxWidth="max-w-md"
+          >
+            <div className="flex flex-col gap-4 py-2 text-sm">
+              {waliModalData.loading ? (
+                <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                  <div className="size-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+                  <p className="mt-2 text-xs">Memeriksa status akun wali...</p>
+                </div>
+              ) : waliModalData.statusInfo ? (
+                <>
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                    <div className="text-xs text-slate-400">
+                      Status Akun Portal
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      {waliModalData.statusInfo.status === "diubah" ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-400">
+                          <span className="size-1.5 rounded-full bg-emerald-400" />
+                          Kata Sandi Sudah Diubah Wali
+                        </span>
+                      ) : waliModalData.statusInfo.status === "bawaan" ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-400">
+                          <span className="size-1.5 rounded-full bg-amber-400" />
+                          Masih Menggunakan Sandi Bawaan
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-400/10 px-2.5 py-1 text-xs font-semibold text-sky-400">
+                          <span className="size-1.5 rounded-full bg-sky-400" />
+                          Belum Ada Kredensial (Otomatis Bawaan)
+                        </span>
+                      )}
+                    </div>
+                    {waliModalData.statusInfo.changedAt ? (
+                      <p className="mt-2 text-[11px] text-slate-400">
+                        Terakhir diubah: {waliModalData.statusInfo.changedAt}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">
+                        Kata Sandi Bawaan
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleCopyPassword(
+                            waliModalData.statusInfo?.defaultPassword || "",
+                            "single",
+                          )
+                        }
+                        className="text-xs font-medium text-sky-400 hover:underline"
+                      >
+                        {copiedId === "single" ? "Tersalin!" : "Salin"}
+                      </button>
+                    </div>
+                    <div className="mt-2 rounded-xl border border-white/5 bg-slate-900 px-3 py-2 font-mono text-base font-bold text-sky-300 select-all">
+                      {waliModalData.statusInfo.defaultPassword}
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      Formula bawaan:{" "}
+                      <code className="text-slate-300">NISN/NIS + UNIT</code>{" "}
+                      (huruf besar). Wali wajib mengganti kata sandi saat
+                      pertama kali masuk portal jika masih berstatus bawaan.
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-200/90">
+                    <div className="flex items-start gap-2">
+                      <Icon
+                        name="alert"
+                        className="mt-0.5 size-4 shrink-0 text-amber-400"
+                      />
+                      <div>
+                        <span className="font-bold text-amber-300">
+                          Peringatan Reset:
+                        </span>{" "}
+                        Mereset kata sandi akan mengembalikan sandi ke nilai
+                        bawaan di atas dan{" "}
+                        <strong>
+                          seketika mengeluarkan (revoke) semua sesi login wali
+                          murid
+                        </strong>{" "}
+                        yang sedang aktif di perangkat lain.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex items-center justify-end gap-2 border-t border-white/10 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setWaliModalData(null)}
+                      className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-white/5"
+                    >
+                      Tutup
+                    </button>
+                    <button
+                      type="button"
+                      disabled={waliModalData.resetting}
+                      onClick={() => void handleResetSingleWali()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/20 transition hover:bg-amber-400 disabled:opacity-50"
+                    >
+                      <Icon name="reset" className="size-4" />
+                      <span>
+                        {waliModalData.resetting
+                          ? "Mereset..."
+                          : "Reset ke Sandi Bawaan"}
+                      </span>
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </Modal>
+        ) : null}
+
+        {/* Modal Cetak Slip Kredensial Wali */}
+        {showBulkSlipModal ? (
+          <Modal
+            isOpen={true}
+            onClose={() => setShowBulkSlipModal(false)}
+            title="Slip Kredensial Portal Wali Murid"
+            subtitle={`${bulkSlips.length} siswa siap dicetak`}
+            maxWidth="max-w-4xl"
+          >
+            <div className="flex flex-col gap-4 py-2">
+              {/* Toolbar Aksi Atas */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/60 p-4 print:hidden">
+                <div className="text-xs text-slate-300">
+                  Menampilkan{" "}
+                  <strong className="text-white">{bulkSlips.length}</strong>{" "}
+                  siswa sesuai filter yang aktif.
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={bulkIssuing || bulkSlipLoading}
+                    onClick={() => void handleExecuteBulkIssue()}
+                    className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-950/40 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-900/50 disabled:opacity-50"
+                    title="Buatkan baris kredensial awal bagi siswa yang belum punya"
+                  >
+                    <Icon name="add" className="size-3.5" />
+                    <span>
+                      {bulkIssuing ? "Menerbitkan..." : "Terbitkan Massal"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bulkSlips.length === 0 || bulkSlipLoading}
+                    onClick={() => window.print()}
+                    className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-3.5 py-1.5 text-xs font-bold text-slate-950 shadow-md shadow-sky-500/20 transition hover:bg-sky-400 disabled:opacity-50"
+                  >
+                    <Icon name="document" className="size-3.5" />
+                    <span>Cetak Slip (PDF / Printer)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Loading */}
+              {bulkSlipLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                  <div className="size-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+                  <p className="mt-2 text-xs">
+                    Memuat daftar kredensial siswa...
+                  </p>
+                </div>
+              ) : bulkSlips.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-8 text-center text-sm text-slate-400">
+                  Tidak ada data siswa untuk dicetak. Sesuaikan filter rombel
+                  atau pencarian.
+                </div>
+              ) : (
+                <>
+                  {/* Container Cetak */}
+                  <div
+                    id="printable-wali-slips"
+                    className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto p-1"
+                  >
+                    {bulkSlips.map((slip) => {
+                      const id = slip.idSiswa;
+                      return (
+                        <div
+                          key={id}
+                          className="slip-card flex flex-col justify-between rounded-2xl border border-dashed border-white/20 bg-slate-950/80 p-4 transition"
+                        >
+                          <div>
+                            <div className="flex items-start justify-between border-b border-white/10 pb-2.5">
+                              <div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
+                                  Kredensial Portal Wali Murid
+                                </span>
+                                <h5 className="font-bold text-white text-sm">
+                                  {slip.namaSiswa}
+                                </h5>
+                              </div>
+                              <span className="rounded-md bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                                {slip.unit || "Umum"}
+                              </span>
+                            </div>
+
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <span className="text-slate-400 text-[11px]">
+                                  NIS / NISN:
+                                </span>
+                                <p className="font-mono font-medium text-slate-200">
+                                  {slip.nis || "-"}
+                                  {slip.nisn ? ` / ${slip.nisn}` : ""}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 text-[11px]">
+                                  Kelas / Rombel:
+                                </span>
+                                <p className="font-medium text-slate-200">
+                                  {slip.rombel || "-"}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-3">
+                              <span className="text-slate-400 text-[11px]">
+                                Alamat Portal:
+                              </span>
+                              <p className="font-mono text-xs text-sky-300">
+                                /wali{" "}
+                                <span className="text-[10px] text-slate-400">
+                                  (Menu Masuk dengan Sandi)
+                                </span>
+                              </p>
+                            </div>
+
+                            <div className="slip-password-box mt-3 rounded-xl border border-white/10 bg-slate-900/90 p-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-semibold text-slate-400">
+                                  Kata Sandi Awal:
+                                </span>
+                                <span className="text-[10px] text-amber-400">
+                                  {slip.status === "diubah"
+                                    ? "(Pernah diubah)"
+                                    : "(Sandi Bawaan)"}
+                                </span>
+                              </div>
+                              <div className="mt-1 font-mono text-sm font-black text-amber-300 select-all tracking-wider">
+                                {slip.defaultPassword}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 border-t border-dashed border-white/10 pt-2 text-[10px] text-slate-400">
+                            * Wali murid wajib mengganti kata sandi saat pertama
+                            kali masuk ke portal. Harap jaga kerahasiaan slip
+                            ini.
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <style>{`
+                    @media print {
+                      body * {
+                        visibility: hidden !important;
+                      }
+                      #printable-wali-slips, #printable-wali-slips * {
+                        visibility: visible !important;
+                      }
+                      #printable-wali-slips {
+                        position: absolute !important;
+                        left: 0 !important;
+                        top: 0 !important;
+                        width: 100% !important;
+                        max-height: none !important;
+                        overflow: visible !important;
+                        margin: 0 !important;
+                        padding: 16px !important;
+                        background: #ffffff !important;
+                        color: #000000 !important;
+                        display: grid !important;
+                        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                        gap: 16px !important;
+                        page-break-inside: avoid !important;
+                      }
+                      .slip-card {
+                        border: 1.5px dashed #475569 !important;
+                        background: #f8fafc !important;
+                        color: #0f172a !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        box-shadow: none !important;
+                        padding: 14px !important;
+                      }
+                      .slip-card h5 {
+                        color: #0f172a !important;
+                      }
+                      .slip-card p, .slip-card span, .slip-card div {
+                        color: #334155 !important;
+                      }
+                      .slip-password-box {
+                        background: #e2e8f0 !important;
+                        border: 1px solid #cbd5e1 !important;
+                      }
+                      .slip-password-box div {
+                        color: #0f172a !important;
+                      }
+                    }
+                  `}</style>
+                </>
+              )}
+
+              <div className="mt-2 flex items-center justify-end border-t border-white/10 pt-4 print:hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkSlipModal(false)}
+                  className="rounded-xl border border-white/10 px-5 py-2 text-sm font-semibold text-slate-300 hover:bg-white/5"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </Modal>
         ) : null}

@@ -2393,6 +2393,35 @@ pub fn desktop_set_active_academic_year(
     academic::set_active_academic_year(&state, &id)
 }
 
+/// Daftar unit satuan pendidikan. Dibaca juga oleh formulir peserta didik,
+/// guru/PTK, dan karyawan — bukan hanya halaman Akademik — sehingga izinnya
+/// `academic.view`, yang sudah ikut paket bawaan Admin dan Operator.
+#[tauri::command]
+pub fn desktop_get_academic_units(
+    state: State<'_, DesktopState>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "academic.view")?;
+    academic::list_academic_units(&state)
+}
+
+#[tauri::command]
+pub fn desktop_save_academic_unit(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "academic.manage")?;
+    academic::save_academic_unit(&state, &draft)
+}
+
+#[tauri::command]
+pub fn desktop_delete_academic_unit(
+    state: State<'_, DesktopState>,
+    id: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "academic.manage")?;
+    academic::delete_academic_unit(&state, &id)
+}
+
 #[tauri::command]
 pub fn desktop_get_academic_departments(
     state: State<'_, DesktopState>,
@@ -2581,6 +2610,55 @@ pub fn desktop_delete_student(
 ) -> Result<Value, CommandError> {
     require_permission(&state, "students.manage")?;
     academic::delete_student(&state, &id)
+}
+
+/// Membaca status kredensial login wali murid.
+///
+/// Keempat perintah kredensial wali membaca dan menulis SQLite LOKAL, bukan
+/// cloud. Versi pertamanya memanggil `get_turso_client()` langsung, sehingga
+/// menerbitkan atau me-reset password wali mustahil dilakukan saat jaringan
+/// mati pada pemasangan Turso maupun server sendiri — padahal justru itu
+/// keadaan yang paling sering dialami operator sekolah. Perubahannya menyusul
+/// lewat outbox seperti mutasi lain.
+#[tauri::command]
+pub fn desktop_get_wali_credential_status(
+    state: State<'_, DesktopState>,
+    id_siswa: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "students.view")?;
+    academic::get_wali_credential_status(&state, &id_siswa)
+}
+
+/// Reset kata sandi wali murid ke bawaan. Sesi aktifnya dicabut oleh handler
+/// `wali-credential/save` di sisi cloud begitu perubahannya sampai — sengaja,
+/// karena `wali_session` cloud-only dan tidak ada di terminal yang offline.
+#[tauri::command]
+pub fn desktop_reset_wali_password(
+    state: State<'_, DesktopState>,
+    id_siswa: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "students.reset_wali_password")?;
+    academic::reset_wali_password(&state, &id_siswa)
+}
+
+/// Penerbitan massal kredensial awal wali murid.
+#[tauri::command]
+pub fn desktop_bulk_issue_wali_passwords(
+    state: State<'_, DesktopState>,
+    id_siswa_list: Option<Vec<String>>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "students.reset_wali_password")?;
+    academic::bulk_issue_wali_passwords(&state, id_siswa_list)
+}
+
+/// Membaca daftar kredensial wali murid untuk cetak slip akun.
+#[tauri::command]
+pub fn desktop_get_wali_credentials_for_printing(
+    state: State<'_, DesktopState>,
+    id_siswa_list: Option<Vec<String>>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "students.view")?;
+    academic::get_wali_credentials_for_printing(&state, id_siswa_list)
 }
 
 // ── Perintah Presensi Mapel Kelas & Rekonsiliasi Deteksi Bolos (Fase 2) ─────

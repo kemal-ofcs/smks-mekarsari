@@ -8,48 +8,40 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { deleteTeacher, saveTeacher } from "@/lib/services/academic";
+import { deleteAcademicUnit, saveAcademicUnit } from "@/lib/services/academic";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
     assertSameOriginMutation(request);
-    await requireWebPermission(request, "teachers.manage");
+    await requireWebPermission(request, "academic.manage");
     await ensureServerDatabaseInitialized();
 
     const body = await readJsonBody<{
       action?: string;
       draft?: {
-        id_guru?: string;
-        nama: string;
-        kode_karyawan?: string;
-        nip?: string | null;
-        nuptk?: string | null;
-        gelar?: string | null;
-        spesialisasi_mapel?: string | null;
-        status_kepegawaian?: string | null;
-        no_hp?: string | null;
-        lp?: string | null;
-        id_shift?: number;
-        status_aktif?: string;
-        unit?: string;
+        id_unit?: string;
+        nama_unit: string;
+        keterangan?: string | null;
+        urutan?: number;
+        status_aktif?: number;
       };
       id?: string;
     }>(request);
 
     if (body.action === "delete") {
       if (!body.id) {
-        throw new ApiRequestError("ID guru wajib disertakan.", 400);
+        throw new ApiRequestError("ID unit wajib disertakan.", 400);
       }
-      return noStoreJson(await deleteTeacher(body.id));
+      return noStoreJson(await deleteAcademicUnit(body.id));
     }
 
-    if (!body.draft || !body.draft.nama) {
-      throw new ApiRequestError("Draft profil guru tidak lengkap.", 400);
+    if (!body.draft || !body.draft.nama_unit) {
+      throw new ApiRequestError("Draft unit tidak valid.", 400);
     }
 
-    return noStoreJson(await saveTeacher(body.draft));
+    return noStoreJson(await saveAcademicUnit(body.draft));
   } catch (error) {
     return toApiErrorResponse(error);
   }

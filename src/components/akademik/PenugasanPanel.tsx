@@ -4,6 +4,7 @@ import { Icon } from "@/components/ui/Icon";
 
 type TabKey =
   | "tahun_ajaran"
+  | "unit"
   | "jurusan"
   | "rombel"
   | "mapel"

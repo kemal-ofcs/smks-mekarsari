@@ -18,11 +18,13 @@ import {
   getDaftarPenugasanGuru,
   getDaftarRombel,
   getDaftarTahunAjaran,
+  getDaftarUnit,
   hapusJurusan,
   hapusMapel,
   hapusPenugasanGuru,
   hapusRombel,
   hapusTahunAjaran,
+  hapusUnit,
   type JurusanInput,
   type MapelInput,
   type RombelInput,
@@ -31,13 +33,16 @@ import {
   simpanPenugasanGuru,
   simpanRombel,
   simpanTahunAjaran,
+  simpanUnit,
   type TahunAjaranInput,
+  type UnitInput,
 } from "@/lib/gateways/academic";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 
 type TabKey =
   | "tahun_ajaran"
+  | "unit"
   | "jurusan"
   | "rombel"
   | "mapel"
@@ -55,6 +60,14 @@ const TahunAjaranPanel = dynamic(
   () =>
     import("@/components/akademik/TahunAjaranPanel").then((mod) => ({
       default: mod.TahunAjaranPanel,
+    })),
+  { ssr: false },
+);
+
+const UnitPanel = dynamic(
+  () =>
+    import("@/components/akademik/UnitPanel").then((mod) => ({
+      default: mod.UnitPanel,
     })),
   { ssr: false },
 );
@@ -115,6 +128,7 @@ export default function AkademikPage() {
   const [tahunAjaranList, setTahunAjaranList] = useState<
     Record<string, unknown>[]
   >([]);
+  const [unitList, setUnitList] = useState<Record<string, unknown>[]>([]);
   const [jurusanList, setJurusanList] = useState<Record<string, unknown>[]>([]);
   const [rombelList, setRombelList] = useState<Record<string, unknown>[]>([]);
   const [mapelList, setMapelList] = useState<Record<string, unknown>[]>([]);
@@ -160,6 +174,13 @@ export default function AkademikPage() {
     is_aktif: 0,
   });
 
+  const [formUnit, setFormUnit] = useState<UnitInput>({
+    nama_unit: "",
+    keterangan: "",
+    urutan: 0,
+    status_aktif: 1,
+  });
+
   const [formJurusan, setFormJurusan] = useState<JurusanInput>({
     kode_jurusan: "",
     nama_jurusan: "",
@@ -198,13 +219,15 @@ export default function AkademikPage() {
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
-      const [taData, jurData, mapData, gData] = await Promise.all([
+      const [taData, unitData, jurData, mapData, gData] = await Promise.all([
         getDaftarTahunAjaran(),
+        getDaftarUnit(),
         getDaftarJurusan(),
         getDaftarMapel(),
         getDaftarGuru(),
       ]);
       setTahunAjaranList(taData);
+      setUnitList(unitData);
       setJurusanList(jurData);
       setMapelList(mapData);
       setGuruList(gData);
@@ -346,6 +369,7 @@ export default function AkademikPage() {
 
     try {
       if (type === "tahun_ajaran") await hapusTahunAjaran(id);
+      else if (type === "unit") await hapusUnit(id);
       else if (type === "jurusan") await hapusJurusan(id);
       else if (type === "rombel") await hapusRombel(id);
       else if (type === "mapel") await hapusMapel(id);
@@ -371,6 +395,8 @@ export default function AkademikPage() {
     try {
       if (modalType === "tahun_ajaran") {
         await simpanTahunAjaran(formTA);
+      } else if (modalType === "unit") {
+        await simpanUnit(formUnit);
       } else if (modalType === "jurusan") {
         await simpanJurusan(formJurusan);
       } else if (modalType === "rombel") {
@@ -447,6 +473,15 @@ export default function AkademikPage() {
                         // sehingga menyiapkan tahun depan diam-diam mengganti
                         // tahun berjalan. Kini wajib dicentang secara sadar.
                         is_aktif: 0,
+                      });
+                    } else if (activeTab === "unit") {
+                      setFormUnit({
+                        nama_unit: "",
+                        keterangan: "",
+                        // Diletakkan di belakang daftar yang sudah ada supaya
+                        // unit baru tidak melompat ke urutan pertama dropdown.
+                        urutan: unitList.length,
+                        status_aktif: 1,
                       });
                     } else if (activeTab === "jurusan") {
                       setFormJurusan({
@@ -537,6 +572,18 @@ export default function AkademikPage() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("unit")}
+            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+              activeTab === "unit"
+                ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            <Icon name="home" className="size-4" />
+            <span>Unit</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("jurusan")}
             className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "jurusan"
@@ -606,6 +653,18 @@ export default function AkademikPage() {
             setFormTA={setFormTA}
             setModalType={setModalType}
             handleSetActiveTA={handleSetActiveTA}
+            handleDeleteItem={handleDeleteItem}
+          />
+        ) : null}
+
+        {/* Tab 1b: Unit satuan pendidikan */}
+        {activeTab === "unit" ? (
+          <UnitPanel
+            unitList={unitList}
+            loading={loading}
+            canManage={canManage}
+            setFormUnit={setFormUnit}
+            setModalType={setModalType}
             handleDeleteItem={handleDeleteItem}
           />
         ) : null}
@@ -681,13 +740,15 @@ export default function AkademikPage() {
             title={
               modalType === "tahun_ajaran"
                 ? "Kelola Tahun Ajaran"
-                : modalType === "jurusan"
-                  ? "Kelola Program Keahlian / Jurusan"
-                  : modalType === "rombel"
-                    ? "Kelola Rombel / Kelas"
-                    : modalType === "mapel"
-                      ? "Kelola Mata Pelajaran"
-                      : "Kelola Penugasan Guru"
+                : modalType === "unit"
+                  ? "Kelola Unit Satuan Pendidikan"
+                  : modalType === "jurusan"
+                    ? "Kelola Program Keahlian / Jurusan"
+                    : modalType === "rombel"
+                      ? "Kelola Rombel / Kelas"
+                      : modalType === "mapel"
+                        ? "Kelola Mata Pelajaran"
+                        : "Kelola Penugasan Guru"
             }
             maxWidth="max-w-xl"
           >
@@ -821,6 +882,94 @@ export default function AkademikPage() {
                       </span>
                     </label>
                   )}
+                </>
+              ) : null}
+
+              {modalType === "unit" ? (
+                <>
+                  <div>
+                    <label
+                      htmlFor="unit-nama"
+                      className="block text-xs font-semibold text-slate-300"
+                    >
+                      Nama Unit (cth: TK, SD, SMP)
+                    </label>
+                    <input
+                      id="unit-nama"
+                      type="text"
+                      required
+                      value={formUnit.nama_unit}
+                      onChange={(e) =>
+                        setFormUnit({ ...formUnit, nama_unit: e.target.value })
+                      }
+                      className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Nama inilah yang tersimpan pada data personil. Mengubahnya
+                      ikut memindahkan semua personil yang memakai unit ini.
+                    </p>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="unit-keterangan"
+                      className="block text-xs font-semibold text-slate-300"
+                    >
+                      Keterangan
+                    </label>
+                    <input
+                      id="unit-keterangan"
+                      type="text"
+                      value={formUnit.keterangan || ""}
+                      onChange={(e) =>
+                        setFormUnit({
+                          ...formUnit,
+                          keterangan: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="unit-urutan"
+                      className="block text-xs font-semibold text-slate-300"
+                    >
+                      Urutan tampil
+                    </label>
+                    <input
+                      id="unit-urutan"
+                      type="number"
+                      min={0}
+                      value={formUnit.urutan ?? 0}
+                      onChange={(e) =>
+                        setFormUnit({
+                          ...formUnit,
+                          urutan: Number(e.target.value) || 0,
+                        })
+                      }
+                      className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={Number(formUnit.status_aktif) === 1}
+                      onChange={(e) =>
+                        setFormUnit({
+                          ...formUnit,
+                          status_aktif: e.target.checked ? 1 : 0,
+                        })
+                      }
+                      className="size-4 rounded border-white/20 bg-slate-900"
+                    />
+                    <span>
+                      Aktif
+                      <span className="ml-1 text-xs text-slate-500">
+                        (unit nonaktif tidak muncul di dropdown formulir
+                        personil, tetapi data lama tetap utuh)
+                      </span>
+                    </span>
+                  </label>
                 </>
               ) : null}
 

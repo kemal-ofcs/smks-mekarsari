@@ -57,7 +57,7 @@ pub fn list_employees(state: &DesktopState, filter: &Value) -> Result<Value, Com
         m.catatan, m.status_qr, m.jenis_personil, m.tanggal_mulai_aktif,
         m.tanggal_selesai_aktif, m.status_backup, s.nama_shift,
         c.idcard_status, c.idcard_pdf_url, c.link_qr_png,
-        m.token_absensi, m.qr_code
+        m.token_absensi, m.qr_code, m.unit
       FROM master_data m
       LEFT JOIN tbl_shift s ON m.id_shift = s.id_shift
       LEFT JOIN id_card c ON m.id_unik = c.id_unik
@@ -93,6 +93,7 @@ pub fn list_employees(state: &DesktopState, filter: &Value) -> Result<Value, Com
                 "link_qr_png": row.get::<_, Option<String>>(19)?,
                 "token_absensi": row.get::<_, Option<String>>(20)?,
                 "qr_code": row.get::<_, Option<String>>(21)?,
+                "unit": row.get::<_, Option<String>>(22)?,
             }))
         })
         .map_err(|_| CommandError::internal())?;
@@ -154,8 +155,8 @@ pub fn create_employee(state: &DesktopState, draft: &Value) -> Result<Value, Com
         id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp,
         id_shift, status_aktif, tanggal_daftar, catatan, token_absensi, qr_code,
         status_qr, jenis_personil, tanggal_mulai_aktif, tanggal_selesai_aktif,
-        status_backup
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, ?, 'NORMAL');
+        unit, status_backup
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, ?, ?, 'NORMAL');
       "#,
             params![
                 id,
@@ -186,6 +187,7 @@ pub fn create_employee(state: &DesktopState, draft: &Value) -> Result<Value, Com
                     text(draft, "tanggal_mulai_aktif")
                 },
                 text(draft, "tanggal_selesai_aktif"),
+                text(draft, "unit"),
             ],
         )
         .map_err(|error| {
@@ -304,8 +306,8 @@ pub fn import_employees(state: &DesktopState, drafts: &[Value]) -> Result<Value,
                 id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp,
                 id_shift, status_aktif, tanggal_daftar, catatan, token_absensi, qr_code,
                 status_qr, jenis_personil, tanggal_mulai_aktif, tanggal_selesai_aktif,
-                status_backup
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, ?, 'NORMAL');
+                unit, status_backup
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, ?, ?, 'NORMAL');
             "#,
             params![
                 id,
@@ -340,6 +342,7 @@ pub fn import_employees(state: &DesktopState, drafts: &[Value]) -> Result<Value,
                 },
                 start_date,
                 text(draft, "tanggal_selesai_aktif"),
+                text(draft, "unit"),
             ],
         );
 
@@ -421,7 +424,10 @@ pub fn update_employee(
         jenis_personil = ?,
         tanggal_mulai_aktif = ?,
         tanggal_selesai_aktif = ?,
-        tanggal_daftar = COALESCE(NULLIF(?, ''), tanggal_daftar)
+        tanggal_daftar = COALESCE(NULLIF(?, ''), tanggal_daftar),
+        -- Kosong berarti "jangan ubah", sama seperti kolom di atas: klien lama
+        -- yang belum mengirim `unit` tidak boleh menghapus unit tersimpan.
+        unit = COALESCE(NULLIF(?, ''), unit)
       WHERE id_unik = ?;
       "#,
             params![
@@ -439,6 +445,7 @@ pub fn update_employee(
                 tanggal_mulai_aktif,
                 tanggal_selesai_aktif,
                 tanggal_daftar,
+                text(draft, "unit"),
                 id,
             ],
         )
@@ -2557,6 +2564,107 @@ pub fn generate_alfa_harian(
             }
         }
     };
+
+    // 4. Produsen Notifikasi Ambang Alfa Kritis (Tahap C):
+    //    Evaluasi siswa dengan akumulasi Alfa >= limit dalam days hari terakhir.
+    let client_id = sync::ensure_client_id(state)?;
+    let wa_settings: std::collections::HashMap<String, String> = {
+        let mut stmt = transaction
+            .prepare("SELECT key, value FROM setting_gex_system WHERE key LIKE 'wa_notify_%';")
+            .map_err(|_| CommandError::internal())?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|_| CommandError::internal())?
+            .filter_map(Result::ok)
+            .collect();
+        rows
+    };
+
+    if super::wa_notification::wa_notify_enabled(&wa_settings, "ambang_alfa") {
+        let (limit, days) = super::wa_notification::parse_ambang_alfa_settings(&wa_settings);
+        let periode_bulan = if now_moment.date.len() >= 7 {
+            now_moment.date.chars().take(7).collect::<String>()
+        } else {
+            now_moment.date.clone()
+        };
+
+        let batas_hari = format!("-{days} days");
+
+        let mut threshold_stmt = transaction
+            .prepare(
+                r#"
+                SELECT ah.id_karyawan,
+                       COUNT(*) AS total_alfa,
+                       COALESCE(s.nama_lengkap, m.nama, ''),
+                       COALESCE(s.no_whatsapp_wali, m.no_hp, ''),
+                       COALESCE(r.nama_rombel, m.divisi, '')
+                FROM absensi_harian ah
+                JOIN master_data m ON m.id_unik = ah.id_karyawan
+                LEFT JOIN siswa_data s ON s.id_siswa = ah.id_karyawan
+                LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
+                WHERE ah.status_kehadiran = 'Alfa'
+                  AND ah.tanggal >= date(?1, ?2)
+                  AND ah.tanggal <= ?1
+                  AND (LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'siswa'
+                       OR LOWER(TRIM(COALESCE(m.divisi, ''))) = 'siswa'
+                       OR s.id_siswa IS NOT NULL)
+                GROUP BY ah.id_karyawan
+                HAVING COUNT(*) >= ?3;
+                "#,
+            )
+            .map_err(|_| CommandError::internal())?;
+
+        let candidate_rows = threshold_stmt
+            .query_map(params![&now_moment.date, &batas_hari, limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|_| CommandError::internal())?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        drop(threshold_stmt);
+
+        for (id_siswa, total_alfa, nama_siswa, phone, nama_rombel) in candidate_rows {
+            let dedupe_key = format!("ambang_alfa:{id_siswa}:{periode_bulan}");
+            let already_queued: bool = transaction
+                .query_row(
+                    "SELECT 1 FROM notifikasi_wa WHERE dedupe_key = ?1 LIMIT 1;",
+                    params![&dedupe_key],
+                    |_| Ok(true),
+                )
+                .optional()
+                .unwrap_or(None)
+                .unwrap_or(false);
+
+            if !already_queued {
+                let canon_phone = super::wa_notification::normalize_phone_canonical(&phone);
+                if super::wa_notification::is_valid_phone(&canon_phone) {
+                    let nama_tampil = if nama_siswa.is_empty() { "Siswa" } else { &nama_siswa };
+                    let rombel_tampil = if nama_rombel.is_empty() { "-" } else { &nama_rombel };
+                    let pesan = format!(
+                        "Yth. Wali Murid dari {nama_tampil} ({rombel_tampil}). Kami informasikan bahwa ananda telah tercatat tidak hadir tanpa keterangan (Alfa) sebanyak {total_alfa} kali dalam {days} hari terakhir. Mohon perhatian dan konfirmasi dari Bapak/Ibu Wali Murid."
+                    );
+                    let draft_notif = json!({
+                        "dedupe_key": dedupe_key,
+                        "jenis": "ambang_alfa",
+                        "id_siswa": id_siswa,
+                        "tujuan_nomor": canon_phone,
+                        "isi_pesan": pesan,
+                    });
+                    let _ = super::wa_notification::queue_wa_notification_tx(
+                        &transaction,
+                        &client_id,
+                        &draft_notif,
+                    )?;
+                }
+            }
+        }
+    }
 
     transaction.commit().map_err(|_| CommandError::internal())?;
 

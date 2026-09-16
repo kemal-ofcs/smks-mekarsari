@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { WaQueueEmptyDiagnostic } from "@/components/notifikasi-wa/WaQueueEmptyDiagnostic";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
@@ -257,6 +258,19 @@ export default function NotifikasiWaPage() {
     return true;
   });
 
+  const hasActiveFilter =
+    statusFilter !== "Semua" ||
+    jenisFilter !== "Semua" ||
+    tanggalFilter !== "" ||
+    searchFilter.trim() !== "";
+
+  const handleResetFilter = () => {
+    setStatusFilter("Semua");
+    setJenisFilter("Semua");
+    setTanggalFilter("");
+    setSearchFilter("");
+  };
+
   const getJenisBadge = (jenis: WaNotificationJenis) => {
     switch (jenis) {
       case "scan_masuk":
@@ -495,51 +509,49 @@ export default function NotifikasiWaPage() {
           </div>
         </div>
 
-        {/* Tabel Antrean */}
-        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow backdrop-blur">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-800 text-left text-xs">
-              <thead className="bg-slate-800/60 text-slate-400">
-                <tr>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    Waktu Antre
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    Jenis
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    Siswa & Rombel
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    Tujuan WhatsApp
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    Ringkasan Pesan
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    Status
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-4 py-3 text-right font-semibold"
-                  >
-                    Tindakan
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                {displayItems.length === 0 ? (
+        {/* Tabel Antrean atau Diagnostik Cerdas */}
+        {displayItems.length === 0 ? (
+          <WaQueueEmptyDiagnostic
+            config={config}
+            hasActiveFilter={hasActiveFilter}
+            onResetFilter={handleResetFilter}
+            onOpenConfig={handleOpenConfigModal}
+            canManage={canManage}
+          />
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 shadow backdrop-blur">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-800 text-left text-xs">
+                <thead className="bg-slate-800/60 text-slate-400">
                   <tr>
-                    <td
-                      colSpan={7}
-                      className="px-4 py-12 text-center text-sm text-slate-500"
+                    <th scope="col" className="px-4 py-3 font-semibold">
+                      Waktu Antre
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-semibold">
+                      Jenis
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-semibold">
+                      Siswa & Rombel
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-semibold">
+                      Tujuan WhatsApp
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-semibold">
+                      Isi Pesan
+                    </th>
+                    <th scope="col" className="px-4 py-3 font-semibold">
+                      Status
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-right font-semibold"
                     >
-                      Tidak ada antrean notifikasi WhatsApp yang sesuai dengan
-                      filter.
-                    </td>
+                      Tindakan
+                    </th>
                   </tr>
-                ) : (
-                  displayItems.map((item) => {
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                  {displayItems.map((item) => {
                     const cleanPhone = item.tujuan_nomor.replace(/[^\d]/g, "");
                     const waMeUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
                       item.isi_pesan,
@@ -608,12 +620,12 @@ export default function NotifikasiWaPage() {
                         </td>
                       </tr>
                     );
-                  })
-                )}
-              </tbody>
-            </table>
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Modal Detail Pesan */}
         {selectedItem && (

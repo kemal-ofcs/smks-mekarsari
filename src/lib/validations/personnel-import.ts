@@ -23,6 +23,7 @@ export const MAX_PERSONNEL_IMPORT_ROWS = 1000;
 
 export const STUDENT_WORKBOOK_HEADERS = [
   "id_siswa",
+  "kode_karyawan",
   "nis",
   "nisn",
   "nama_lengkap",
@@ -35,6 +36,7 @@ export const STUDENT_WORKBOOK_HEADERS = [
   "alamat",
   "angkatan",
   "status",
+  "unit",
 ] as const;
 
 export const TEACHER_WORKBOOK_HEADERS = [
@@ -50,6 +52,7 @@ export const TEACHER_WORKBOOK_HEADERS = [
   "no_hp",
   "kode_shift",
   "status_aktif",
+  "unit",
 ] as const;
 
 export interface ImportRow<T> {
@@ -223,6 +226,7 @@ export function parseStudentRows(
       baris,
       draft: {
         id_siswa: val(row, "id_siswa") || undefined,
+        kode_karyawan: val(row, "kode_karyawan") || undefined,
         nama_lengkap: nama,
         nis: nis || null,
         nisn: nisn || null,
@@ -239,6 +243,11 @@ export function parseStudentRows(
         angkatan,
         status,
         id_shift: resolveShift(val(row, "kode_shift"), lookups.shifts, baris),
+        // Nama unit apa adanya. Sengaja TIDAK divalidasi terhadap daftar
+        // `akademik_unit`: berkas impor sering disiapkan sebelum unitnya
+        // didaftarkan, dan menolak seluruh berkas karena itu jauh lebih mahal
+        // daripada satu dropdown yang perlu diperbaiki belakangan.
+        unit: val(row, "unit") || undefined,
       },
     });
   }

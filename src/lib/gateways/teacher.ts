@@ -21,6 +21,8 @@ export interface GuruInput {
   lp?: string | null;
   id_shift?: number;
   status_aktif?: string;
+  /** Nama unit satuan pendidikan, bukan `id_unit`. Lihat `akademik_unit`. */
+  unit?: string;
 }
 
 export async function getDaftarGuru() {

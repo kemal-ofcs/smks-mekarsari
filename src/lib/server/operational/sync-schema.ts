@@ -56,6 +56,10 @@ const employeeDraftFields = {
   jenis_personil: optionalShortText,
   tanggal_mulai_aktif: optionalShortText,
   tanggal_selesai_aktif: optionalShortText,
+  // Nama unit satuan pendidikan, bukan id `akademik_unit`. Tanpa enum: daftar
+  // unitnya dikelola user, jadi nilai sah hari ini belum tentu sama besok —
+  // sebuah enum di sini akan menolak push dari perangkat yang unitnya baru.
+  unit: optionalShortText,
 };
 
 const employeeCreatePayload = z
@@ -693,6 +697,67 @@ export const operationalSyncEventSchema = z.union([
     z
       .object({
         id_tahun_ajaran: optionalShortText,
+      })
+      .strict(),
+  ),
+  // Kredensial portal wali. Hanya HASH-nya yang pernah menyeberang; password
+  // aslinya tidak pernah meninggalkan perangkat yang menerbitkannya.
+  //
+  // `changed_at` sengaja nullable dan TIDAK punya nilai bawaan: NULL berarti
+  // password masih yang diterbitkan sistem, dan portal wali memakai persis itu
+  // untuk menahan pemiliknya di layar ganti password.
+  eventSchema(
+    "wali-credential",
+    "save",
+    z
+      .object({
+        id_siswa: shortText.min(1),
+        password_hash: shortText.min(1),
+        changed_at: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "wali-credential",
+    "delete",
+    z
+      .object({
+        id_siswa: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "academic-unit",
+    "create",
+    z
+      .object({
+        id_unit: shortText.min(1),
+        nama_unit: shortText.min(1),
+        keterangan: optionalLongText,
+        urutan: optionalNumber,
+        status_aktif: optionalNumber,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "academic-unit",
+    "update",
+    z
+      .object({
+        id_unit: optionalShortText,
+        nama_unit: optionalShortText,
+        keterangan: optionalLongText,
+        urutan: optionalNumber,
+        status_aktif: optionalNumber,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "academic-unit",
+    "delete",
+    z
+      .object({
+        id_unit: optionalShortText,
       })
       .strict(),
   ),

@@ -18,6 +18,7 @@ import {
 } from "@/lib/client/personnel-workbook";
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
+import { getDaftarUnit } from "@/lib/gateways/academic";
 import { getDaftarShift } from "@/lib/gateways/shift";
 import { syncNow } from "@/lib/gateways/sync-status";
 import {
@@ -52,6 +53,10 @@ export default function GuruPage() {
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Berdiri sendiri, bukan diturunkan dari `formData.id_guru` — sejak ID bisa
+  // diketik saat menambah, ID terisi tidak lagi berarti "sedang mengedit".
+  const [isEditing, setIsEditing] = useState(false);
+  const [unitList, setUnitList] = useState<Record<string, unknown>[]>([]);
   const [formData, setFormData] = useState<GuruInput>({
     id_guru: "",
     nama: "",
@@ -76,12 +81,16 @@ export default function GuruPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [gData, sData] = await Promise.all([
+      const [gData, sData, uData] = await Promise.all([
         getDaftarGuru(),
         getDaftarShift(),
+        getDaftarUnit(),
       ]);
       setGuruList(gData);
       setShiftList(sData);
+      // Hanya unit aktif yang masuk dropdown; unit nonaktif tetap tersimpan
+      // pada personil lama supaya datanya tidak hilang saat dipensiunkan.
+      setUnitList(uData.filter((u) => Number(u.status_aktif) === 1));
     } catch (err) {
       setFeedback({
         tone: "error",
@@ -147,11 +156,14 @@ export default function GuruPage() {
       lp: "L",
       id_shift: shiftList[0] ? Number(shiftList[0].id_shift) : 1,
       status_aktif: "Aktif",
+      unit: "",
     });
+    setIsEditing(false);
     setShowModal(true);
   };
 
   const handleOpenEdit = (item: Record<string, unknown>) => {
+    setIsEditing(true);
     setFormData({
       id_guru: String(item.id_guru),
       nama: String(item.nama),
@@ -168,6 +180,7 @@ export default function GuruPage() {
       lp: item.lp ? String(item.lp) : "L",
       id_shift: Number(item.id_shift || 1),
       status_aktif: item.status_aktif ? String(item.status_aktif) : "Aktif",
+      unit: item.unit ? String(item.unit) : "",
     });
     setShowModal(true);
   };
@@ -638,9 +651,7 @@ export default function GuruPage() {
             isOpen={true}
             onClose={() => setShowModal(false)}
             title={
-              formData.id_guru
-                ? "Edit Data Guru / PTK"
-                : "Tambah Guru / PTK Baru"
+              isEditing ? "Edit Data Guru / PTK" : "Tambah Guru / PTK Baru"
             }
             maxWidth="max-w-xl"
           >
@@ -648,6 +659,65 @@ export default function GuruPage() {
               onSubmit={(e) => void handleSave(e)}
               className="flex flex-col gap-4 py-2"
             >
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="guru-id"
+                    className="block text-xs font-semibold text-slate-300"
+                  >
+                    ID Unik
+                  </label>
+                  <input
+                    id="guru-id"
+                    type="text"
+                    value={formData.id_guru || ""}
+                    readOnly={isEditing}
+                    disabled={isEditing}
+                    placeholder="Kosongkan untuk otomatis"
+                    onChange={(e) =>
+                      setFormData({ ...formData, id_guru: e.target.value })
+                    }
+                    className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {isEditing
+                      ? "ID tidak dapat diubah; ia kunci absensi, kartu, dan QR yang sudah tercetak."
+                      : "Boleh diisi sendiri. Dikosongkan berarti dibuatkan sistem."}
+                  </p>
+                </div>
+                <div>
+                  <label
+                    htmlFor="guru-unit"
+                    className="block text-xs font-semibold text-slate-300"
+                  >
+                    Unit
+                  </label>
+                  <select
+                    id="guru-unit"
+                    value={formData.unit || ""}
+                    onChange={(e) =>
+                      setFormData({ ...formData, unit: e.target.value })
+                    }
+                    className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                  >
+                    <option value="">Tidak ditentukan</option>
+                    {unitList.map((u) => (
+                      <option
+                        key={String(u.id_unit)}
+                        value={String(u.nama_unit)}
+                        className="bg-slate-900"
+                      >
+                        {String(u.nama_unit)}
+                      </option>
+                    ))}
+                  </select>
+                  {unitList.length === 0 ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Belum ada unit. Tambahkan lewat Akademik → Unit.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
                   <label

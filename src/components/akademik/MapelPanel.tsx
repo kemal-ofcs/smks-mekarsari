@@ -6,6 +6,7 @@ import type { MapelInput } from "@/lib/gateways/academic";
 
 type TabKey =
   | "tahun_ajaran"
+  | "unit"
   | "jurusan"
   | "rombel"
   | "mapel"

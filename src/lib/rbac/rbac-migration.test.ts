@@ -95,6 +95,13 @@ describe("dynamic RBAC migration", () => {
       27,
       // v28 — modul nilai akademik (tabel TERSINKRONISASI pertama sejak Fase 4).
       28,
+      // v29 — unit satuan pendidikan: tabel `akademik_unit` dan kolom
+      // `master_data.unit`, sumber dropdown Unit di formulir peserta didik,
+      // guru/PTK, dan karyawan.
+      29,
+      // v30 — kredensial portal wali murid: tabel `wali_kredensial` (cloud-only)
+      // untuk autentikasi kata sandi dan manajemen akun wali di panel admin.
+      30,
     ]);
 
     const sessionColumns = await client.execute(

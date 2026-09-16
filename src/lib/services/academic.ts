@@ -200,6 +200,10 @@ const ACADEMIC_USAGE = {
       "rombel",
     ],
   ],
+  // Dicocokkan dengan NAMA unit, bukan id: `master_data.unit` menyimpan nama
+  // supaya nilainya sama di semua perangkat. Pemanggilnya menukar id menjadi
+  // nama lebih dulu.
+  unit: [["SELECT COUNT(*) AS n FROM master_data WHERE unit = ?;", "personil"]],
   class: [
     ["SELECT COUNT(*) AS n FROM siswa_data WHERE id_rombel = ?;", "siswa"],
     [
@@ -283,6 +287,114 @@ export async function setActiveAcademicYear(id: string) {
     ],
     "write",
   );
+  return { sukses: true };
+}
+
+// ── 1b. Unit satuan pendidikan ──────────────────────────────────────────────
+//
+// Dipakai sebagai dropdown di formulir peserta didik, guru/PTK, dan karyawan.
+// `master_data.unit` menyimpan NAMA unit, bukan `id_unit`, supaya nilainya
+// berarti sama di setiap perangkat; karena itu mengganti nama sebuah unit ikut
+// memindahkan personil yang memakainya, dan itu dikerjakan dalam satu batch.
+
+export async function getAcademicUnits() {
+  await ensureDbInitialized();
+  const res = await db.execute(`
+    SELECT id_unit, nama_unit, keterangan, urutan, status_aktif
+    FROM akademik_unit
+    ORDER BY urutan ASC, nama_unit ASC;
+  `);
+  return res.rows;
+}
+
+export async function saveAcademicUnit(draft: {
+  id_unit?: string;
+  nama_unit: string;
+  keterangan?: string | null;
+  urutan?: number;
+  status_aktif?: number;
+}) {
+  await ensureDbInitialized();
+  const nama = draft.nama_unit?.trim() ?? "";
+  if (!nama) {
+    throw new ApiRequestError("Nama unit wajib diisi.", 400);
+  }
+  const id = draft.id_unit || `unt_${crypto.randomUUID().replace(/-/g, "")}`;
+  await assertUniqueValue({
+    table: "akademik_unit",
+    column: "nama_unit",
+    idColumn: "id_unit",
+    value: nama,
+    exceptId: id,
+    message: "Nama unit ini sudah terdaftar.",
+  });
+
+  // Nama lama dibaca SEBELUM ditimpa: bila berubah, personil yang memakainya
+  // ikut dipindahkan. Tanpa ini, mengganti "SMP" menjadi "SMP Islam" akan
+  // meninggalkan setiap siswa menunjuk unit yang tidak ada lagi.
+  const lama = await db.execute({
+    sql: "SELECT nama_unit FROM akademik_unit WHERE id_unit = ?;",
+    args: [id],
+  });
+  const namaLama = lama.rows[0]?.nama_unit
+    ? String(lama.rows[0].nama_unit)
+    : null;
+
+  const now = new Date().toISOString();
+  const statements = [
+    {
+      sql: `
+        INSERT INTO akademik_unit (
+          id_unit, nama_unit, keterangan, urutan, status_aktif, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id_unit) DO UPDATE SET
+          nama_unit = excluded.nama_unit,
+          keterangan = excluded.keterangan,
+          urutan = excluded.urutan,
+          status_aktif = excluded.status_aktif,
+          updated_at = excluded.updated_at;
+      `,
+      args: [
+        id,
+        nama,
+        draft.keterangan || null,
+        draft.urutan ?? 0,
+        draft.status_aktif ?? 1,
+        now,
+        now,
+      ],
+    },
+  ];
+  if (namaLama && namaLama !== nama) {
+    statements.push({
+      sql: "UPDATE master_data SET unit = ? WHERE unit = ?;",
+      args: [nama, namaLama],
+    });
+  }
+  await db.batch(statements, "write");
+
+  return { sukses: true, id_unit: id };
+}
+
+export async function deleteAcademicUnit(id: string) {
+  await ensureDbInitialized();
+  const row = await db.execute({
+    sql: "SELECT nama_unit FROM akademik_unit WHERE id_unit = ?;",
+    args: [id],
+  });
+  const nama = row.rows[0]?.nama_unit ? String(row.rows[0].nama_unit) : null;
+  if (nama) {
+    await assertAcademicUnused(
+      "Unit",
+      ACADEMIC_USAGE.unit,
+      nama,
+      "Pindahkan personilnya ke unit lain, atau nonaktifkan unit ini saja.",
+    );
+  }
+  await db.execute({
+    sql: "DELETE FROM akademik_unit WHERE id_unit = ?;",
+    args: [id],
+  });
   return { sukses: true };
 }
 
@@ -611,7 +723,7 @@ export async function getTeachers() {
     SELECT g.id_guru, g.nip, g.nuptk, g.gelar, g.spesialisasi_mapel, g.status_kepegawaian,
            g.created_at, g.updated_at,
            m.kode_karyawan, m.nama, m.divisi, m.jabatan_status, m.no_hp, m.lp,
-           m.status_aktif, m.id_shift, m.token_absensi, m.qr_code, m.status_qr
+           m.status_aktif, m.id_shift, m.token_absensi, m.qr_code, m.status_qr, m.unit
     FROM guru_data g
     JOIN master_data m ON m.id_unik = g.id_guru
     ORDER BY m.nama ASC;
@@ -633,11 +745,17 @@ export async function saveTeacher(draft: {
   lp?: string | null;
   id_shift?: number;
   status_aktif?: string;
+  unit?: string;
 }) {
   await ensureDbInitialized();
   const id = draft.id_guru || `ptk_${crypto.randomUUID().replace(/-/g, "")}`;
   const statusAktif = draft.status_aktif || "Aktif";
-  const kode = draft.kode_karyawan || draft.nip || `G-${id.slice(4, 10)}`;
+  // Cadangannya ID UTUH, bukan irisannya. `id.slice(4, 10)` dulu mengasumsikan
+  // setiap ID berawalan `ptk_` buatan sistem; begitu operator mengetik ID
+  // sendiri lewat formulir atau impor Excel, irisan itu mencomot enam karakter
+  // acak dari tengah ID-nya. `kode_karyawan` UNIQUE, dan ID sudah primary key,
+  // jadi memakainya utuh sekaligus menjamin keunikan yang tidak dijamin irisan.
+  const kode = draft.kode_karyawan || draft.nip || id;
   // `master_data.kode_karyawan` MASIH UNIQUE (skema lama, tidak diubah).
   await assertUniqueValue({
     table: "master_data",
@@ -660,8 +778,8 @@ export async function saveTeacher(draft: {
       INSERT INTO master_data (
         id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp,
         id_shift, status_aktif, tanggal_daftar, catatan, token_absensi, qr_code,
-        status_qr, jenis_personil, status_backup
-      ) VALUES (?, ?, ?, 'Tenaga Pengajar', 'Guru', ?, ?, COALESCE(?, 1), ?, date('now','+7 hours'), 'Data PTK Sekolah', ?, ?, 'Generated', 'GURU', 'NORMAL')
+        status_qr, jenis_personil, unit, status_backup
+      ) VALUES (?, ?, ?, 'Tenaga Pengajar', 'Guru', ?, ?, COALESCE(?, 1), ?, date('now','+7 hours'), 'Data PTK Sekolah', ?, ?, 'Generated', 'GURU', NULLIF(?, ''), 'NORMAL')
       ON CONFLICT(id_unik) DO UPDATE SET
         kode_karyawan = excluded.kode_karyawan,
         nama = excluded.nama,
@@ -672,7 +790,10 @@ export async function saveTeacher(draft: {
         token_absensi = excluded.token_absensi,
         qr_code = excluded.qr_code,
         status_qr = excluded.status_qr,
-        jenis_personil = 'GURU';
+        jenis_personil = 'GURU',
+        -- Draft tanpa unit tidak boleh mengosongkan unit tersimpan; pola yang
+        -- sama dengan id_shift di atas.
+        unit = COALESCE(NULLIF(?, ''), master_data.unit);
     `,
         args: [
           id,
@@ -684,7 +805,9 @@ export async function saveTeacher(draft: {
           statusAktif,
           token,
           qrCode,
+          draft.unit || "",
           idShift,
+          draft.unit || "",
         ],
       },
       {
@@ -758,7 +881,8 @@ export async function getStudents(id_rombel?: string | null) {
            s.nama_wali, s.no_whatsapp_wali, s.alamat, s.angkatan, s.status,
            s.created_at, s.updated_at,
            r.nama_rombel, r.tingkat,
-           m.token_absensi, m.qr_code, m.status_qr, m.id_shift
+           m.token_absensi, m.qr_code, m.status_qr, m.id_shift, m.unit,
+           m.kode_karyawan
     FROM siswa_data s
     JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
     LEFT JOIN master_data m ON m.id_unik = s.id_siswa
@@ -774,6 +898,7 @@ export async function getStudents(id_rombel?: string | null) {
 
 export async function saveStudent(draft: {
   id_siswa?: string;
+  kode_karyawan?: string;
   nama_lengkap: string;
   nis?: string | null;
   nisn?: string | null;
@@ -785,10 +910,12 @@ export async function saveStudent(draft: {
   angkatan?: number;
   status?: string;
   id_shift?: number;
+  unit?: string;
 }) {
   await ensureDbInitialized();
   const id = draft.id_siswa || `sis_${crypto.randomUUID().replace(/-/g, "")}`;
-  const kode = draft.nis || `S-${id.slice(4, 10)}`;
+  // Sama seperti guru: ID utuh, bukan irisannya. Lihat catatan di simpanGuru.
+  const kode = draft.kode_karyawan || draft.nis || id;
   await assertUniqueValue({
     table: "siswa_data",
     column: "nis",
@@ -825,8 +952,8 @@ export async function saveStudent(draft: {
       INSERT INTO master_data (
         id_unik, kode_karyawan, nama, divisi, jabatan_status, lp,
         id_shift, status_aktif, tanggal_daftar, catatan, token_absensi, qr_code,
-        status_qr, jenis_personil, status_backup
-      ) VALUES (?, ?, ?, 'Peserta Didik', 'Siswa', ?, COALESCE(?, 1), ?, date('now','+7 hours'), 'Data Siswa Sekolah', ?, ?, 'Generated', 'SISWA', 'NORMAL')
+        status_qr, jenis_personil, unit, status_backup
+      ) VALUES (?, ?, ?, 'Peserta Didik', 'Siswa', ?, COALESCE(?, 1), ?, date('now','+7 hours'), 'Data Siswa Sekolah', ?, ?, 'Generated', 'SISWA', NULLIF(?, ''), 'NORMAL')
       ON CONFLICT(id_unik) DO UPDATE SET
         kode_karyawan = excluded.kode_karyawan,
         nama = excluded.nama,
@@ -836,7 +963,9 @@ export async function saveStudent(draft: {
         token_absensi = excluded.token_absensi,
         qr_code = excluded.qr_code,
         status_qr = excluded.status_qr,
-        jenis_personil = 'SISWA';
+        jenis_personil = 'SISWA',
+        -- Lihat catatan di saveTeacher.
+        unit = COALESCE(NULLIF(?, ''), master_data.unit);
     `,
         args: [
           id,
@@ -847,7 +976,9 @@ export async function saveStudent(draft: {
           status === "Aktif" ? "Aktif" : "Nonaktif",
           token,
           qrCode,
+          draft.unit || "",
           idShift,
+          draft.unit || "",
         ],
       },
       {

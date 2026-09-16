@@ -13,6 +13,7 @@ import { KeamananAbsensiCard } from "@/components/settings/KeamananAbsensiCard";
 import { KeamananPemindaiCard } from "@/components/settings/KeamananPemindaiCard";
 import { KonfigurasiDatabaseCard } from "@/components/settings/KonfigurasiDatabaseCard";
 import { LogoAplikasiCard } from "@/components/settings/LogoAplikasiCard";
+import { NotifikasiWaCard } from "@/components/settings/NotifikasiWaCard";
 import { OtomasiAlfaCard } from "@/components/settings/OtomasiAlfaCard";
 import { ProfilInstansiCard } from "@/components/settings/ProfilInstansiCard";
 import { SinkronisasiDesktopCard } from "@/components/settings/SinkronisasiDesktopCard";
@@ -78,6 +79,12 @@ import {
   type TursoConnectionStatus,
   testTursoConnection,
 } from "@/lib/gateways/turso-config";
+import {
+  getWaConfigGateway,
+  saveWaConfigGateway,
+  type WaConfig,
+  type WaConfigDraft,
+} from "@/lib/gateways/wa-notification";
 import { syncAppLogoCache, useAppLogo } from "@/lib/hooks/useAppLogo";
 import { syncAppNameCache } from "@/lib/hooks/useAppName";
 import { syncCompanyNameCache } from "@/lib/hooks/useCompanyName";
@@ -212,6 +219,8 @@ export default function SettingsPage() {
     BRANDING.appDisplayName,
   );
   const [companyProfileBusy, setCompanyProfileBusy] = useState(false);
+  const [waConfig, setWaConfig] = useState<WaConfig | null>(null);
+  const [waConfigBusy, setWaConfigBusy] = useState(false);
 
   useEffect(() => {
     if (!isHydrated || !isAuthenticated) return;
@@ -242,6 +251,14 @@ export default function SettingsPage() {
         if (!cancelled) setAutoAlfaEnabled(enabled);
       })
       .catch(() => undefined);
+
+    if (hasPermission(user, "settings.manage")) {
+      getWaConfigGateway()
+        .then((cfg) => {
+          if (!cancelled) setWaConfig(cfg);
+        })
+        .catch(() => undefined);
+    }
 
     if (user?.isSuperadmin) {
       // Provider ikut dimuat: tanpa itu perangkat yang terhubung ke server LAN
@@ -335,7 +352,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, isHydrated, user?.isSuperadmin]);
+  }, [isAuthenticated, isHydrated, user]);
 
   // Dengarkan event auto-sync selesai untuk memperbarui status Cloud Sync secara real-time
   useEffect(() => {
@@ -406,6 +423,32 @@ export default function SettingsPage() {
       });
     } finally {
       setAlfaTriggerBusy(false);
+    }
+  };
+
+  const handleWaConfigSave = async (draft: WaConfigDraft) => {
+    if (isSubmittingRef.current || !waConfig) return;
+    setWaConfigBusy(true);
+    isSubmittingRef.current = true;
+    try {
+      await saveWaConfigGateway(draft);
+      const updated = await getWaConfigGateway();
+      setWaConfig(updated);
+      setFeedback({
+        type: "success",
+        message: "Pengaturan Notifikasi WhatsApp berhasil disimpan.",
+      });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Gagal menyimpan pengaturan Notifikasi WhatsApp.",
+      });
+    } finally {
+      isSubmittingRef.current = false;
+      setWaConfigBusy(false);
     }
   };
 
@@ -1245,6 +1288,15 @@ export default function SettingsPage() {
           alfaTriggerBusy={alfaTriggerBusy}
           handleAutoAlfaToggle={handleAutoAlfaToggle}
           handleTriggerAlfaNow={handleTriggerAlfaNow}
+        />
+      ) : null}
+
+      {hasPermission(user, "settings.manage") ? (
+        <NotifikasiWaCard
+          user={user}
+          config={waConfig}
+          busy={waConfigBusy}
+          onSave={handleWaConfigSave}
         />
       ) : null}
 

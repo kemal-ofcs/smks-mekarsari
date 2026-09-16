@@ -902,6 +902,16 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
         sql: "SELECT * FROM akademik_tahun_ajaran ORDER BY tanggal_mulai DESC;",
     },
     SnapshotSource {
+        payload_key: "waliKredensial",
+        table: "wali_kredensial",
+        sql: "SELECT * FROM wali_kredensial ORDER BY id_siswa;",
+    },
+    SnapshotSource {
+        payload_key: "akademikUnit",
+        table: "akademik_unit",
+        sql: "SELECT * FROM akademik_unit ORDER BY urutan, nama_unit;",
+    },
+    SnapshotSource {
         payload_key: "akademikJurusan",
         table: "akademik_jurusan",
         sql: "SELECT * FROM akademik_jurusan ORDER BY kode_jurusan;",
@@ -2117,6 +2127,7 @@ impl TursoClient {
                 ('academic.manage', 'Kelola Struktur Akademik', 'Akademik', 'Menambah, mengubah, dan menghapus struktur akademik.', 1, 401),
                 ('students.view', 'Lihat Data Siswa', 'Akademik', 'Melihat daftar dan profil siswa.', 1, 410),
                 ('students.manage', 'Kelola Data Siswa', 'Akademik', 'Menambah, mengedit, dan menghapus data siswa.', 1, 411),
+                ('students.reset_wali_password', 'Reset / Terbitkan Password Wali', 'Akademik', 'Menerbitkan dan mereset password akun wali murid.', 1, 412),
                 ('teachers.view', 'Lihat Data Guru & PTK', 'Akademik', 'Melihat data guru dan tenaga kependidikan.', 1, 420),
                 ('teachers.manage', 'Kelola Data Guru & PTK', 'Akademik', 'Mengelola data guru dan penugasan mapel.', 1, 421),
                 ('class_attendance.view', 'Lihat Presensi Jam Mapel', 'Akademik', 'Melihat presensi per jam mata pelajaran dan deteksi bolos.', 1, 430),
@@ -2406,6 +2417,22 @@ impl TursoClient {
                     tanggal_mulai TEXT NOT NULL,
                     tanggal_selesai TEXT NOT NULL,
                     is_aktif INTEGER NOT NULL DEFAULT 0 CHECK (is_aktif IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                // Unit satuan pendidikan, dikelola user di halaman Akademik.
+                // Tanpa UNIQUE pada `nama_unit`: dua perangkat offline boleh
+                // mendaftarkan nama sama, dan UNIQUE akan membuat push sync-nya
+                // gagal PERMANEN (`next_retry_at = NULL`). Dicegah di aplikasi.
+                r#"CREATE TABLE IF NOT EXISTS akademik_unit (
+                    id_unit TEXT PRIMARY KEY,
+                    nama_unit TEXT NOT NULL,
+                    keterangan TEXT,
+                    urutan INTEGER NOT NULL DEFAULT 0,
+                    status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );"#,
@@ -2775,6 +2802,17 @@ impl TursoClient {
             ),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_wali_otp_subjek ON wali_otp(subjek, subjek_id, status, created_at DESC);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_wali_session_siswa ON wali_session(id_siswa, expires_at);", vec![]),
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS wali_kredensial (
+                    id_siswa TEXT PRIMARY KEY,
+                    password_hash TEXT NOT NULL,
+                    changed_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_wali_kredensial_siswa ON wali_kredensial(id_siswa);", vec![]),
             // ── v28: Modul nilai akademik ──
             //
             // Berbeda dari seluruh tabel Fase 5: kedua tabel ini IKUT
@@ -2850,7 +2888,9 @@ impl TursoClient {
                 (20, 'phase-4-notification-and-counseling', datetime('now')),
                 (26, 'pmb-online', datetime('now')),
                 (27, 'wali-portal', datetime('now')),
-                (28, 'academic-grades', datetime('now'));"#,
+                (28, 'academic-grades', datetime('now')),
+                (29, 'academic-unit', datetime('now')),
+                (30, 'wali-kredensial', datetime('now'));"#,
                 vec![],
             ),
         ];
@@ -2971,6 +3011,12 @@ impl TursoClient {
             ("payroll_items", "total_teaching_jp", "ALTER TABLE payroll_items ADD COLUMN total_teaching_jp INTEGER NOT NULL DEFAULT 0;"),
             ("payroll_items", "teaching_salary", "ALTER TABLE payroll_items ADD COLUMN teaching_salary INTEGER NOT NULL DEFAULT 0;"),
             ("salary_configs", "rate_per_jp", "ALTER TABLE salary_configs ADD COLUMN rate_per_jp INTEGER NOT NULL DEFAULT 0;"),
+            // Unit satuan pendidikan (schema versi 29). Database cloud yang
+            // sudah ada sudah memiliki master_data, sehingga CREATE TABLE IF NOT
+            // EXISTS di pipeline tidak akan menambahkan kolomnya. Nullable:
+            // baris personil lama memang belum punya unit, dan memaksanya NOT
+            // NULL akan menolak seluruh ALTER pada database yang sudah berisi.
+            ("master_data", "unit", "ALTER TABLE master_data ADD COLUMN unit TEXT;"),
         ] {
             self.ensure_column(table, column, sql).await?;
         }
@@ -3148,6 +3194,11 @@ impl TursoClient {
         .await?;
         self.query_one(
             "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2014, 'shift-time-rules-v2', datetime('now'));",
+            vec![],
+        )
+        .await?;
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2015, 'wali-kredensial-v1', datetime('now'));",
             vec![],
         )
         .await?;
@@ -3421,7 +3472,7 @@ impl TursoClient {
                 // Sentinel WAJIB dinaikkan setiap kali ensure_schema menambah
                 // tabel atau kolom — nilainya di sini dan pada INSERT di atas
                 // harus selalu sama.
-                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2014;",
+                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2015;",
                 vec![],
             )
             .await
@@ -5594,6 +5645,40 @@ impl TursoClient {
             let mut obj = json!(row);
             obj["api_key"] = json!("");
             obj["has_api_key"] = json!(has_api_key);
+
+            let settings_res = self
+                .query_one(
+                    "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
+                    vec![
+                        json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY),
+                        json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_DAYS_KEY),
+                    ],
+                )
+                .await
+                .ok();
+            let mut ambang_limit = super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT;
+            let mut ambang_days = super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS;
+            if let Some(s_res) = settings_res {
+                for r in s_res.to_objects() {
+                    let k = r.get("key").and_then(Value::as_str).unwrap_or("");
+                    let v = r.get("value").and_then(Value::as_str).unwrap_or("");
+                    if k == super::wa_notification::WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY {
+                        if let Ok(parsed) = v.trim().parse::<i64>() {
+                            if parsed > 0 {
+                                ambang_limit = parsed;
+                            }
+                        }
+                    } else if k == super::wa_notification::WA_NOTIFY_AMBANG_ALFA_DAYS_KEY {
+                        if let Ok(parsed) = v.trim().parse::<i64>() {
+                            if parsed > 0 {
+                                ambang_days = parsed;
+                            }
+                        }
+                    }
+                }
+            }
+            obj["ambangAlfaLimit"] = json!(ambang_limit);
+            obj["ambangAlfaDays"] = json!(ambang_days);
             Ok(obj)
         } else {
             Ok(json!({
@@ -5609,6 +5694,8 @@ impl TursoClient {
                 "scan_pulang_enabled": 0,
                 "bolos_enabled": 1,
                 "ambang_alfa_enabled": 1,
+                "ambangAlfaLimit": super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT,
+                "ambangAlfaDays": super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS,
                 "created_at": "",
                 "updated_at": ""
             }))
@@ -5770,6 +5857,34 @@ impl TursoClient {
                 vec![json!(key), json!(if aktif != 0 { "true" } else { "false" })],
             ));
         }
+
+        let ambang_limit = draft
+            .get("ambangAlfaLimit")
+            .and_then(Value::as_i64)
+            .filter(|&v| v > 0)
+            .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT);
+        let ambang_days = draft
+            .get("ambangAlfaDays")
+            .and_then(Value::as_i64)
+            .filter(|&v| v > 0)
+            .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS);
+
+        statements.push(Statement::new(
+            r#"INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value;"#,
+            vec![
+                json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY),
+                json!(ambang_limit.to_string()),
+            ],
+        ));
+        statements.push(Statement::new(
+            r#"INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value;"#,
+            vec![
+                json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_DAYS_KEY),
+                json!(ambang_days.to_string()),
+            ],
+        ));
 
         self.execute_atomic(statements).await?;
 
@@ -7047,6 +7162,15 @@ fn canonical_sync_route(domain: &str, operation: &str) -> Option<(&'static str, 
         ("academic_department" | "academic-department" | "department" | "jurusan", "delete") => {
             ("academic-department", "delete")
         }
+        ("wali_credential" | "wali-credential" | "wali-kredensial", "save") => {
+            ("wali-credential", "save")
+        }
+        ("wali_credential" | "wali-credential" | "wali-kredensial", "delete") => {
+            ("wali-credential", "delete")
+        }
+        ("academic_unit" | "academic-unit" | "unit", "create") => ("academic-unit", "create"),
+        ("academic_unit" | "academic-unit" | "unit", "update") => ("academic-unit", "update"),
+        ("academic_unit" | "academic-unit" | "unit", "delete") => ("academic-unit", "delete"),
         ("academic_class" | "academic-class" | "rombel", "create") => ("academic-class", "create"),
         ("academic_class" | "academic-class" | "rombel", "update") => ("academic-class", "update"),
         ("academic_class" | "academic-class" | "rombel", "delete") => ("academic-class", "delete"),
@@ -7302,9 +7426,10 @@ async fn apply_event_to_turso(
                         r#"INSERT INTO master_data (
                             id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp,
                             lp, id_shift, status_aktif, catatan, jenis_personil,
-                            tanggal_mulai_aktif, tanggal_selesai_aktif, status_backup
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NORMAL')
+                            tanggal_mulai_aktif, tanggal_selesai_aktif, unit, status_backup
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NORMAL')
                         ON CONFLICT(id_unik) DO UPDATE SET
+                            unit = excluded.unit,
                             kode_karyawan = excluded.kode_karyawan,
                             nama = excluded.nama,
                             divisi = excluded.divisi,
@@ -7337,6 +7462,7 @@ async fn apply_event_to_turso(
                                 .unwrap_or("Pegawai")),
                             json!(row.get("tanggal_mulai_aktif").and_then(Value::as_str)),
                             json!(row.get("tanggal_selesai_aktif").and_then(Value::as_str)),
+                            json!(row.get("unit").and_then(Value::as_str)),
                         ],
                     )
                     .await?;
@@ -7393,9 +7519,10 @@ async fn apply_event_to_turso(
                         id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp,
                         id_shift, status_aktif, tanggal_daftar, catatan, token_absensi,
                         qr_code, status_qr, jenis_personil, tanggal_mulai_aktif,
-                        tanggal_selesai_aktif, status_backup
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        tanggal_selesai_aktif, unit, status_backup
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id_unik) DO UPDATE SET
+                        unit = excluded.unit,
                         kode_karyawan = excluded.kode_karyawan,
                         nama = excluded.nama,
                         divisi = excluded.divisi,
@@ -7438,6 +7565,7 @@ async fn apply_event_to_turso(
                             json!(row.get("jenis_personil").and_then(Value::as_str)),
                             json!(row.get("tanggal_mulai_aktif").and_then(Value::as_str)),
                             json!(row.get("tanggal_selesai_aktif").and_then(Value::as_str)),
+                            json!(row.get("unit").and_then(Value::as_str)),
                             json!(row
                                 .get("status_backup")
                                 .and_then(Value::as_str)
@@ -9037,6 +9165,130 @@ async fn apply_event_to_turso(
                 turso
                     .query_one(
                         "DELETE FROM akademik_tahun_ajaran WHERE id_tahun_ajaran = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
+            }
+        }
+        ("wali-credential", "save") => {
+            let row = payload
+                .get("wali_credential")
+                .or_else(|| payload.get("waliKredensial"))
+                .unwrap_or(payload);
+            let id = row
+                .get("id_siswa")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            let hash = row
+                .get("password_hash")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !id.is_empty() && !hash.is_empty() {
+                // `changed_at` diteruskan APA ADANYA, termasuk NULL. Nilainya
+                // adalah pembeda antara password yang masih bawaan sistem dan
+                // yang sudah diganti wali; menormalkannya jadi `datetime('now')`
+                // akan membuat portal berhenti menahan akun yang passwordnya
+                // masih bisa ditebak dari dokumen anak.
+                let changed_at = row.get("changed_at").and_then(Value::as_str);
+                turso
+                    .query_one(
+                        r#"INSERT INTO wali_kredensial (
+                        id_siswa, password_hash, changed_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, datetime('now'), datetime('now'))
+                    ON CONFLICT(id_siswa) DO UPDATE SET
+                        password_hash = excluded.password_hash,
+                        changed_at = excluded.changed_at,
+                        updated_at = datetime('now');"#,
+                        vec![json!(id), json!(hash), json!(changed_at)],
+                    )
+                    .await?;
+
+                // Pencabutan sesi hidup DI SINI, bukan di perintah Desktop yang
+                // menerbitkan kredensialnya. `wali_session` cloud-only: terminal
+                // yang sedang offline tidak memilikinya, jadi UPDATE di lokal
+                // akan mengenai nol baris lalu melapor sukses — password sudah
+                // berganti sementara sesi lama tetap hidup. Dengan diterapkan
+                // saat event-nya sampai, hasilnya sama untuk terminal online dan
+                // benar untuk yang offline.
+                //
+                // Hanya berlaku pada kredensial yang BARU diterbitkan admin
+                // (`changed_at` NULL). Wali yang mengganti passwordnya sendiri
+                // lewat portal tidak boleh ikut ditendang dari sesinya sendiri.
+                if changed_at.is_none() {
+                    turso
+                        .query_one(
+                            "UPDATE wali_session SET revoked_at = datetime('now'), revoked_reason = 'admin_reset' WHERE id_siswa = ? AND revoked_at IS NULL;",
+                            vec![json!(id)],
+                        )
+                        .await?;
+                }
+            }
+        }
+        ("wali-credential", "delete") => {
+            let id = payload
+                .get("id_siswa")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        "DELETE FROM wali_kredensial WHERE id_siswa = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
+            }
+        }
+        ("academic-unit", "create" | "update") => {
+            let row = payload
+                .get("academic_unit")
+                .or_else(|| payload.get("akademikUnit"))
+                .unwrap_or(payload);
+            let id = row
+                .get("id_unit")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                let nama = row.get("nama_unit").and_then(Value::as_str).unwrap_or("");
+                let keterangan = row.get("keterangan").and_then(Value::as_str);
+                let urutan = row.get("urutan").and_then(Value::as_i64).unwrap_or(0);
+                let status_aktif = row.get("status_aktif").and_then(Value::as_i64).unwrap_or(1);
+
+                turso
+                    .query_one(
+                        r#"INSERT INTO akademik_unit (
+                        id_unit, nama_unit, keterangan, urutan, status_aktif,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    ON CONFLICT(id_unit) DO UPDATE SET
+                        nama_unit = excluded.nama_unit,
+                        keterangan = excluded.keterangan,
+                        urutan = excluded.urutan,
+                        status_aktif = excluded.status_aktif,
+                        updated_at = datetime('now');"#,
+                        vec![
+                            json!(id),
+                            json!(nama),
+                            json!(keterangan),
+                            json!(urutan),
+                            json!(status_aktif),
+                        ],
+                    )
+                    .await?;
+            }
+        }
+        ("academic-unit", "delete") => {
+            let id = payload
+                .get("id_unit")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        "DELETE FROM akademik_unit WHERE id_unit = ?;",
                         vec![json!(id)],
                     )
                     .await?;
@@ -11907,6 +12159,7 @@ impl TursoClient {
         self.deliver_mail(to, "Pemulihan Password Absensi SPPG", &body_text)
             .await
     }
+
 }
 
 /// Normalisasi email operator: disimpan lowercase karena index unik
@@ -12874,7 +13127,7 @@ mod tests {
                    (3, 3, 'Fleksibel', '00:00', '23:59', 1439, 0),
                    (4, 4, 'Fleksibel Nol', '08:00', '17:00', 0, 60),
                    (5, 5, 'Pendek', '07:00', '07:30', 30, 60);
-                 DELETE FROM schema_migration WHERE version IN (21, -2014);",
+                 DELETE FROM schema_migration WHERE version IN (21, -2014, -2015);",
             )
             .expect("siapkan shift lama");
         runtime.block_on(async {
@@ -13198,6 +13451,7 @@ mod tests {
                 "absensi_foto",
                 "hari_libur_whitelist",
                 "akademik_tahun_ajaran",
+                "akademik_unit",
                 "akademik_jurusan",
                 "akademik_rombel",
                 "akademik_mapel",

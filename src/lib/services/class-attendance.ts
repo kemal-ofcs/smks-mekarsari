@@ -1,7 +1,12 @@
 import "server-only";
 
 import { db, ensureDbInitialized } from "@/lib/db";
+import {
+  isValidOperatorPhone,
+  normalizeOperatorPhone,
+} from "@/lib/operators/contact";
 import { ApiRequestError } from "@/lib/server/http/api-response";
+import { generateWaNotificationId } from "@/lib/services/wa-notification";
 import {
   JP_MAX_PER_DAY_SETTING_KEY,
   jamKeBeririsan,
@@ -10,6 +15,10 @@ import {
   parseJpMaxPerDay,
   rentangJamKe,
 } from "@/lib/validations/class-attendance";
+import {
+  settingEnabled,
+  WA_NOTIFY_BOLOS_KEY,
+} from "@/lib/validations/wa-notification";
 
 /**
  * Status awal roster SELALU "Hadir" — TIDAK PERNAH diturunkan dari scan gerbang.
@@ -502,6 +511,75 @@ export async function saveClassAttendance(draft: SaveClassAttendanceDraft) {
       sql: "DELETE FROM presensi_mapel_detail WHERE id_detail = ?;",
       args: [idDetail],
     });
+  }
+
+  // Produsen Notifikasi Bolos (Tahap C):
+  // Evaluasi siswa yang diberi status 'Alfa' padahal tercatat masuk gerbang (hadir_gerbang = 1)
+  const alfaStudents = validItems.filter(
+    (item) => item.status === "Alfa" && item.id_siswa,
+  );
+  if (alfaStudents.length > 0) {
+    const bolosSettingRes = await db.execute({
+      sql: "SELECT value FROM setting_gex_system WHERE key = ? LIMIT 1;",
+      args: [WA_NOTIFY_BOLOS_KEY],
+    });
+    const bolosEnabled = settingEnabled(
+      String(bolosSettingRes.rows[0]?.value ?? ""),
+    );
+
+    if (bolosEnabled) {
+      const alfaIds = alfaStudents.map((s) => s.id_siswa);
+      const placeholders = alfaIds.map(() => "?").join(",");
+      const gateRes = await db.execute({
+        sql: `
+          SELECT ah.id_karyawan,
+                 COALESCE(s.nama_lengkap, m.nama, '') AS nama_siswa,
+                 COALESCE(s.no_whatsapp_wali, m.no_hp, '') AS no_wa,
+                 COALESCE(r.nama_rombel, m.divisi, '') AS nama_rombel,
+                 COALESCE(mapel.nama_mapel, '') AS nama_mapel
+          FROM ${GATE_SUMMARY_SUBQUERY} ah
+          JOIN master_data m ON m.id_unik = ah.id_karyawan
+          LEFT JOIN siswa_data s ON s.id_siswa = ah.id_karyawan
+          LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
+          LEFT JOIN akademik_mapel mapel ON mapel.id_mapel = ?
+          WHERE ah.tanggal = ?
+            AND ah.hadir_gerbang = 1
+            AND ah.id_karyawan IN (${placeholders});
+        `,
+        args: [idMapel, tanggal, ...alfaIds],
+      });
+
+      for (const row of gateRes.rows) {
+        const idSiswa = String(row.id_karyawan ?? "");
+        const dedupeKey = `bolos:${idSiswa}:${tanggal}`;
+        const existingNotif = await db.execute({
+          sql: "SELECT 1 FROM notifikasi_wa WHERE dedupe_key = ? LIMIT 1;",
+          args: [dedupeKey],
+        });
+        if (existingNotif.rows.length === 0) {
+          const canonPhone = normalizeOperatorPhone(String(row.no_wa ?? ""));
+          if (isValidOperatorPhone(canonPhone)) {
+            const idNotif = generateWaNotificationId();
+            const namaSiswa = String(row.nama_siswa || "Siswa");
+            const namaRombel = String(row.nama_rombel || "-");
+            const namaMapel = String(row.nama_mapel || "Mata Pelajaran");
+            const pesan = `Yth. Wali Murid dari ${namaSiswa} (${namaRombel}). Kami informasikan bahwa ananda tercatat hadir di sekolah namun tidak mengikuti KBM ${namaMapel} (Jam ke-${jamKeNormal}) pada tanggal ${tanggal}. Status: Alfa.`;
+            statements.push({
+              sql: `
+                INSERT INTO notifikasi_wa (
+                  id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor,
+                  isi_pesan, status, attempt_count, created_at, updated_at
+                ) VALUES (?, ?, 'bolos', ?, ?, ?, 'Menunggu', 0, datetime('now'), datetime('now'))
+                ON CONFLICT(id_notifikasi) DO UPDATE SET
+                  isi_pesan = excluded.isi_pesan,
+                  updated_at = datetime('now');
+              `,
+              args: [idNotif, dedupeKey, idSiswa, canonPhone, pesan],
+            });
+          }
+        }
+      }
+    }
   }
 
   await db.batch(statements, "write");

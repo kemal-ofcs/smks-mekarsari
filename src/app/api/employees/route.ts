@@ -69,6 +69,7 @@ function parseDraft(value: unknown): KaryawanInput {
       typeof draft.tanggal_selesai_aktif === "string"
         ? draft.tanggal_selesai_aktif
         : undefined,
+    unit: typeof draft.unit === "string" ? draft.unit.trim() : undefined,
   };
   const message = firstValidationMessage(validateEmployeeDraft(parsed));
   if (message) throw new ApiRequestError(message, 400);

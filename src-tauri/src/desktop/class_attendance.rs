@@ -1108,15 +1108,15 @@ pub fn save_class_attendance(state: &DesktopState, draft: &Value) -> Result<Valu
 
     // 2. Simpan setiap baris detail ke presensi_mapel_detail & daftarkan ke outbox
     let mut siswa_terkirim: Vec<String> = Vec::with_capacity(items.len());
-    for item in items {
-        let id_siswa = text(&item, "id_siswa");
+    for item in &items {
+        let id_siswa = text(item, "id_siswa");
         if id_siswa.is_empty() {
             continue;
         }
         siswa_terkirim.push(id_siswa.to_owned());
 
-        let status = class_status(text(&item, "status"))?;
-        let catatan_item = optional_text(&item, "catatan");
+        let status = class_status(text(item, "status"))?;
+        let catatan_item = optional_text(item, "catatan");
 
         let existing_detail: Option<(String, String)> = tx
             .query_row(
@@ -1254,6 +1254,105 @@ pub fn save_class_attendance(state: &DesktopState, draft: &Value) -> Result<Valu
         &session_payload,
         None,
     )?;
+
+    // 4. Produsen Notifikasi Bolos (Tahap C):
+    //    Evaluasi siswa yang diberi status 'Alfa' padahal tercatat masuk gerbang (hadir_gerbang = 1)
+    let settings: std::collections::HashMap<String, String> = {
+        let mut stmt = tx
+            .prepare("SELECT key, value FROM setting_gex_system;")
+            .map_err(|_| CommandError::internal())?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|_| CommandError::internal())?
+            .filter_map(Result::ok)
+            .collect();
+        rows
+    };
+
+    if super::wa_notification::wa_notify_enabled(&settings, "bolos") {
+        for item in &items {
+            let status = class_status(text(item, "status")).unwrap_or("Hadir");
+            if status == "Alfa" {
+                let id_siswa = text(item, "id_siswa").trim();
+                if id_siswa.is_empty() {
+                    continue;
+                }
+
+                // Cek apakah siswa hadir gerbang hari ini
+                let hadir_gerbang: bool = tx
+                    .query_row(
+                        r#"
+                        SELECT 1 FROM absensi_harian
+                        WHERE id_karyawan = ?1
+                          AND tanggal = ?2
+                          AND COALESCE(TRIM(jam_masuk), '') <> ''
+                          AND COALESCE(status_kehadiran, '') <> 'Alfa'
+                        LIMIT 1;
+                        "#,
+                        params![id_siswa, tanggal],
+                        |_| Ok(true),
+                    )
+                    .optional()
+                    .unwrap_or(None)
+                    .unwrap_or(false);
+
+                if hadir_gerbang {
+                    let dedupe_key = format!("bolos:{id_siswa}:{tanggal}");
+                    let already_queued: bool = tx
+                        .query_row(
+                            "SELECT 1 FROM notifikasi_wa WHERE dedupe_key = ?1 LIMIT 1;",
+                            params![dedupe_key],
+                            |_| Ok(true),
+                        )
+                        .optional()
+                        .unwrap_or(None)
+                        .unwrap_or(false);
+
+                    if !already_queued {
+                        let parent_info: Option<(String, String, String, String)> = tx
+                            .query_row(
+                                r#"
+                                SELECT COALESCE(s.nama_lengkap, m.nama, ''),
+                                       COALESCE(s.no_whatsapp_wali, m.no_hp, ''),
+                                       COALESCE(r.nama_rombel, m.divisi, ''),
+                                       COALESCE(mapel.nama_mapel, '')
+                                FROM master_data m
+                                LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik
+                                LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
+                                LEFT JOIN akademik_mapel mapel ON mapel.id_mapel = ?2
+                                WHERE m.id_unik = ?1
+                                LIMIT 1;
+                                "#,
+                                params![id_siswa, id_mapel],
+                                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                            )
+                            .optional()
+                            .unwrap_or(None);
+
+                        if let Some((nama_siswa, phone, nama_rombel, nama_mapel)) = parent_info {
+                            let canon_phone = super::wa_notification::normalize_phone_canonical(&phone);
+                            if super::wa_notification::is_valid_phone(&canon_phone) {
+                                let nama_tampil = if nama_siswa.is_empty() { "Siswa" } else { &nama_siswa };
+                                let rombel_tampil = if nama_rombel.is_empty() { "-" } else { &nama_rombel };
+                                let mapel_tampil = if nama_mapel.is_empty() { "Mata Pelajaran" } else { &nama_mapel };
+                                let pesan = format!(
+                                    "Yth. Wali Murid dari {nama_tampil} ({rombel_tampil}). Kami informasikan bahwa ananda tercatat hadir di sekolah namun tidak mengikuti KBM {mapel_tampil} (Jam ke-{jam_ke}) pada tanggal {tanggal}. Status: Alfa."
+                                );
+                                let draft_notif = json!({
+                                    "dedupe_key": dedupe_key,
+                                    "jenis": "bolos",
+                                    "id_siswa": id_siswa,
+                                    "tujuan_nomor": canon_phone,
+                                    "isi_pesan": pesan,
+                                });
+                                let _ = super::wa_notification::queue_wa_notification_tx(&tx, &client_id, &draft_notif)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     tx.commit().map_err(|_| CommandError::internal())?;
 

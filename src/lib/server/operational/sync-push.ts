@@ -317,8 +317,8 @@ async function applyEmployee(
           id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp,
           id_shift, status_aktif, tanggal_daftar, catatan, token_absensi,
           qr_code, status_qr, jenis_personil, tanggal_mulai_aktif,
-          tanggal_selesai_aktif, status_backup
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, ?, 'NORMAL');
+          tanggal_selesai_aktif, unit, status_backup
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Generated', ?, ?, ?, ?, 'NORMAL');
       `,
         args: [
           id,
@@ -339,6 +339,7 @@ async function applyEmployee(
           text(payload, "tanggal_mulai_aktif") ||
             new Date().toISOString().slice(0, 10),
           text(payload, "tanggal_selesai_aktif"),
+          text(payload, "unit"),
         ],
       });
       await transaction.execute({
@@ -357,7 +358,8 @@ async function applyEmployee(
         UPDATE master_data SET kode_karyawan = ?, nama = ?, divisi = ?,
           jabatan_status = ?, no_hp = ?, lp = ?, id_shift = ?,
           status_aktif = ?, catatan = ?, jenis_personil = ?,
-          tanggal_mulai_aktif = ?, tanggal_selesai_aktif = ? WHERE id_unik = ?;
+          tanggal_mulai_aktif = ?, tanggal_selesai_aktif = ?, unit = ?
+        WHERE id_unik = ?;
       `,
       args: [
         text(payload, "kode_karyawan"),
@@ -372,6 +374,7 @@ async function applyEmployee(
         text(payload, "jenis_personil") || "Pegawai",
         text(payload, "tanggal_mulai_aktif") || null,
         text(payload, "tanggal_selesai_aktif") || null,
+        text(payload, "unit") || null,
         event.entityKey,
       ],
     });

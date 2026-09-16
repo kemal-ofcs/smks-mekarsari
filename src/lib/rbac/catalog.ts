@@ -169,6 +169,11 @@ export const PERMISSION_CATALOG = [
   },
   { key: "students.view", name: "Lihat Data Siswa", group: "Akademik" },
   { key: "students.manage", name: "Kelola Data Siswa", group: "Akademik" },
+  {
+    key: "students.reset_wali_password",
+    name: "Reset / Terbitkan Password Wali",
+    group: "Akademik",
+  },
   { key: "teachers.view", name: "Lihat Data Guru & PTK", group: "Akademik" },
   { key: "teachers.manage", name: "Kelola Data Guru & PTK", group: "Akademik" },
   {
@@ -353,6 +358,8 @@ export const SENSITIVE_MUTATION_PERMISSIONS = new Set<PermissionKey>([
   // dan tidak ada jalan memulihkannya selain menilai ulang. Alasan yang sama
   // dengan .
   "grades.delete",
+  // Reset password wali menerbitkan kredensial login baru dan mencabut sesi wali yang sedang aktif.
+  "students.reset_wali_password",
 ]);
 
 export const SYSTEM_ROLE_KEYS = [

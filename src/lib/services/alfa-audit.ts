@@ -12,6 +12,19 @@ import {
   selisihHariKalender,
 } from "@/lib/attendance/time-policy";
 import { db, ensureDbInitialized } from "@/lib/db";
+import {
+  isValidOperatorPhone,
+  normalizeOperatorPhone,
+} from "@/lib/operators/contact";
+import { generateWaNotificationId } from "@/lib/services/wa-notification";
+import {
+  parseAmbangAlfaDays,
+  parseAmbangAlfaLimit,
+  settingEnabled,
+  WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
+  WA_NOTIFY_AMBANG_ALFA_KEY,
+  WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
+} from "@/lib/validations/wa-notification";
 
 export interface RingkasanAlfa {
   jumlahAlfaDibuat: number;
@@ -299,6 +312,96 @@ export async function generateAlfaHarian(
     });
 
     jumlahAlfaDibuat++;
+  }
+
+  // 3. Produsen Notifikasi Ambang Alfa Kritis (Tahap C):
+  //    Evaluasi siswa dengan akumulasi Alfa >= limit (default 3) dalam 30 hari terakhir.
+  try {
+    const waSettingsRes = await targetDb.execute({
+      sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?, ?);",
+      args: [
+        WA_NOTIFY_AMBANG_ALFA_KEY,
+        WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
+        WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
+      ],
+    });
+    const waSettingsMap = new Map<string, string>();
+    for (const r of waSettingsRes.rows) {
+      waSettingsMap.set(String(r.key), String(r.value ?? ""));
+    }
+
+    const ambangAlfaEnabled = settingEnabled(
+      waSettingsMap.get(WA_NOTIFY_AMBANG_ALFA_KEY),
+    );
+
+    if (ambangAlfaEnabled) {
+      const limit = parseAmbangAlfaLimit(
+        waSettingsMap.get(WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY),
+      );
+      const days = parseAmbangAlfaDays(
+        waSettingsMap.get(WA_NOTIFY_AMBANG_ALFA_DAYS_KEY),
+      );
+      const periodeBulan = tanggalOperasionalStr.slice(0, 7);
+
+      const thresholdRes = await targetDb.execute({
+        sql: `
+          SELECT ah.id_karyawan,
+                 COUNT(*) AS total_alfa,
+                 COALESCE(s.nama_lengkap, m.nama, '') AS nama_siswa,
+                 COALESCE(s.no_whatsapp_wali, m.no_hp, '') AS no_wa,
+                 COALESCE(r.nama_rombel, m.divisi, '') AS nama_rombel
+          FROM absensi_harian ah
+          JOIN master_data m ON m.id_unik = ah.id_karyawan
+          LEFT JOIN siswa_data s ON s.id_siswa = ah.id_karyawan
+          LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
+          WHERE ah.status_kehadiran = 'Alfa'
+            AND ah.tanggal >= date(?, '-' || ? || ' days')
+            AND ah.tanggal <= ?
+            AND (LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'siswa'
+                 OR LOWER(TRIM(COALESCE(m.divisi, ''))) = 'siswa'
+                 OR s.id_siswa IS NOT NULL)
+          GROUP BY ah.id_karyawan
+          HAVING COUNT(*) >= ?;
+        `,
+        args: [tanggalOperasionalStr, days, tanggalOperasionalStr, limit],
+      });
+
+      for (const row of thresholdRes.rows) {
+        const idSiswa = String(row.id_karyawan ?? "");
+        const dedupeKey = `ambang_alfa:${idSiswa}:${periodeBulan}`;
+
+        const existingNotif = await targetDb.execute({
+          sql: "SELECT 1 FROM notifikasi_wa WHERE dedupe_key = ? LIMIT 1;",
+          args: [dedupeKey],
+        });
+
+        if (existingNotif.rows.length === 0) {
+          const canonPhone = normalizeOperatorPhone(String(row.no_wa ?? ""));
+          if (isValidOperatorPhone(canonPhone)) {
+            const idNotif = generateWaNotificationId();
+            const namaSiswa = String(row.nama_siswa || "Siswa");
+            const namaRombel = String(row.nama_rombel || "-");
+            const totalAlfa = Number(row.total_alfa ?? limit);
+            const pesan = `Yth. Wali Murid dari ${namaSiswa} (${namaRombel}). Kami informasikan bahwa ananda telah tercatat tidak hadir tanpa keterangan (Alfa) sebanyak ${totalAlfa} kali dalam ${days} hari terakhir. Mohon perhatian dan konfirmasi dari Bapak/Ibu Wali Murid.`;
+
+            await targetDb.execute({
+              sql: `
+                INSERT INTO notifikasi_wa (
+                  id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor,
+                  isi_pesan, status, attempt_count, created_at, updated_at
+                ) VALUES (?, ?, 'ambang_alfa', ?, ?, ?, 'Menunggu', 0, datetime('now'), datetime('now'))
+                ON CONFLICT(id_notifikasi) DO UPDATE SET
+                  isi_pesan = excluded.isi_pesan,
+                  updated_at = datetime('now');
+              `,
+              args: [idNotif, dedupeKey, idSiswa, canonPhone, pesan],
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[generateAlfaHarian] Evaluasi ambang alfa gagal:", err);
   }
 
   const todayHoliday = liburSet.has(tanggalOperasionalStr)

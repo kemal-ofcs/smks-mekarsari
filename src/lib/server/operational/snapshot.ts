@@ -100,6 +100,8 @@ export async function readOperationalSnapshot(
     payrollItems,
     payrollAuditLogs,
     akademikTahunAjaran,
+    waliKredensial,
+    akademikUnit,
     akademikJurusan,
     akademikRombel,
     akademikMapel,
@@ -117,7 +119,7 @@ export async function readOperationalSnapshot(
       SELECT id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp,
              id_shift, status_aktif, tanggal_daftar, catatan, token_absensi,
              qr_code, status_qr, jenis_personil, tanggal_mulai_aktif,
-             tanggal_selesai_aktif, status_backup
+             tanggal_selesai_aktif, status_backup, unit
       FROM master_data;
     `,
       "SELECT * FROM id_card ORDER BY nama;",
@@ -168,6 +170,8 @@ export async function readOperationalSnapshot(
     `,
       "SELECT * FROM payroll_audit_logs ORDER BY created_at;",
       "SELECT * FROM akademik_tahun_ajaran ORDER BY tanggal_mulai DESC;",
+      "SELECT * FROM wali_kredensial ORDER BY id_siswa;",
+      "SELECT * FROM akademik_unit ORDER BY urutan, nama_unit;",
       "SELECT * FROM akademik_jurusan ORDER BY kode_jurusan;",
       "SELECT * FROM akademik_rombel ORDER BY tingkat, nama_rombel;",
       "SELECT * FROM akademik_mapel ORDER BY kode_mapel;",
@@ -242,6 +246,8 @@ export async function readOperationalSnapshot(
     payrollItems: plainRows(payrollItems.rows),
     payrollAuditLogs: plainRows(payrollAuditLogs.rows),
     akademikTahunAjaran: plainRows(akademikTahunAjaran.rows),
+    waliKredensial: plainRows(waliKredensial.rows),
+    akademikUnit: plainRows(akademikUnit.rows),
     akademikJurusan: plainRows(akademikJurusan.rows),
     akademikRombel: plainRows(akademikRombel.rows),
     akademikMapel: plainRows(akademikMapel.rows),
