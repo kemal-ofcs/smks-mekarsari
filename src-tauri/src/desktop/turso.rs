@@ -7025,6 +7025,12 @@ impl TursoClient {
                     "Ukuran gambar sampul melebihi batas maksimal 500 KB.",
                 ));
             }
+            if !is_valid_cover_image_data_uri(img) {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    "MIME type gambar sampul tidak didukung. Hanya JPEG, PNG, dan WebP yang diizinkan.",
+                ));
+            }
         }
 
         let penulis = draft
@@ -7263,6 +7269,30 @@ fn new_pmb_id(prefix: &str) -> String {
         crate::desktop::storage::now_epoch_seconds(),
         hex::encode(bytes)
     )
+}
+
+/// Gambar sampul berita yang sah: data URI base64 JPEG, PNG, atau WebP.
+///
+/// Cerminan `validasiGambarSampul` di `src/lib/services/content-admin.ts`, dan
+/// diuji dengan vektor yang sama — pola paritas yang dipakai `ip-allowlist`,
+/// `totp`, dan ambang alfa.
+///
+/// Sebelum ini sisi Rust hanya memeriksa PANJANG payload-nya, sehingga nilai
+/// yang ditolak jalur Web diterima jalur Desktop/Mobile lalu tersimpan di
+/// cloud. Ia tidak bisa dieksekusi browser dari atribut `src` sebuah `<img>`,
+/// jadi bukan lubang XSS — yang terjadi adalah gambar rusak di situs publik,
+/// tanpa satu pun pesan kesalahan di tempat mana pun untuk menjelaskannya.
+pub fn is_valid_cover_image_data_uri(value: &str) -> bool {
+    const PREFIKS_SAH: [&str; 3] = [
+        "data:image/jpeg;base64,",
+        "data:image/png;base64,",
+        "data:image/webp;base64,",
+    ];
+    // Peka huruf besar-kecil, sama seperti regex TypeScript-nya yang tidak
+    // memakai bendera `i`. Muatan kosong sesudah koma TIDAK ditolak di sini,
+    // juga persis seperti regex itu — menambahkan pemeriksaan yang hanya ada di
+    // satu sisi justru menghidupkan kembali selisih yang sedang diperbaiki.
+    PREFIKS_SAH.iter().any(|prefiks| value.starts_with(prefiks))
 }
 
 fn slugify(text: &str) -> String {
@@ -13033,6 +13063,50 @@ fn chrono_like_now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Gambar sampul berita diterima dengan aturan yang SAMA seperti
+    /// `validasiGambarSampul` di `src/lib/services/content-admin.ts`.
+    ///
+    /// Sebelumnya sisi Rust hanya memeriksa panjang payload, sehingga nilai
+    /// yang ditolak jalur Web diterima jalur Desktop/Mobile lalu tersimpan di
+    /// cloud dan muncul sebagai gambar rusak di situs publik.
+    #[test]
+    fn gambar_sampul_hanya_menerima_mime_yang_sama_dengan_typescript() {
+        // Ketiga jenis yang diizinkan.
+        assert!(is_valid_cover_image_data_uri("data:image/jpeg;base64,/9j/4AAQ"));
+        assert!(is_valid_cover_image_data_uri("data:image/png;base64,iVBORw0KGgo"));
+        assert!(is_valid_cover_image_data_uri("data:image/webp;base64,UklGRg"));
+
+        // Jenis gambar lain TIDAK termasuk, meski tetap sebuah gambar.
+        assert!(!is_valid_cover_image_data_uri("data:image/gif;base64,R0lGODlh"));
+        assert!(!is_valid_cover_image_data_uri(
+            "data:image/svg+xml;base64,PHN2Zw"
+        ));
+
+        // Bukan gambar sama sekali.
+        assert!(!is_valid_cover_image_data_uri(
+            "data:text/html;base64,PHNjcmlwdD4"
+        ));
+        assert!(!is_valid_cover_image_data_uri(
+            "data:application/pdf;base64,JVBERi0"
+        ));
+
+        // Bukan data URI, dan URL jarak jauh — keduanya ditolak.
+        assert!(!is_valid_cover_image_data_uri("https://contoh.test/foto.jpg"));
+        assert!(!is_valid_cover_image_data_uri("javascript:alert(1)"));
+        assert!(!is_valid_cover_image_data_uri("iVBORw0KGgo"));
+        assert!(!is_valid_cover_image_data_uri(""));
+
+        // Pengkodean selain base64 ditolak: regex TypeScript menuntut
+        // `;base64,` secara harfiah.
+        assert!(!is_valid_cover_image_data_uri("data:image/png,iVBORw0KGgo"));
+        assert!(!is_valid_cover_image_data_uri(
+            "data:image/png;charset=utf-8,abc"
+        ));
+
+        // Peka huruf besar-kecil, sama seperti regex yang tanpa bendera `i`.
+        assert!(!is_valid_cover_image_data_uri("DATA:IMAGE/PNG;BASE64,iVBORw0"));
+    }
 
     /// Nomor HP harus dinormalisasi sama persis dengan
     /// `src/lib/operators/contact.ts`. Bila kedua sisi berbeda, satu operator
