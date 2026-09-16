@@ -3686,3 +3686,70 @@ pub fn desktop_delete_assessment(
     require_permission(&state, "grades.delete")?;
     super::grades::delete_assessment(&state, &id_penilaian)
 }
+
+/// Mengambil daftar artikel berita (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_list_articles(
+    state: State<'_, DesktopState>,
+    status: Option<String>,
+    search: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "content.view")?;
+    state
+        .get_turso_client()?
+        .list_articles(status.as_deref(), search.as_deref(), limit, offset)
+        .await
+}
+
+/// Mengambil satu detail artikel berita (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_get_article(
+    state: State<'_, DesktopState>,
+    id_berita: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "content.view")?;
+    state.get_turso_client()?.get_article(&id_berita).await
+}
+
+/// Menyimpan atau memperbarui artikel berita (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_save_article(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "content.manage")?;
+    state.get_turso_client()?.save_article(&draft).await
+}
+
+/// Menghapus artikel berita dari CMS (Cloud-Only, Izin Sensitif).
+#[tauri::command]
+pub async fn desktop_delete_article(
+    state: State<'_, DesktopState>,
+    id_berita: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "content.delete")?;
+    state.get_turso_client()?.delete_article(&id_berita).await
+}
+
+/// Mengambil key-value konten halaman publik (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_get_page_content(
+    state: State<'_, DesktopState>,
+    halaman: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "content.view")?;
+    state.get_turso_client()?.get_page_content(&halaman).await
+}
+
+/// Menyimpan konten key-value halaman publik (Cloud-Only).
+#[tauri::command]
+pub async fn desktop_save_page_content(
+    state: State<'_, DesktopState>,
+    halaman: String,
+    items: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "content.manage")?;
+    state.get_turso_client()?.save_page_content(&halaman, &items).await
+}

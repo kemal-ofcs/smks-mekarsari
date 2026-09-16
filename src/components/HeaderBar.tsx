@@ -106,6 +106,24 @@ const NAVIGATION: NavigationItem[] = [
     label: "Bimbingan Konseling",
   },
   {
+    area: "pmb",
+    href: "/pmb",
+    icon: "document",
+    label: "PMB",
+  },
+  {
+    area: "nilai",
+    href: "/nilai",
+    icon: "document",
+    label: "Penilaian",
+  },
+  {
+    area: "konten",
+    href: "/konten",
+    icon: "monitor",
+    label: "Situs Publik",
+  },
+  {
     area: "audit",
     href: "/audit-absensi",
     icon: "alert",
@@ -176,6 +194,7 @@ const MANAGEMENT_GROUPS: ReadonlyArray<{
       "presensi_kelas",
       "jurnal_mengajar",
       "leger_kehadiran",
+      "nilai",
       "bimbingan_konseling",
     ],
   },
@@ -186,6 +205,10 @@ const MANAGEMENT_GROUPS: ReadonlyArray<{
   {
     label: "Operasional",
     areas: ["operational", "payroll", "notifikasi_wa"],
+  },
+  {
+    label: "Situs Publik",
+    areas: ["konten", "pmb"],
   },
   { label: "Sistem", areas: ["operators", "password_reset", "settings"] },
 ];

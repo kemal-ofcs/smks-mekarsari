@@ -2,8 +2,8 @@ import type { Client } from "@libsql/client";
 import { BRANDING } from "@/lib/constants/branding";
 import { runDatabaseMigrations } from "./db-migrations";
 
-export const CURRENT_SCHEMA_VERSION = 30;
-export const REQUIRED_TABLE_COUNT = 63;
+export const CURRENT_SCHEMA_VERSION = 31;
+export const REQUIRED_TABLE_COUNT = 65;
 
 export async function isDatabaseSchemaReady(client: Client) {
   try {
@@ -34,7 +34,8 @@ export async function isDatabaseSchemaReady(client: Client) {
             'notifikasi_wa', 'app_wa_config', 'bk_kasus', 'bk_sesi',
             'pmb_gelombang', 'pmb_pendaftar', 'pmb_berkas',
             'wali_otp', 'wali_session', 'wali_kredensial',
-            'nilai_penilaian', 'nilai_siswa'
+            'nilai_penilaian', 'nilai_siswa',
+            'berita', 'konten_publik'
           )
         ) AS table_count;
     `);
@@ -305,6 +306,34 @@ export async function initDatabaseSchema(client: Client) {
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+    `);
+
+    // 24. berita (CMS Landing Page)
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS berita (
+        id_berita TEXT PRIMARY KEY,
+        judul TEXT NOT NULL,
+        slug TEXT NOT NULL UNIQUE,
+        ringkasan TEXT NOT NULL,
+        isi TEXT NOT NULL,
+        gambar_sampul TEXT,
+        status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft', 'Terbit')),
+        tanggal_terbit TEXT,
+        penulis TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+
+    // 25. konten_publik (CMS Key-Value per Halaman)
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS konten_publik (
+        halaman TEXT NOT NULL,
+        kunci TEXT NOT NULL,
+        nilai TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (halaman, kunci)
       );
     `);
 

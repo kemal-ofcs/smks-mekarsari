@@ -240,6 +240,12 @@ pub fn run() {
             desktop::commands::desktop_save_assessment,
             desktop::commands::desktop_save_scores,
             desktop::commands::desktop_delete_assessment,
+            desktop::commands::desktop_list_articles,
+            desktop::commands::desktop_get_article,
+            desktop::commands::desktop_save_article,
+            desktop::commands::desktop_delete_article,
+            desktop::commands::desktop_get_page_content,
+            desktop::commands::desktop_save_page_content,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| {

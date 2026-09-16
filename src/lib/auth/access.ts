@@ -28,7 +28,8 @@ export type AppArea =
   | "notifikasi_wa"
   | "bimbingan_konseling"
   | "pmb"
-  | "nilai";
+  | "nilai"
+  | "konten";
 
 export interface AccessSubject {
   isSuperadmin: boolean;
@@ -54,6 +55,7 @@ const AREA_PERMISSION: Record<
   bimbingan_konseling: "counseling.view",
   pmb: "pmb.view",
   nilai: "grades.view",
+  konten: "content.view",
   karyawan: "employees.view",
   idcards: "employees.manage",
   shift: "shifts.view",

@@ -2153,7 +2153,10 @@ impl TursoClient {
                 ('pmb.promote', 'Jadikan Pendaftar Sebagai Siswa', 'Kesiswaan', 'Mengangkat pendaftar yang diterima menjadi siswa aktif beserta kartu identitasnya.', 1, 703),
                 ('grades.view', 'Lihat Nilai Akademik', 'Akademik', 'Melihat daftar penilaian dan nilai siswa per mata pelajaran.', 1, 800),
                 ('grades.manage', 'Kelola Penilaian & Input Nilai', 'Akademik', 'Membuat penilaian baru dan menginput nilai siswa.', 1, 801),
-                ('grades.delete', 'Hapus Penilaian Beserta Nilainya', 'Akademik', 'Menghapus penilaian beserta seluruh nilai siswa di dalamnya.', 1, 802);"#,
+                ('grades.delete', 'Hapus Penilaian Beserta Nilainya', 'Akademik', 'Menghapus penilaian beserta seluruh nilai siswa di dalamnya.', 1, 802),
+                ('content.view', 'Lihat Konten & Berita CMS', 'Situs Publik', 'Melihat daftar berita dan konten situs publik.', 1, 900),
+                ('content.manage', 'Kelola Konten & Berita CMS', 'Situs Publik', 'Membuat atau mengedit berita dan konten situs publik.', 1, 901),
+                ('content.delete', 'Hapus Konten & Berita CMS', 'Situs Publik', 'Menghapus berita atau artikel dari CMS situs publik.', 1, 902);"#,
                 vec![],
             ),
             // Seed Default Role Permissions untuk Role Superadmin (Role 1)
@@ -2867,6 +2870,53 @@ impl TursoClient {
             Statement::new("CREATE INDEX IF NOT EXISTS idx_nilai_penilaian_kelas ON nilai_penilaian(id_tahun_ajaran, semester, id_rombel, id_mapel);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_nilai_siswa_penilaian ON nilai_siswa(id_penilaian);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_nilai_siswa_siswa ON nilai_siswa(id_siswa, created_at);", vec![]),
+            // ── v31: CMS Landing Page (Berita & Konten Publik) ──
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS berita (
+                    id_berita TEXT PRIMARY KEY,
+                    judul TEXT NOT NULL,
+                    slug TEXT NOT NULL UNIQUE,
+                    ringkasan TEXT NOT NULL,
+                    isi TEXT NOT NULL,
+                    gambar_sampul TEXT,
+                    status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft', 'Terbit')),
+                    tanggal_terbit TEXT,
+                    penulis TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS konten_publik (
+                    halaman TEXT NOT NULL,
+                    kunci TEXT NOT NULL,
+                    nilai TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    PRIMARY KEY (halaman, kunci)
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE UNIQUE INDEX IF NOT EXISTS idx_berita_slug ON berita(slug);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_berita_status_terbit ON berita(status, tanggal_terbit DESC);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_konten_publik_halaman ON konten_publik(halaman);", vec![]),
+            Statement::new(
+                r#"INSERT OR IGNORE INTO konten_publik (halaman, kunci, nilai) VALUES
+                ('profil', 'visi', 'Mewujudkan generasi unggul, berakhlak mulia, berwawasan global, dan berdaya saing di era digital.'),
+                ('profil', 'misi', '["Menyelenggarakan pendidikan holistik berbasis karakter dan nilai-nilai luhur.","Mengembangkan potensi akademik dan non-akademik siswa melalui kurikulum terintegrasi teknologi.","Menciptakan lingkungan belajar yang adaptif, inovatif, dan berstandar internasional.","Membangun kemitraan strategis dengan dunia industri dan perguruan tinggi terkemuka."]'),
+                ('profil', 'sejarah', 'Didirikan dengan dedikasi untuk memajukan kualitas pendidikan, sekolah kami terus bertransformasi menjadi lembaga pendidikan percontohan yang melahirkan lulusan berprestasi di kancah nasional maupun internasional.'),
+                ('profil', 'sambutan', 'Selamat datang di portal resmi sekolah kami. Kami berkomitmen memberikan layanan pendidikan terbaik yang menumbuhkan potensi setiap siswa secara optimal dalam lingkungan belajar yang aman, cerdas, dan berkarakter.'),
+                ('kontak', 'jam_operasional', 'Senin – Jumat: 07.00 – 15.30 WIB'),
+                ('kontak', 'catatan_pelayanan', 'Pelayanan administrasi dan konsultasi orang tua dilayani pada jam kerja operasional sekolah.'),
+                ('kontak', 'instagram', ''),
+                ('kontak', 'facebook', ''),
+                ('kontak', 'youtube', ''),
+                ('landing', 'hero_tagline', 'Pendidikan Karakter & Teknologi Menuju Masa Depan'),
+                ('landing', 'hero_subtagline', 'Mempersiapkan Generasi Pemimpin Cerdas, Mandiri, dan Berakhlak Mulia di Era Digital'),
+                ('landing', 'fasilitas_pengantar', 'Lingkungan kampus hijau dengan sarana prasarana modern untuk mendukung eksplorasi sains, seni, dan teknologi.'),
+                ('landing', 'ekskul_pengantar', 'Wadah pembinaan minat dan bakat siswa dalam bidang kepemimpinan, olahraga, seni, dan sains teknologi.');"#,
+                vec![],
+            ),
             // Seed Default Overtime Rules
             Statement::new(crate::desktop::payroll_seed::OVERTIME_TIER_RULES_SEED_SQL, vec![]),
             // Seed Default Tax Rules (Pasal 17 & TER Baseline)
@@ -2890,7 +2940,8 @@ impl TursoClient {
                 (27, 'wali-portal', datetime('now')),
                 (28, 'academic-grades', datetime('now')),
                 (29, 'academic-unit', datetime('now')),
-                (30, 'wali-kredensial', datetime('now'));"#,
+                (30, 'wali-kredensial', datetime('now')),
+                (31, 'cms-landing-page', datetime('now'));"#,
                 vec![],
             ),
         ];
@@ -3202,6 +3253,11 @@ impl TursoClient {
             vec![],
         )
         .await?;
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2016, 'cms-landing-page-v1', datetime('now'));",
+            vec![],
+        )
+        .await?;
 
         Ok(())
     }
@@ -3472,7 +3528,7 @@ impl TursoClient {
                 // Sentinel WAJIB dinaikkan setiap kali ensure_schema menambah
                 // tabel atau kolom — nilainya di sini dan pada INSERT di atas
                 // harus selalu sama.
-                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2015;",
+                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2016;",
                 vec![],
             )
             .await
@@ -6826,6 +6882,359 @@ impl TursoClient {
 
         Ok(json!({ "sukses": true }))
     }
+
+    // ── CMS Landing Page (Berita & Konten Publik) ───────────────────────────
+    //
+    // Kedua tabelnya CLOUD-ONLY: disimpan langsung di Turso/LibSQL dan tidak
+    // masuk ke SQLite lokal perangkat agar payload gambar sampul base64 dan
+    // teks panjang artikel tidak membebani terminal offline.
+
+    pub async fn list_articles(
+        &self,
+        status: Option<&str>,
+        search: Option<&str>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let limit = limit.unwrap_or(50).clamp(1, 100);
+        let offset = offset.unwrap_or(0).max(0);
+
+        let mut conditions = Vec::new();
+        let mut params = Vec::new();
+
+        if let Some(st) = status.map(str::trim).filter(|s| !s.is_empty()) {
+            conditions.push("status = ?");
+            params.push(json!(st));
+        }
+
+        if let Some(q) = search.map(str::trim).filter(|s| !s.is_empty()) {
+            conditions.push("(judul LIKE ? OR ringkasan LIKE ? OR penulis LIKE ?)");
+            let pattern = format!("%{q}%");
+            params.push(json!(pattern));
+            params.push(json!(pattern));
+            params.push(json!(pattern));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let count_sql = format!("SELECT COUNT(*) AS total FROM berita {where_clause};");
+        let count_res = self.query_one(&count_sql, params.clone()).await?;
+        let total = count_res
+            .to_objects()
+            .into_iter()
+            .next()
+            .and_then(|r| r.get("total").cloned())
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let data_sql = format!(
+            r#"SELECT id_berita, judul, slug, ringkasan, status, tanggal_terbit,
+                      penulis, created_at, updated_at
+                 FROM berita
+                 {where_clause}
+             ORDER BY CASE WHEN tanggal_terbit IS NOT NULL AND tanggal_terbit <> '' THEN tanggal_terbit ELSE created_at END DESC
+                LIMIT ? OFFSET ?;"#
+        );
+        params.push(json!(limit));
+        params.push(json!(offset));
+
+        let data_res = self.query_one(&data_sql, params).await?;
+        Ok(json!({
+            "items": data_res.to_objects(),
+            "total": total
+        }))
+    }
+
+    pub async fn get_article(&self, id_berita: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let res = self
+            .query_one(
+                r#"SELECT id_berita, judul, slug, ringkasan, isi, gambar_sampul,
+                          status, tanggal_terbit, penulis, created_at, updated_at
+                     FROM berita
+                    WHERE id_berita = ?
+                    LIMIT 1;"#,
+                vec![json!(id_berita)],
+            )
+            .await?;
+
+        let row = res
+            .to_objects()
+            .into_iter()
+            .next()
+            .ok_or_else(|| CommandError::new("NOT_FOUND", "Artikel berita tidak ditemukan."))?;
+        Ok(json!(row))
+    }
+
+    pub async fn get_article_by_slug(&self, slug: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let res = self
+            .query_one(
+                r#"SELECT id_berita, judul, slug, ringkasan, isi, gambar_sampul,
+                          status, tanggal_terbit, penulis, created_at, updated_at
+                     FROM berita
+                    WHERE slug = ?
+                    LIMIT 1;"#,
+                vec![json!(slug)],
+            )
+            .await?;
+
+        let row = res
+            .to_objects()
+            .into_iter()
+            .next()
+            .ok_or_else(|| CommandError::new("NOT_FOUND", "Artikel berita tidak ditemukan."))?;
+        Ok(json!(row))
+    }
+
+    pub async fn save_article(&self, draft: &Value) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+
+        let judul = teks_wajib(draft, "judul", "Judul artikel wajib diisi.")?;
+        let ringkasan = teks_wajib(draft, "ringkasan", "Ringkasan artikel wajib diisi.")?;
+        let isi = teks_wajib(draft, "isi", "Isi artikel wajib diisi.")?;
+
+        let status = draft
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("Draft")
+            .trim();
+        if status != "Draft" && status != "Terbit" {
+            return Err(CommandError::new(
+                "VALIDATION_ERROR",
+                "Status artikel hanya boleh 'Draft' atau 'Terbit'.",
+            ));
+        }
+
+        let gambar_sampul = draft
+            .get("gambarSampul")
+            .or_else(|| draft.get("gambar_sampul"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        if let Some(img) = gambar_sampul {
+            if img.len() > 750_000 {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    "Ukuran gambar sampul melebihi batas maksimal 500 KB.",
+                ));
+            }
+        }
+
+        let penulis = draft
+            .get("penulis")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Admin");
+
+        let input_slug = draft
+            .get("slug")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(slugify)
+            .unwrap_or_else(|| slugify(&judul));
+
+        let id_berita_opt = draft
+            .get("idBerita")
+            .or_else(|| draft.get("id_berita"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let mut final_slug = input_slug.clone();
+        let id_berita = match id_berita_opt {
+            Some(id) => {
+                let check_slug = self
+                    .query_one(
+                        "SELECT COUNT(*) AS total FROM berita WHERE slug = ? AND id_berita <> ?;",
+                        vec![json!(final_slug), json!(id)],
+                    )
+                    .await?;
+                let bentrok = check_slug
+                    .to_objects()
+                    .into_iter()
+                    .next()
+                    .and_then(|r| r.get("total").cloned())
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    > 0;
+                if bentrok {
+                    final_slug = format!("{}-{}", final_slug, id.chars().take(4).collect::<String>());
+                }
+
+                let tanggal_terbit = draft
+                    .get("tanggalTerbit")
+                    .or_else(|| draft.get("tanggal_terbit"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+
+                self.query_one(
+                    r#"UPDATE berita
+                          SET judul = ?, slug = ?, ringkasan = ?, isi = ?,
+                              gambar_sampul = ?, status = ?,
+                              tanggal_terbit = CASE
+                                  WHEN ? IS NOT NULL THEN ?
+                                  WHEN ? = 'Terbit' THEN datetime('now', '+7 hours')
+                                  ELSE NULL
+                              END,
+                              penulis = ?, updated_at = datetime('now')
+                        WHERE id_berita = ?;"#,
+                    vec![
+                        json!(judul),
+                        json!(final_slug),
+                        json!(ringkasan),
+                        json!(isi),
+                        json!(gambar_sampul),
+                        json!(status),
+                        tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
+                        tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
+                        json!(status),
+                        json!(penulis),
+                        json!(id),
+                    ],
+                )
+                .await?;
+                id.to_string()
+            }
+            None => {
+                let id = new_pmb_id("art");
+                let check_slug = self
+                    .query_one(
+                        "SELECT COUNT(*) AS total FROM berita WHERE slug = ?;",
+                        vec![json!(final_slug)],
+                    )
+                    .await?;
+                let bentrok = check_slug
+                    .to_objects()
+                    .into_iter()
+                    .next()
+                    .and_then(|r| r.get("total").cloned())
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    > 0;
+                if bentrok {
+                    final_slug = format!("{}-{}", final_slug, id.chars().take(4).collect::<String>());
+                }
+
+                let tanggal_terbit = draft
+                    .get("tanggalTerbit")
+                    .or_else(|| draft.get("tanggal_terbit"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+
+                self.query_one(
+                    r#"INSERT INTO berita (
+                           id_berita, judul, slug, ringkasan, isi, gambar_sampul,
+                           status, tanggal_terbit, penulis, created_at, updated_at
+                       ) VALUES (
+                           ?, ?, ?, ?, ?, ?,
+                           ?,
+                           CASE
+                               WHEN ? IS NOT NULL THEN ?
+                               WHEN ? = 'Terbit' THEN datetime('now', '+7 hours')
+                               ELSE NULL
+                           END,
+                           ?, datetime('now'), datetime('now')
+                       );"#,
+                    vec![
+                        json!(id),
+                        json!(judul),
+                        json!(final_slug),
+                        json!(ringkasan),
+                        json!(isi),
+                        json!(gambar_sampul),
+                        json!(status),
+                        tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
+                        tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
+                        json!(status),
+                        json!(penulis),
+                    ],
+                )
+                .await?;
+                id
+            }
+        };
+
+        Ok(json!({
+            "idBerita": id_berita,
+            "slug": final_slug
+        }))
+    }
+
+    pub async fn delete_article(&self, id_berita: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let hasil = self
+            .query_one("DELETE FROM berita WHERE id_berita = ?;", vec![json!(id_berita)])
+            .await?;
+
+        if hasil.rows_affected == 0 {
+            return Err(CommandError::new("NOT_FOUND", "Artikel berita tidak ditemukan."));
+        }
+
+        Ok(json!({ "sukses": true }))
+    }
+
+    pub async fn get_page_content(&self, halaman: &str) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let res = self
+            .query_one(
+                "SELECT kunci, nilai FROM konten_publik WHERE halaman = ? ORDER BY kunci ASC;",
+                vec![json!(halaman)],
+            )
+            .await?;
+
+        let mut map = serde_json::Map::new();
+        for row in res.to_objects() {
+            if let (Some(k), Some(v)) = (
+                row.get("kunci").and_then(Value::as_str),
+                row.get("nilai").and_then(Value::as_str),
+            ) {
+                map.insert(k.to_string(), json!(v));
+            }
+        }
+
+        Ok(json!({ "items": map }))
+    }
+
+    pub async fn save_page_content(&self, halaman: &str, items: &Value) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let obj = items.as_object().ok_or_else(|| {
+            CommandError::new("VALIDATION_ERROR", "Data konten halaman harus berupa objek key-value.")
+        })?;
+
+        let mut statements = Vec::new();
+        for (kunci, nilai_val) in obj {
+            let nilai_str = match nilai_val {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            statements.push(Statement::new(
+                r#"INSERT INTO konten_publik (halaman, kunci, nilai, updated_at)
+                   VALUES (?, ?, ?, datetime('now'))
+                   ON CONFLICT(halaman, kunci) DO UPDATE
+                   SET nilai = excluded.nilai, updated_at = excluded.updated_at;"#,
+                vec![json!(halaman), json!(kunci), json!(nilai_str)],
+            ));
+        }
+
+        if !statements.is_empty() {
+            self.execute_pipeline(statements).await?;
+        }
+
+        Ok(json!({ "sukses": true }))
+    }
 }
 
 /// Teks wajib dari draft JSON, dengan pesan yang menyebut kolomnya.
@@ -6854,6 +7263,28 @@ fn new_pmb_id(prefix: &str) -> String {
         crate::desktop::storage::now_epoch_seconds(),
         hex::encode(bytes)
     )
+}
+
+fn slugify(text: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash && !slug.is_empty() {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    if slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        "berita".to_string()
+    } else {
+        slug
+    }
 }
 
 fn extract_attendance_row_params(row: &Value, id_sesi: &str) -> Vec<Value> {
@@ -13137,7 +13568,7 @@ mod tests {
                    (3, 3, 'Fleksibel', '00:00', '23:59', 1439, 0),
                    (4, 4, 'Fleksibel Nol', '08:00', '17:00', 0, 60),
                    (5, 5, 'Pendek', '07:00', '07:30', 30, 60);
-                 DELETE FROM schema_migration WHERE version IN (21, -2014, -2015);",
+                 DELETE FROM schema_migration WHERE version IN (21, -2014, -2015, -2016);",
             )
             .expect("siapkan shift lama");
         runtime.block_on(async {

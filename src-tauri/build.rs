@@ -224,6 +224,12 @@ const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_save_assessment",
     "desktop_save_scores",
     "desktop_delete_assessment",
+    "desktop_list_articles",
+    "desktop_get_article",
+    "desktop_save_article",
+    "desktop_delete_article",
+    "desktop_get_page_content",
+    "desktop_save_page_content",
 ];
 
 fn local_build_values() -> HashMap<String, String> {

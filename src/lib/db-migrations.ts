@@ -34,6 +34,7 @@ const WALI_PORTAL_MIGRATION_VERSION = 27;
 const GRADES_MIGRATION_VERSION = 28;
 const ACADEMIC_UNIT_MIGRATION_VERSION = 29;
 const WALI_KREDENSIAL_MIGRATION_VERSION = 30;
+const CMS_LANDING_PAGE_MIGRATION_VERSION = 31;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -1820,6 +1821,65 @@ export async function runDatabaseMigrations(client: Client) {
           VALUES (?, 'wali-kredensial', ?);`,
     args: [WALI_KREDENSIAL_MIGRATION_VERSION, now],
   });
+
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS berita (
+      id_berita TEXT PRIMARY KEY,
+      judul TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      ringkasan TEXT NOT NULL,
+      isi TEXT NOT NULL,
+      gambar_sampul TEXT,
+      status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft', 'Terbit')),
+      tanggal_terbit TEXT,
+      penulis TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS konten_publik (
+      halaman TEXT NOT NULL,
+      kunci TEXT NOT NULL,
+      nilai TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (halaman, kunci)
+    );
+  `);
+
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'cms-landing-page', ?);`,
+    args: [CMS_LANDING_PAGE_MIGRATION_VERSION, now],
+  });
+
+  await client.execute(`
+    INSERT OR IGNORE INTO konten_publik (halaman, kunci, nilai) VALUES
+    ('profil', 'visi', 'Mewujudkan generasi unggul, berakhlak mulia, berwawasan global, dan berdaya saing di era digital.'),
+    ('profil', 'misi', '["Menyelenggarakan pendidikan holistik berbasis karakter dan nilai-nilai luhur.","Mengembangkan potensi akademik dan non-akademik siswa melalui kurikulum terintegrasi teknologi.","Menciptakan lingkungan belajar yang adaptif, inovatif, dan berstandar internasional.","Membangun kemitraan strategis dengan dunia industri dan perguruan tinggi terkemuka."]'),
+    ('profil', 'sejarah', 'Didirikan dengan dedikasi untuk memajukan kualitas pendidikan, sekolah kami terus bertransformasi menjadi lembaga pendidikan percontohan yang melahirkan lulusan berprestasi di kancah nasional maupun internasional.'),
+    ('profil', 'sambutan', 'Selamat datang di portal resmi sekolah kami. Kami berkomitmen memberikan layanan pendidikan terbaik yang menumbuhkan potensi setiap siswa secara optimal dalam lingkungan belajar yang aman, cerdas, dan berkarakter.'),
+    ('kontak', 'jam_operasional', 'Senin – Jumat: 07.00 – 15.30 WIB'),
+    ('kontak', 'catatan_pelayanan', 'Pelayanan administrasi dan konsultasi orang tua dilayani pada jam kerja operasional sekolah.'),
+    ('kontak', 'instagram', ''),
+    ('kontak', 'facebook', ''),
+    ('kontak', 'youtube', ''),
+    ('landing', 'hero_tagline', 'Pendidikan Karakter & Teknologi Menuju Masa Depan'),
+    ('landing', 'hero_subtagline', 'Mempersiapkan Generasi Pemimpin Cerdas, Mandiri, dan Berakhlak Mulia di Era Digital'),
+    ('landing', 'fasilitas_pengantar', 'Lingkungan kampus hijau dengan sarana prasarana modern untuk mendukung eksplorasi sains, seni, dan teknologi.'),
+    ('landing', 'ekskul_pengantar', 'Wadah pembinaan minat dan bakat siswa dalam bidang kepemimpinan, olahraga, seni, dan sains teknologi.');
+  `);
+
+  await client.execute(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_berita_slug ON berita(slug);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_berita_status_terbit ON berita(status, tanggal_terbit DESC);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_konten_publik_halaman ON konten_publik(halaman);",
+  );
 
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_presensi_mapel_lookup ON presensi_mapel(id_tahun_ajaran, id_rombel, id_mapel, tanggal);",

@@ -102,6 +102,9 @@ describe("dynamic RBAC migration", () => {
       // v30 — kredensial portal wali murid: tabel `wali_kredensial` (cloud-only)
       // untuk autentikasi kata sandi dan manajemen akun wali di panel admin.
       30,
+      // v31 — CMS landing page: tabel `berita` dan `konten_publik` (cloud-only)
+      // untuk pengelolaan konten dan artikel sekolah di situs publik.
+      31,
     ]);
 
     const sessionColumns = await client.execute(

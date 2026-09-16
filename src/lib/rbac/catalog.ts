@@ -296,6 +296,21 @@ export const PERMISSION_CATALOG = [
     name: "Hapus Penilaian Beserta Nilainya",
     group: "Akademik",
   },
+  {
+    key: "content.view",
+    name: "Lihat Konten & Berita CMS",
+    group: "Situs Publik",
+  },
+  {
+    key: "content.manage",
+    name: "Kelola Konten & Berita CMS",
+    group: "Situs Publik",
+  },
+  {
+    key: "content.delete",
+    name: "Hapus Konten & Berita CMS",
+    group: "Situs Publik",
+  },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_CATALOG)[number]["key"];
@@ -360,6 +375,8 @@ export const SENSITIVE_MUTATION_PERMISSIONS = new Set<PermissionKey>([
   "grades.delete",
   // Reset password wali menerbitkan kredensial login baru dan mencabut sesi wali yang sedang aktif.
   "students.reset_wali_password",
+  // Menghapus berita atau artikel dari CMS situs publik.
+  "content.delete",
 ]);
 
 export const SYSTEM_ROLE_KEYS = [
@@ -400,6 +417,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     // Ikut paket bawaan operator supaya role yang sudah ada tidak terkunci dari
     // halaman yang akan mereka pakai begitu modulnya hidup.
     "grades.view",
+    "content.view",
   ],
   scanner: ["home.view", "scanner.use", "sync.view"],
 };
