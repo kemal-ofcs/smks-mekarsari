@@ -33,17 +33,51 @@ pub const WA_NOTIFY_AMBANG_ALFA_DAYS_KEY: &str = "wa_notify_ambang_alfa_days";
 pub const DEFAULT_AMBANG_ALFA_LIMIT: i64 = 3;
 pub const DEFAULT_AMBANG_ALFA_DAYS: i64 = 30;
 
+/// Batas atas kedua parameter ambang alfa.
+///
+/// Dieja SAMA PERSIS dengan `parseAmbangAlfaLimit`/`parseAmbangAlfaDays` di
+/// `src/lib/validations/wa-notification.ts`, dan diuji dengan vektor yang sama
+/// — pola paritas yang dipakai `ip-allowlist`, `totp`, dan `holiday-whitelist`.
+///
+/// Tanpa batas atas ini kedua sisi pernah berselisih: nilai `500` yang
+/// tersimpan dihormati apa adanya oleh Rust (praktis tidak ada wali yang
+/// diberi tahu) sementara TypeScript menolaknya dan jatuh ke 3 (banyak yang
+/// diberi tahu). Satu sekolah, dua arti untuk "3 alfa dalam 30 hari", tanpa
+/// satu pun pesan kesalahan yang menunjukkannya.
+pub const MAX_AMBANG_ALFA_LIMIT: i64 = 100;
+pub const MAX_AMBANG_ALFA_DAYS: i64 = 365;
+
+/// Nilai ambang yang sah, atau bawaannya. Di luar rentang = BAWAAN, bukan
+/// dipotong ke tepi rentang — sengaja, karena itulah yang dilakukan sisi
+/// TypeScript, dan menebak "maksudnya 100" dari ketikan 500 sama menyesatkannya
+/// di kedua sisi.
+pub fn clamp_ambang_alfa_limit(value: i64) -> i64 {
+    if value > 0 && value <= MAX_AMBANG_ALFA_LIMIT {
+        value
+    } else {
+        DEFAULT_AMBANG_ALFA_LIMIT
+    }
+}
+
+pub fn clamp_ambang_alfa_days(value: i64) -> i64 {
+    if value > 0 && value <= MAX_AMBANG_ALFA_DAYS {
+        value
+    } else {
+        DEFAULT_AMBANG_ALFA_DAYS
+    }
+}
+
 /// Urai nilai batas alfa dan rentang hari dari tabel settings.
 pub fn parse_ambang_alfa_settings(settings: &HashMap<String, String>) -> (i64, i64) {
     let limit = settings
         .get(WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY)
         .and_then(|v| v.trim().parse::<i64>().ok())
-        .filter(|&v| v > 0)
+        .map(clamp_ambang_alfa_limit)
         .unwrap_or(DEFAULT_AMBANG_ALFA_LIMIT);
     let days = settings
         .get(WA_NOTIFY_AMBANG_ALFA_DAYS_KEY)
         .and_then(|v| v.trim().parse::<i64>().ok())
-        .filter(|&v| v > 0)
+        .map(clamp_ambang_alfa_days)
         .unwrap_or(DEFAULT_AMBANG_ALFA_DAYS);
     (limit, days)
 }
@@ -560,6 +594,53 @@ mod tests {
         settings.insert(WA_NOTIFY_BOLOS_KEY.to_string(), "TRUE".to_string());
         assert!(wa_notify_enabled(&settings, "bolos"));
         assert!(!wa_notify_enabled(&settings, "jenis_yang_tidak_ada"));
+    }
+
+    /// Ambang alfa diurai SAMA PERSIS dengan `parseAmbangAlfaLimit` dan
+    /// `parseAmbangAlfaDays` di `src/lib/validations/wa-notification.ts`.
+    ///
+    /// Vektornya disalin dari `wa-notification.test.ts` supaya keduanya
+    /// bergerak bersama. Sebelum batas atas ini ada, sisi Rust menerima 101 apa
+    /// adanya sementara TypeScript menolaknya dan memakai 3: mesin evaluasi di
+    /// Desktop dan di Web lalu memakai ambang yang berbeda untuk sekolah yang
+    /// sama, tanpa satu pun pesan kesalahan yang menunjukkannya.
+    #[test]
+    fn ambang_alfa_diurai_sesuai_vektor_typescript() {
+        let urai = |limit: &str, days: &str| {
+            let mut settings = HashMap::new();
+            settings.insert(
+                WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY.to_string(),
+                limit.to_string(),
+            );
+            settings.insert(
+                WA_NOTIFY_AMBANG_ALFA_DAYS_KEY.to_string(),
+                days.to_string(),
+            );
+            parse_ambang_alfa_settings(&settings)
+        };
+
+        // Dalam rentang: dipakai apa adanya.
+        assert_eq!(urai("5", "60"), (5, 60));
+        assert_eq!(urai("1", "1"), (1, 1));
+        // Tepat di tepi rentang masih sah.
+        assert_eq!(urai("100", "365"), (100, 365));
+        // Di luar rentang jatuh ke BAWAAN, bukan dipotong ke tepi.
+        assert_eq!(urai("101", "366"), (3, 30));
+        assert_eq!(urai("0", "0"), (3, 30));
+        assert_eq!(urai("-4", "-1"), (3, 30));
+        assert_eq!(urai("500", "9999"), (3, 30));
+        // Bukan angka, dan pecahan, juga jatuh ke bawaan.
+        assert_eq!(urai("bukan_angka", "bukan_angka"), (3, 30));
+        assert_eq!(urai("3.5", "30.5"), (3, 30));
+        // Spasi di sekelilingnya dibuang lebih dulu.
+        assert_eq!(urai(" 7 ", " 14 "), (7, 14));
+
+        // Kunci yang belum pernah ditulis memakai bawaan.
+        let kosong: HashMap<String, String> = HashMap::new();
+        assert_eq!(
+            parse_ambang_alfa_settings(&kosong),
+            (DEFAULT_AMBANG_ALFA_LIMIT, DEFAULT_AMBANG_ALFA_DAYS)
+        );
     }
 
     /// Status asing DITOLAK, bukan diam-diam menjadi `Menunggu`.

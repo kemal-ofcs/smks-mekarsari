@@ -5662,17 +5662,20 @@ impl TursoClient {
                 for r in s_res.to_objects() {
                     let k = r.get("key").and_then(Value::as_str).unwrap_or("");
                     let v = r.get("value").and_then(Value::as_str).unwrap_or("");
+                    // Dinormalkan juga saat DIBACA, bukan hanya saat ditulis:
+                    // nilai di luar rentang bisa sudah terlanjur tersimpan dari
+                    // versi sebelumnya atau datang lewat sinkronisasi, dan
+                    // formulir Pengaturan harus menampilkan angka yang sama
+                    // dengan yang benar-benar dipakai mesin evaluasi.
                     if k == super::wa_notification::WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY {
                         if let Ok(parsed) = v.trim().parse::<i64>() {
-                            if parsed > 0 {
-                                ambang_limit = parsed;
-                            }
+                            ambang_limit =
+                                super::wa_notification::clamp_ambang_alfa_limit(parsed);
                         }
                     } else if k == super::wa_notification::WA_NOTIFY_AMBANG_ALFA_DAYS_KEY {
                         if let Ok(parsed) = v.trim().parse::<i64>() {
-                            if parsed > 0 {
-                                ambang_days = parsed;
-                            }
+                            ambang_days =
+                                super::wa_notification::clamp_ambang_alfa_days(parsed);
                         }
                     }
                 }
@@ -5858,16 +5861,23 @@ impl TursoClient {
             ));
         }
 
-        let ambang_limit = draft
-            .get("ambangAlfaLimit")
-            .and_then(Value::as_i64)
-            .filter(|&v| v > 0)
-            .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT);
-        let ambang_days = draft
-            .get("ambangAlfaDays")
-            .and_then(Value::as_i64)
-            .filter(|&v| v > 0)
-            .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS);
+        // Dinormalkan dengan aturan yang SAMA seperti `saveWaConfig` di
+        // `wa-notification.ts`. Sebelumnya sisi ini hanya menolak nilai <= 0,
+        // sehingga admin yang mengetik 500 lalu menyimpan dari Desktop/Mobile
+        // menyimpan 500, sementara menyimpan formulir yang sama dari Web
+        // menyimpan 3 — dan kedua jalur evaluasi lalu memakai angka berbeda.
+        let ambang_limit = super::wa_notification::clamp_ambang_alfa_limit(
+            draft
+                .get("ambangAlfaLimit")
+                .and_then(Value::as_i64)
+                .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT),
+        );
+        let ambang_days = super::wa_notification::clamp_ambang_alfa_days(
+            draft
+                .get("ambangAlfaDays")
+                .and_then(Value::as_i64)
+                .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS),
+        );
 
         statements.push(Statement::new(
             r#"INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
