@@ -37,6 +37,7 @@ import {
   saveIdCardTemplate,
 } from "@/lib/gateways/id-card-template";
 import { backfillKartuPelajar } from "@/lib/gateways/student";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import type {
   CardSide,
@@ -393,13 +394,9 @@ export default function IdCardsPage() {
   }, [hydrated, isAuthenticated, user, loadData]);
 
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void loadData(true);
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [loadData]);
 
   // Load preset layout cetak dari localStorage saat hydration

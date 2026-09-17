@@ -237,9 +237,16 @@ function colLetterToIndex(colStr: string): number {
   return Math.max(0, index - 1);
 }
 
-function createXlsxBuffer(
+/**
+ * Rakit berkas `.xlsx` satu sheet dari judul kolom dan baris nilai.
+ *
+ * Baris dikirim sebagai larik sejajar `headers`, bukan objek ber-kunci judul:
+ * bentuk itu yang dibutuhkan kedua pemakainya, dan judul kolom yang kebetulan
+ * sama tidak saling menimpa.
+ */
+export function createXlsxBuffer(
   headers: readonly string[],
-  rows: Record<string, unknown>[],
+  rows: readonly (readonly unknown[])[],
   sheetName: string,
 ): Uint8Array {
   const encoder = new TextEncoder();
@@ -258,9 +265,9 @@ function createXlsxBuffer(
   rows.forEach((row, rowIdx) => {
     const rowNum = rowIdx + 2;
     sheetXml += `<row r="${rowNum}">`;
-    headers.forEach((header, colIdx) => {
+    headers.forEach((_, colIdx) => {
       const cellRef = `${columnLetter(colIdx)}${rowNum}`;
-      const rawVal = row[header];
+      const rawVal = row[colIdx];
       const val = rawVal === null || rawVal === undefined ? "" : String(rawVal);
       sheetXml += `<c r="${cellRef}" t="inlineStr"><is><t>${escapeXml(val)}</t></is></c>`;
     });
@@ -421,7 +428,11 @@ export async function saveWorkbook(spec: {
   filename: string;
   sheetName: string;
 }): Promise<DownloadResult> {
-  const xlsxBytes = createXlsxBuffer(spec.headers, spec.rows, spec.sheetName);
+  const xlsxBytes = createXlsxBuffer(
+    spec.headers,
+    spec.rows.map((row) => spec.headers.map((header) => row[header])),
+    spec.sheetName,
+  );
   const blob = new Blob([xlsxBytes as unknown as BlobPart], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });

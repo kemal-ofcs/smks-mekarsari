@@ -6,6 +6,7 @@ import {
   setForcedLogoutMarker,
 } from "@/lib/auth/logout-marker";
 import type { OperatorUser } from "@/lib/auth/operator-user";
+import { SYNC_COMPLETED_EVENT } from "@/lib/gateways/sync-status";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop } from "@/lib/runtime/desktop-commands";
 
@@ -74,7 +75,9 @@ export function subscribeDesktopSession(listener: () => void) {
     // sebelumnya hanya diambil sekali saat aplikasi dibuka. Akibatnya perubahan
     // role — termasuk kewajiban foto absensi — baru terlihat setelah aplikasi
     // ditutup. Satu pendengar ini membuatnya ikut segar setiap siklus sync.
-    window.addEventListener("sppg:sync-completed", () => {
+    // Sengaja tidak pernah dilepas: penjaga `started` membuatnya terdaftar
+    // tepat sekali seumur proses, bukan sekali per pelanggan React.
+    window.addEventListener(SYNC_COMPLETED_EVENT, () => {
       void refreshDesktopSession();
     });
   }
@@ -132,8 +135,4 @@ export async function logoutDesktopSession() {
   } catch {
     // Logout UI tetap final; command dicoba lagi setelah reload.
   }
-}
-
-export function invalidateDesktopSession() {
-  emit({ user: null, isLoading: false, mode: null });
 }

@@ -70,6 +70,25 @@ export function requestSyncNow() {
   window.dispatchEvent(new CustomEvent(SYNC_REQUEST_EVENT));
 }
 
+/**
+ * Daftarkan satu penangan "siklus sinkronisasi selesai", kembalikan pelepasnya.
+ *
+ * Bentuknya sengaja `useEffect`-friendly: `return subscribeSyncCompleted(fn)`
+ * di dalam sebuah efek sudah merupakan pendaftaran BESERTA pembersihannya.
+ *
+ * Dulu 52 halaman dan komponen menulis sendiri pasangan
+ * `addEventListener`/`removeEventListener` dengan nama event sebagai LITERAL —
+ * padahal konstantanya ada tepat di berkas ini. Satu salah ketik di salah satu
+ * dari 52 tempat itu menghasilkan halaman yang diam-diam berhenti menyegarkan
+ * diri setelah sync, dan tidak ada yang gagal untuk menandainya.
+ */
+export function subscribeSyncCompleted(handler: () => void): () => void {
+  window.addEventListener(SYNC_COMPLETED_EVENT, handler);
+  return () => {
+    window.removeEventListener(SYNC_COMPLETED_EVENT, handler);
+  };
+}
+
 export interface SyncConflict {
   eventId: string;
   domain: string;

@@ -20,7 +20,7 @@ import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarUnit } from "@/lib/gateways/academic";
 import { getDaftarShift } from "@/lib/gateways/shift";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import {
   type GuruInput,
   getDaftarGuru,
@@ -106,11 +106,9 @@ export default function GuruPage() {
   }, [loadData]);
 
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadData();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadData]);
 
   const filteredTeachers = useMemo(() => {

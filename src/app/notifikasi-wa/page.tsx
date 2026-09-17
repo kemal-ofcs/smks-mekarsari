@@ -10,7 +10,7 @@ import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import {
   cancelWaNotificationGateway,
   getWaConfigGateway,
@@ -106,11 +106,9 @@ export default function NotifikasiWaPage() {
 
   // Real-time auto-sync listener
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadData();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadData]);
 
   if (authLoading) {

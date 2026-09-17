@@ -16,9 +16,10 @@ import {
   getRiwayatScan,
   hapusLogScan,
 } from "@/lib/gateways/report";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useHydrated } from "@/lib/hooks/useHydrated";
+import { formatDisplayDate } from "@/lib/utils/date-display";
 
 // Satu halaman untuk KEDUA tab. Angka ini soal berapa baris yang dibawa satu
 // balasan, bukan selera tampilan: rekap harian bertambah satu baris per
@@ -44,14 +45,6 @@ function getRelativeDate(offsetDays: number) {
 function getFirstDayOfMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-}
-
-function formatDisplayDate(dateStr: unknown): string {
-  if (!dateStr || typeof dateStr !== "string") return "-";
-  if (/^\d{2}\/\d{2}\/\d{4}/.test(dateStr)) return dateStr;
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return dateStr;
 }
 
 function formatDisplayDateTime(dtStr: unknown): string {
@@ -255,13 +248,9 @@ export default function HistoryPage() {
   }, [hydrated, isAuthenticated, load]);
 
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void load(true);
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [load]);
 
   // Extract unique divisions from loaded data for local filtering

@@ -26,7 +26,10 @@ import {
 } from "@/lib/contracts/scanner";
 import { getScanSecurity } from "@/lib/gateways/scan-security";
 import { submitTerminalScan } from "@/lib/gateways/scanner";
-import { requestSyncNow } from "@/lib/gateways/sync-status";
+import {
+  requestSyncNow,
+  subscribeSyncCompleted,
+} from "@/lib/gateways/sync-status";
 import { useClock } from "@/lib/hooks/useClock";
 import { useCompanyName } from "@/lib/hooks/useCompanyName";
 import { useHydrated } from "@/lib/hooks/useHydrated";
@@ -70,10 +73,10 @@ export default function ScannerPage() {
         .catch(() => undefined);
     };
     muat();
-    window.addEventListener("sppg:sync-completed", muat);
+    const lepas = subscribeSyncCompleted(muat);
     return () => {
       cancelled = true;
-      window.removeEventListener("sppg:sync-completed", muat);
+      lepas();
     };
   }, [isHydrated, isAuthenticated]);
 

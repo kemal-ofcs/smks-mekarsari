@@ -16,7 +16,7 @@ import {
   saveTaxRule,
   type TaxRuleRow,
 } from "@/lib/gateways/payroll";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
@@ -87,11 +87,9 @@ export default function TaxRulesPage() {
   }, [isHydrated, authLoading, isAuthenticated, user, router, loadRules]);
 
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadRules();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadRules]);
 
   const [isSyncing, setIsSyncing] = useState(false);

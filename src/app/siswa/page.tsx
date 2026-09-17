@@ -26,7 +26,7 @@ import {
   type SiswaInput,
   simpanSiswa,
 } from "@/lib/gateways/student";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import {
   bulkIssueWaliPasswords,
   getWaliCredentialStatus,
@@ -152,11 +152,9 @@ export default function SiswaPage() {
   }, [loadData]);
 
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadData();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadData]);
 
   const filteredStudents = useMemo(() => {

@@ -62,7 +62,7 @@ export const useSyncPulseStore = create<SyncPulseState>()((set) => ({
  * selagi push gagal atau antrean outbox belum kosong — indikator yang
  * berbohong soal keadaan data lebih berbahaya daripada tidak ada indikator.
  */
-export function deriveSyncPhase(state: {
+function deriveSyncPhase(state: {
   status: SyncStatus | null;
   online: boolean;
   celebrating: boolean;

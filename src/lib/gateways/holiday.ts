@@ -2,12 +2,8 @@
 
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
-import { invokeDesktop } from "@/lib/runtime/desktop-commands";
+import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
 import type { HariLiburInput, HariLiburRecord } from "@/lib/services/holiday";
-
-function kickDesktopSync() {
-  void invokeDesktop("desktop_sync_now").catch(() => undefined);
-}
 
 export type { HariLiburInput, HariLiburRecord } from "@/lib/services/holiday";
 

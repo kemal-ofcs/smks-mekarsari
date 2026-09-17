@@ -31,20 +31,14 @@ import {
 } from "@/lib/gateways/employee";
 import { getDaftarIdCard } from "@/lib/gateways/id-card";
 import { getDaftarShift } from "@/lib/gateways/shift";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
+import { formatDisplayDate } from "@/lib/utils/date-display";
 import {
   createEmployeeIdentifiers,
   firstValidationMessage,
   validateEmployeeDraft,
 } from "@/lib/validations/stabilization";
-
-function formatDisplayDate(dateStr: unknown): string {
-  if (!dateStr || typeof dateStr !== "string") return "-";
-  if (/^\d{2}\/\d{2}\/\d{4}/.test(dateStr)) return dateStr;
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return dateStr;
-}
 
 export default function KaryawanPage() {
   const isHydrated = useHydrated();
@@ -141,13 +135,9 @@ export default function KaryawanPage() {
   }, [isHydrated, isAuthenticated, loadData]);
 
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void loadData(true);
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [loadData]);
 
   // Extract unique divisions for filter — memoized to avoid recalc on every render

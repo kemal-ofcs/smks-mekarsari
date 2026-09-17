@@ -34,7 +34,7 @@ export type {
  * SQLite lokal, dan karenanya tanpa mode offline.
  *
  * Mobile IKUT, dengan command yang sama. Versi pertama gateway ini menutup
- * Mobile lewat `assertTersediaDiMobile` dengan alasan "pekerjaan layar besar" —
+ * Mobile dengan alasan "pekerjaan layar besar" —
  * dan itu keliru sebagai aturan: panitia PMB sering bertugas di meja
  * pendaftaran dengan ponsel, bukan laptop, dan fitur yang hanya ada di Desktop
  * sama saja dengan fitur yang tidak ada bagi mereka. Yang membedakan Mobile

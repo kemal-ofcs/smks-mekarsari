@@ -1,5 +1,6 @@
 import "server-only";
 
+import { normalizeDate } from "@/lib/attendance/time-policy";
 import { db, ensureDbInitialized } from "@/lib/db";
 
 export interface PenugasanBackupInput {
@@ -17,15 +18,6 @@ export function generateIdBackup(): string {
   const dateStr = now.toISOString().split("T")[0].replace(/-/g, "");
   const randomNum = Math.floor(100 + Math.random() * 900);
   return `BCK-${dateStr}-${randomNum}`;
-}
-
-function normalizeDate(raw: string): string {
-  const clean = raw.trim();
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) {
-    const [d, m, y] = clean.split("/");
-    return `${y}-${m}-${d}`;
-  }
-  return clean;
 }
 
 export async function buatPenugasanBackup(input: PenugasanBackupInput) {

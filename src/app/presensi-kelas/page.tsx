@@ -32,7 +32,7 @@ import {
   type StudentAttendanceDetailItem,
   saveClassAttendance,
 } from "@/lib/gateways/class-attendance";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { normalizeOperatorPhone } from "@/lib/operators/contact";
@@ -344,12 +344,10 @@ export default function PresensiKelasPage() {
 
   // Sync listener to refresh data in background
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       if (activeTab === "reconciliation") void handleLoadReconciliation();
       else if (activeTab === "history") void handleLoadHistory();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [activeTab, handleLoadReconciliation, handleLoadHistory]);
 
   // Summary counts for current roster

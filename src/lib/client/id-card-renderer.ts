@@ -186,11 +186,7 @@ export const DEFAULT_ID_CARD_ELEMENTS: IdCardElement[] = [
   },
 ];
 
-export function getCachedImage(src: string): HTMLImageElement | null {
-  return imageCache.get(src) || null;
-}
-
-export function preloadImage(src: string): Promise<HTMLImageElement> {
+function preloadImage(src: string): Promise<HTMLImageElement> {
   if (!src || typeof src !== "string" || src.trim() === "") {
     return Promise.reject(new Error("URL gambar kosong"));
   }
@@ -250,7 +246,7 @@ export async function preloadCardAssets(params: {
   await Promise.all(promises);
 }
 
-export async function getOrGenerateQrImage(
+async function getOrGenerateQrImage(
   token: string,
   color = "#000000",
 ): Promise<HTMLImageElement> {
@@ -1214,31 +1210,4 @@ export function printCardsDirectly(
       printRoot.remove();
     }, 3000);
   }, 250);
-}
-
-export function printSingleCard(
-  frontPng: string,
-  title = "ID Card",
-  backPng?: string,
-  orientation: "landscape" | "portrait" = "landscape",
-) {
-  printCardsDirectly([{ frontPng, backPng, name: title }], {
-    layout: "cr80",
-    mode: backPng ? "duplex" : "front_only",
-    orientation,
-    title,
-  });
-}
-
-export function printA4GridSheet(
-  cards: { frontPng: string; backPng?: string; name: string }[],
-  mode: "front_only" | "back_only" | "duplex" = "front_only",
-  orientation: "landscape" | "portrait" = "landscape",
-) {
-  printCardsDirectly(cards, {
-    layout: "a4_sheet",
-    mode,
-    orientation,
-    title: "Cetak Lembar ID Card A4",
-  });
 }

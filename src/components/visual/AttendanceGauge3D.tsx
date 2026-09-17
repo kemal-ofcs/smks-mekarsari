@@ -3,7 +3,8 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { useVisualStore, useVisualTier } from "@/lib/stores/visual-store";
+import { useVisualTier } from "@/lib/stores/visual-store";
+import { AdaptiveQuality, ContextCleanup } from "./scene-runtime";
 
 interface AttendanceGauge3DProps {
   hadir: number;
@@ -21,43 +22,6 @@ interface SegmentData {
   color: string;
   startAngle: number;
   endAngle: number;
-}
-
-function ContextCleanup() {
-  const gl = useThree((state) => state.gl);
-
-  useEffect(() => {
-    return () => {
-      try {
-        gl.dispose();
-        gl.forceContextLoss();
-      } catch {
-        // Ignored if context already lost
-      }
-    };
-  }, [gl]);
-
-  return null;
-}
-
-function AdaptiveQuality() {
-  const degrade = useVisualStore((state) => state.degrade);
-  const slowSeconds = useRef(0);
-
-  useFrame((_, delta) => {
-    if (delta > 1) return;
-    if (delta > 1 / 30) {
-      slowSeconds.current += delta;
-      if (slowSeconds.current > 3) {
-        slowSeconds.current = 0;
-        degrade();
-      }
-    } else {
-      slowSeconds.current = Math.max(0, slowSeconds.current - delta);
-    }
-  });
-
-  return null;
 }
 
 function RingSegment({

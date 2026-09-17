@@ -26,7 +26,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
    - Always protect forms against race conditions using `isSubmittingRef = useRef(false)`.
    - **Form & Modal Focus Safety**: In dialogs (`Modal`), callback props (`onClose`, `onSubmit`, `onChange`) MUST be stabilized via `useRef` (`onCloseRef.current = onClose`) so inline handler re-renders do NOT re-trigger effects. Never call `.focus()` inside effects that depend on callback props or without `!dialogRef.current?.contains(document.activeElement)` guard (prevents 1-keystroke focus-stealing bug).
 6. **Unified Stack & Android APK Readiness**:
-   - **Frontend**: Next.js 16 + React 19 + Tailwind CSS v4. Use `ExcelJS` for spreadsheet import/export.
+   - **Frontend**: Next.js 16 + React 19 + Tailwind CSS v4. Impor/ekspor spreadsheet memakai `src/lib/client/xlsx.ts` dan `excel-export.ts` — pembaca/perakit `.xlsx` tanpa dependensi (zip + SpreadsheetML ditulis sendiri). JANGAN menambahkan kembali `ExcelJS`: ia pernah ada di `package.json` tanpa satu pun `import` selama berbulan-bulan, membawa ~22 MB dan sembilan dependensi transitif ke setiap `bun install`.
    - **Desktop & Mobile**: Tauri v2 + Rust + SQLite. All logic must use the Gateway abstraction (`isDesktopRuntime()`) and responsive layouts.
    - **Shift 3 (Overnight Shift)**: When cross-midnight occurs (`jam_pulang < jam_masuk`), scan out belongs to $H+1$ (`nextDate`), and duration is $(out\_min + 1440) - in\_min$.
 7. **Next.js Static Export Compatibility (`output: "export"`)**:

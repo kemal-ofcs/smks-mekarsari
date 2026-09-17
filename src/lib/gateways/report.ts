@@ -2,7 +2,7 @@
 
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
-import { invokeDesktop } from "@/lib/runtime/desktop-commands";
+import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
 import type { DashboardMetrics, RekapBulananItem } from "@/lib/services/report";
 
 export type { DashboardMetrics, RekapBulananItem } from "@/lib/services/report";
@@ -52,14 +52,10 @@ export async function jalankanAuditKualitasAbsensi() {
       pesan: string;
       ringkasan?: Record<string, unknown>;
     }>("desktop_trigger_generate_alfa");
-    kickSync();
+    kickDesktopSync();
     return res;
   }
   return requestWebApi("/api/attendance-audit", "POST");
-}
-
-function kickSync() {
-  void invokeDesktop("desktop_sync_now").catch(() => undefined);
 }
 
 export async function editAbsensiHarian(
@@ -77,7 +73,7 @@ export async function editAbsensiHarian(
       "desktop_update_attendance",
       { idSesi, patch },
     );
-    if (result.sukses) kickSync();
+    if (result.sukses) kickDesktopSync();
     return result;
   }
   return requestWebApi<{ sukses: boolean; pesan: string }>(
@@ -93,7 +89,7 @@ export async function hapusAbsensiHarian(idSesi: string) {
       "desktop_delete_attendance",
       { idSesi },
     );
-    if (result.sukses) kickSync();
+    if (result.sukses) kickDesktopSync();
     return result;
   }
   return requestWebApi<{ sukses: boolean; pesan: string }>(
@@ -109,7 +105,7 @@ export async function hapusLogScan(idLog: number | string) {
       "desktop_delete_log_scan",
       { idLog: Number(idLog) },
     );
-    if (result.sukses) kickSync();
+    if (result.sukses) kickDesktopSync();
     return result;
   }
   return requestWebApi<{ sukses: boolean; pesan: string }>(

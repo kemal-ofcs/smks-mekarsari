@@ -25,7 +25,7 @@ export type {
 /**
  * Gateway modul nilai.
  *
- * Berbeda dari gateway PMB: TIDAK ada `assertTersediaDiMobile` di sini. Kedua
+ * Berbeda dari gateway PMB: TIDAK ada penutupan khusus Mobile di sini. Kedua
  * tabelnya ikut sinkronisasi dan command Rust-nya menulis ke SQLite lokal,
  * sehingga fitur ini bekerja penuh tanpa jaringan — di Desktop maupun Mobile.
  * Guru menilai di kelas, dan kelas tidak selalu punya sinyal.

@@ -23,6 +23,7 @@ import {
   updateRole,
 } from "@/lib/gateways/master-operator";
 import { getScanSecurity } from "@/lib/gateways/scan-security";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { adminDisableTwoFactor } from "@/lib/gateways/two-factor";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import type { OperatorDraft, OperatorRecord } from "@/lib/operators/types";
@@ -159,13 +160,9 @@ export default function MasterOperatorPage() {
   }, [loadData]);
 
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void loadData(true);
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [loadData]);
 
   const openNewOperator = () => {

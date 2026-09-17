@@ -7,6 +7,8 @@ import {
   diDalamRentangKoreksiMasuk,
   hitungUlangAbsensiDariJam,
   isShiftFleksibel,
+  normalizeDate,
+  parseTimeToMinutes,
 } from "@/lib/attendance/time-policy";
 import { db, ensureDbInitialized } from "@/lib/db";
 
@@ -36,26 +38,6 @@ export function generateIdReferensiKoreksi(): string {
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   return `KOR-${dateStr}-${randomNum}`;
 }
-
-function normalizeDate(raw: string): string {
-  const clean = raw.trim();
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) {
-    const [d, m, y] = clean.split("/");
-    return `${y}-${m}-${d}`;
-  }
-  return clean;
-}
-
-const parseTimeToMinutes = (t: string | undefined | null): number | null => {
-  if (!t) return null;
-  const clean = t.includes(" ") ? t.split(" ")[1] : t;
-  const parts = clean.split(":");
-  if (parts.length < 2) return null;
-  const h = Number(parts[0]);
-  const m = Number(parts[1]);
-  if (Number.isNaN(h) || Number.isNaN(m)) return null;
-  return h * 60 + m;
-};
 
 export async function prosesKoreksiAdmin(input: KoreksiInput) {
   await ensureDbInitialized();

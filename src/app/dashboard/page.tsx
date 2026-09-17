@@ -23,6 +23,7 @@ import {
   getTopKaryawanTerajin,
   type RekapBulananItem,
 } from "@/lib/gateways/report";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useCompanyName } from "@/lib/hooks/useCompanyName";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
@@ -128,7 +129,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!isHydrated || !isAuthenticated) return;
 
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       Promise.all([
         getDashboardMetrics(),
         getRekapBulanan(),
@@ -146,12 +147,7 @@ export default function DashboardPage() {
           setRekapHarianList(harianData);
         })
         .catch(() => undefined);
-    };
-
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [isHydrated, isAuthenticated, filterMode, startDate, endDate]);
 
   // Combined loading state for skeleton rendering

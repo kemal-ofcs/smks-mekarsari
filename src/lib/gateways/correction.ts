@@ -2,14 +2,10 @@
 
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
-import { invokeDesktop } from "@/lib/runtime/desktop-commands";
+import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
 import type { KoreksiInput } from "@/lib/services/correction";
 
 export type { KoreksiInput } from "@/lib/services/correction";
-
-function kickSync() {
-  void invokeDesktop("desktop_sync_now").catch(() => undefined);
-}
 
 export async function getDaftarKoreksi(
   filter: { tanggal?: string; id_karyawan?: string } = {},
@@ -33,7 +29,7 @@ export async function prosesKoreksiAdmin(
       pesan: string;
       id_referensi?: string;
     }>("desktop_create_correction", { draft: input });
-    if (result.sukses) kickSync();
+    if (result.sukses) kickDesktopSync();
     return result;
   }
   return requestWebApi<{
@@ -49,7 +45,7 @@ export async function hapusKoreksiAdmin(idReferensi: string) {
       "desktop_delete_correction",
       { idReferensi },
     );
-    if (result.sukses) kickSync();
+    if (result.sukses) kickDesktopSync();
     return result;
   }
   return requestWebApi<{ sukses: boolean; pesan: string }>(

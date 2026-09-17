@@ -14,6 +14,7 @@ import {
   type HasilAuditAbsensi,
   type KeparahanTemuan,
 } from "@/lib/gateways/attendance-audit";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
 type FilterKeparahan = "semua" | KeparahanTemuan;
@@ -130,11 +131,7 @@ export default function AuditAbsensiPage() {
   }, [isHydrated, isAuthenticated, loadData]);
 
   useEffect(() => {
-    const onSyncCompleted = () => void loadData(tanggal, true);
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    return subscribeSyncCompleted(() => void loadData(tanggal, true));
   }, [loadData, tanggal]);
 
   const temuanTampil = useMemo(() => {

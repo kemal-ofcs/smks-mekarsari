@@ -28,19 +28,6 @@ export const BRANDING = {
 } as const;
 
 /**
- * Membuat judul aplikasi: "{appName} · {companyName}".
- * Digunakan di <title> halaman dan aria-label navigasi.
- */
-export function formatAppTitle(
-  companyName?: string | null,
-  appName?: string | null,
-): string {
-  const comp = companyName?.trim() || BRANDING.defaultCompanyName;
-  const app = appName?.trim() || BRANDING.appDisplayName;
-  return `${app} · ${comp}`;
-}
-
-/**
  * Mengambil singkatan nama perusahaan untuk BrandLogo fallback.
  * Contoh: "PT Maju Bersama" => "PMB", "YOUR COMPANY" => "YOUR"
  * Maks 4 karakter.

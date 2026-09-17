@@ -28,7 +28,7 @@ import {
   updateCounselingCaseGateway,
 } from "@/lib/gateways/counseling";
 import { getDaftarSiswa } from "@/lib/gateways/student";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 
 export default function BimbinganKonselingPage() {
@@ -177,11 +177,9 @@ export default function BimbinganKonselingPage() {
 
   // Real-time auto-sync listener
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadData();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadData]);
 
   if (authLoading) {

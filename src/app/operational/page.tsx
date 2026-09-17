@@ -26,7 +26,7 @@ import {
   prosesImportOffline,
 } from "@/lib/gateways/offline-import";
 import { getDaftarShift } from "@/lib/gateways/shift";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
 type Tab = "correction" | "backup" | "import";
@@ -215,13 +215,9 @@ export default function OperationalPage() {
   }, [hydrated, isAuthenticated, tab, load]);
 
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void load(tab, false, false);
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [tab, load]);
 
   // Employee selection helpers

@@ -37,6 +37,7 @@ import {
   type TahunAjaranInput,
   type UnitInput,
 } from "@/lib/gateways/academic";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 
@@ -282,11 +283,9 @@ export default function AkademikPage() {
 
   // Handle reload on sync
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadAllData();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadAllData]);
 
   // Filter Rombel change

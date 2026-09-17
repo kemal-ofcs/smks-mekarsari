@@ -14,7 +14,7 @@ import {
   type ClassAttendanceSession,
   getDaftarSesiPresensi,
 } from "@/lib/gateways/class-attendance";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import {
   deleteTeachingJournal,
@@ -136,13 +136,9 @@ export default function JurnalMengajarPage() {
 
   // Background sync listener
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void loadData();
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [loadData]);
 
   const handleRefresh = async () => {

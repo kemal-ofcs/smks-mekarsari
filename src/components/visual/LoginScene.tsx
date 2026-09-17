@@ -1,9 +1,10 @@
 "use client";
 
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Group } from "three";
-import { useVisualStore, useVisualTier } from "@/lib/stores/visual-store";
+import { useVisualTier } from "@/lib/stores/visual-store";
+import { AdaptiveQuality, ContextCleanup } from "./scene-runtime";
 
 /**
  * Konstelasi data untuk latar halaman login.
@@ -66,47 +67,6 @@ function buildSpherePoints(count: number, radius: number): Float32Array {
  * Konteks WebGL jumlahnya terbatas per halaman dan tidak dibersihkan
  * secepat objek JavaScript biasa.
  */
-function ContextCleanup() {
-  const gl = useThree((state) => state.gl);
-
-  useEffect(() => {
-    return () => {
-      try {
-        gl.dispose();
-        gl.forceContextLoss();
-      } catch {
-        // Konteks bisa saja sudah hilang lebih dulu; tidak ada yang perlu dibersihkan.
-      }
-    };
-  }, [gl]);
-
-  return null;
-}
-
-/**
- * Menurunkan tier perangkat bila frame rate tertinggal cukup lama.
- * Ambangnya sengaja longgar agar lonjakan sesaat tidak memicu penurunan.
- */
-function AdaptiveQuality() {
-  const degrade = useVisualStore((state) => state.degrade);
-  const slowSeconds = useRef(0);
-
-  useFrame((_, delta) => {
-    if (delta > 1) return; // lompatan besar: tab baru aktif kembali
-    if (delta > 1 / 30) {
-      slowSeconds.current += delta;
-      if (slowSeconds.current > 3) {
-        slowSeconds.current = 0;
-        degrade();
-      }
-      return;
-    }
-    slowSeconds.current = Math.max(slowSeconds.current - delta, 0);
-  });
-
-  return null;
-}
-
 interface ConstellationProps {
   colors: SceneColors;
   pointCount: number;

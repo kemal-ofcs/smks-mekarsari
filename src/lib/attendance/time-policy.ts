@@ -521,6 +521,46 @@ export function tentukanTanggalKerja(
     : lokal.date;
 }
 
+/**
+ * Baca jam "HH:mm" (boleh berawalan tanggal, mis. "2026-09-17 07:30") menjadi
+ * menit sejak tengah malam. Mengembalikan `null` bila tidak terbaca.
+ *
+ * Berbeda dari `parseClock` internal yang MELEMPAR pada format salah: yang ini
+ * dipakai pada jalur koreksi dan penyuntingan riwayat, tempat kolom jam boleh
+ * kosong dan ketidakhadirannya bukan kesalahan. Sebelumnya badan yang sama
+ * disalin ke `services/correction.ts` dan `services/history-mutation.ts`.
+ */
+export function parseTimeToMinutes(
+  t: string | undefined | null,
+): number | null {
+  if (!t) return null;
+  const clean = t.includes(" ") ? t.split(" ")[1] : t;
+  const parts = clean.split(":");
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+/**
+ * Samakan tanggal masukan manusia ke bentuk kanonik `YYYY-MM-DD`.
+ *
+ * Hanya `DD/MM/YYYY` yang dikonversi — bentuk yang diketik operator Indonesia
+ * dan yang dihasilkan Excel lokal. Nilai lain dikembalikan apa adanya supaya
+ * validasi di lapisan atas yang menolaknya, bukan fungsi ini yang menebak.
+ * Sebelumnya badan yang sama disalin ke `services/backup.ts`,
+ * `services/correction.ts`, dan `services/offline-import.ts`.
+ */
+export function normalizeDate(raw: string): string {
+  const clean = raw.trim();
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) {
+    const [d, m, y] = clean.split("/");
+    return `${y}-${m}-${d}`;
+  }
+  return clean;
+}
+
 export function hitungMenitKerja(
   waktuMasuk: ExplicitInstant,
   waktuPulang: ExplicitInstant,

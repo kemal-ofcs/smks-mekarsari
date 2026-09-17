@@ -14,7 +14,7 @@ import {
   type AttendanceDashboardMetrics,
   getAttendanceDashboardMetrics,
 } from "@/lib/gateways/attendance-dashboard";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 
 type TabKey = "overview" | "teachers" | "classes" | "anomalies";
 
@@ -63,13 +63,9 @@ export default function DasborKehadiranPage() {
 
   // Listener reaktivitas sinkronisasi latar belakang
   useEffect(() => {
-    const handleSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void loadMetrics(selectedDate);
-    };
-    window.addEventListener("sppg:sync-completed", handleSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", handleSyncCompleted);
-    };
+    });
   }, [selectedDate, loadMetrics]);
 
   const handleRefresh = async () => {

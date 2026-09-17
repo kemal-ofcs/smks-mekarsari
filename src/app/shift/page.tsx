@@ -22,6 +22,7 @@ import {
   tambahShift,
   updateShift,
 } from "@/lib/gateways/shift";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import {
   firstValidationMessage,
@@ -150,13 +151,9 @@ export default function ShiftPage() {
   }, [isHydrated, isAuthenticated, loadShifts]);
 
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       loadShifts(true);
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [loadShifts]);
 
   // Recalculate work hours automatically on form change

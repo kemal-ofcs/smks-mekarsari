@@ -18,7 +18,7 @@ import {
   type JpRateRow,
   saveJpRate,
 } from "@/lib/gateways/payroll";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import { isTeacherPersonnel } from "@/lib/validations/payroll-policy";
@@ -102,11 +102,9 @@ export default function JpRatesPage() {
   }, [isHydrated, authLoading, isAuthenticated, user, router, loadData]);
 
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadData();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadData]);
 
   const handleReload = async () => {

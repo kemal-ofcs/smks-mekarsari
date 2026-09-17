@@ -2,13 +2,9 @@
 
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
-import { invokeDesktop } from "@/lib/runtime/desktop-commands";
+import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
 import type { HolidayWhitelistInput } from "@/lib/services/holiday-whitelist";
 import type { HolidayWhitelistEntry } from "@/lib/validations/holiday-whitelist";
-
-function kickDesktopSync() {
-  void invokeDesktop("desktop_sync_now").catch(() => undefined);
-}
 
 export type { HolidayWhitelistInput } from "@/lib/services/holiday-whitelist";
 export type { HolidayWhitelistEntry } from "@/lib/validations/holiday-whitelist";

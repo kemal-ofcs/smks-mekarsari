@@ -65,7 +65,7 @@ export function getWebSessionServerSnapshot() {
   return SERVER_SNAPSHOT;
 }
 
-export async function refreshWebSession() {
+async function refreshWebSession() {
   if (isDesktopRuntime()) return null;
   if (hasForcedLogoutMarker()) {
     emit({ user: null, isLoading: false });

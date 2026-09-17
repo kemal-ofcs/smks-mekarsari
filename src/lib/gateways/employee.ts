@@ -2,7 +2,7 @@
 
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
-import { invokeDesktop } from "@/lib/runtime/desktop-commands";
+import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
 import type { KaryawanInput } from "@/lib/services/employee";
 
 export type { KaryawanInput } from "@/lib/services/employee";
@@ -11,10 +11,6 @@ interface EmployeeFilter {
   search?: string;
   divisi?: string;
   status_aktif?: string;
-}
-
-function kickDesktopSync() {
-  void invokeDesktop("desktop_sync_now").catch(() => undefined);
 }
 
 export async function getDaftarKaryawan(filter?: EmployeeFilter) {

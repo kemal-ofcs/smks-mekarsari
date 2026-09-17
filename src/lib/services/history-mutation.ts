@@ -3,6 +3,7 @@ import "server-only";
 import {
   aturanShiftDariBaris,
   hitungUlangAbsensiDariJam,
+  parseTimeToMinutes,
 } from "@/lib/attendance/time-policy";
 import { db, ensureDbInitialized } from "@/lib/db";
 
@@ -13,17 +14,6 @@ export interface EditAbsensiHarianPatch {
   status_absen?: string; // "Lengkap" | "Belum Pulang" | "Tidak Hadir" | "Perlu Verifikasi"
   keterangan?: string;
 }
-
-const parseTimeToMinutes = (t: string | undefined | null): number | null => {
-  if (!t) return null;
-  const clean = t.includes(" ") ? t.split(" ")[1] : t;
-  const parts = clean.split(":");
-  if (parts.length < 2) return null;
-  const h = Number(parts[0]);
-  const m = Number(parts[1]);
-  if (Number.isNaN(h) || Number.isNaN(m)) return null;
-  return h * 60 + m;
-};
 
 function formatDateTime(dateStr: string, timeStr: string): string {
   if (!timeStr) return "";

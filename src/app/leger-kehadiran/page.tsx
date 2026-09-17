@@ -18,7 +18,7 @@ import {
   getLedgerPreview,
   type LedgerStudentItem,
 } from "@/lib/gateways/attendance-ledger";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 
 type ModeTab = "preview" | "frozen";
 
@@ -138,13 +138,9 @@ export default function LegerKehadiranPage() {
 
   // Background sync listener
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       void loadLedger();
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [loadLedger]);
 
   const handleRefresh = async () => {

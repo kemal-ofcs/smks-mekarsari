@@ -2,11 +2,7 @@
 
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
-import { invokeDesktop } from "@/lib/runtime/desktop-commands";
-
-function kickDesktopSync() {
-  void invokeDesktop("desktop_sync_now").catch(() => undefined);
-}
+import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
 
 export interface ClassAttendanceSession {
   id_presensi_mapel: string;

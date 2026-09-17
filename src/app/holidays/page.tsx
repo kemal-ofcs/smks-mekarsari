@@ -19,6 +19,7 @@ import {
   tambahHariLibur,
   updateHariLibur,
 } from "@/lib/gateways/holiday";
+import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 
 const EMPTY_DRAFT: HariLiburInput = {
@@ -100,13 +101,9 @@ export default function HolidaysPage() {
   }, [isHydrated, isAuthenticated, loadData]);
 
   useEffect(() => {
-    const onSyncCompleted = () => {
+    return subscribeSyncCompleted(() => {
       loadData(true);
-    };
-    window.addEventListener("sppg:sync-completed", onSyncCompleted);
-    return () => {
-      window.removeEventListener("sppg:sync-completed", onSyncCompleted);
-    };
+    });
   }, [loadData]);
 
   if (!isHydrated || authLoading) {

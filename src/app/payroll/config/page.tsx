@@ -21,7 +21,7 @@ import {
   savePayrollComponent,
   saveSalaryConfig,
 } from "@/lib/gateways/payroll";
-import { syncNow } from "@/lib/gateways/sync-status";
+import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import {
@@ -168,12 +168,10 @@ export default function PayrollConfigPage() {
   ]);
 
   useEffect(() => {
-    const handleSync = () => {
+    return subscribeSyncCompleted(() => {
       void loadSalaryData();
       void loadComponentsData();
-    };
-    window.addEventListener("sppg:sync-completed", handleSync);
-    return () => window.removeEventListener("sppg:sync-completed", handleSync);
+    });
   }, [loadSalaryData, loadComponentsData]);
 
   const [isSyncing, setIsSyncing] = useState(false);

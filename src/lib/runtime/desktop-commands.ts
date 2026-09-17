@@ -28,3 +28,20 @@ export async function invokeDesktop<T>(
     throw new Error(commandErrorMessage(error));
   }
 }
+
+/**
+ * Dorong satu siklus sinkronisasi Desktop setelah mutasi lokal, tanpa menunggu.
+ *
+ * Dulu badan tiga baris ini disalin ke 13 berkas gateway dengan dua nama —
+ * `kickDesktopSync` dan `kickSync` — sehingga perubahan pada salah satunya
+ * hanya mendarat di sebagian pemanggil. Kegagalan sengaja ditelan: pemanggilnya
+ * sudah menyimpan datanya ke SQLite lokal dan outbox akan mencoba lagi sendiri.
+ *
+ * BUKAN pengganti `requestSyncNow()` di `gateways/sync-status.ts`. Yang ini
+ * memanggil command Rust langsung; `requestSyncNow` menyiarkan event yang
+ * dibangunkan `AutoSyncRunner`. Keduanya dipakai di tempat berbeda dengan
+ * sengaja.
+ */
+export function kickDesktopSync() {
+  void invokeDesktop("desktop_sync_now").catch(() => undefined);
+}
