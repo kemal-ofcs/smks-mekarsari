@@ -452,7 +452,7 @@ export default function OperationalPage() {
       const result = await prosesImportOffline(rows);
       setFeedback({
         tone: result.gagal > 0 ? "error" : "success",
-        text: `Import massal selesai: ${result.berhasil} berhasil, ${result.gagal} gagal.`,
+        text: `Import massal selesai: ${result.berhasil} berhasil, ${result.gagal} gagal.${result.catatanNotifikasi ?? ""}`,
       });
       if (result.berhasil > 0) {
         setShowBulkUpload(false);

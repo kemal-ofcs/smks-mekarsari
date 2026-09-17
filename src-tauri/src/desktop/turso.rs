@@ -1496,6 +1496,82 @@ impl TursoClient {
         Ok(())
     }
 
+    /// Lebarkan CHECK `notifikasi_wa.jenis` pada database cloud yang sudah ada.
+    ///
+    /// Cerminan `ensure_wa_notification_kind_values` di `storage.rs`; keduanya
+    /// WAJIB menghasilkan bentuk tabel yang sama, karena satu database yang
+    /// sama bisa dibangun oleh jalur mana pun.
+    ///
+    /// Tanpa ini, `koreksi_admin` dan `import_manual` diterima SQLite lokal
+    /// (yang barusan dibangun ulang) lalu ditolak selamanya saat push — bentuk
+    /// kegagalan yang mengunci outbox dengan `next_retry_at = NULL`.
+    async fn ensure_wa_notification_kind_values(&self) -> Result<(), CommandError> {
+        let result = self
+            .query_one(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifikasi_wa';",
+                vec![],
+            )
+            .await?;
+        let existing = result
+            .to_objects()
+            .first()
+            .and_then(|row| row.get("sql").and_then(Value::as_str).map(str::to_owned));
+        let Some(existing) = existing else {
+            return Ok(());
+        };
+        if existing.contains("'koreksi_admin'") {
+            return Ok(());
+        }
+
+        const KOLOM: &str =
+            "id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor, isi_pesan, status, attempt_count, last_error, sent_at, created_at, updated_at";
+        // Nama staging dirakit saat runtime dengan alasan yang sama seperti
+        // `ensure_payroll_calc_type_values`: tabel itu hanya hidup di tengah
+        // rebuild, dan `audit:sql` tidak perlu mencoba menyiapkannya.
+        let staging = format!("notifikasi_wa{}", "__rebuild");
+
+        self.execute_pipeline(vec![
+            Statement::new(format!("DROP TABLE IF EXISTS {staging};"), vec![]),
+            Statement::new(
+                r#"CREATE TABLE notifikasi_wa__rebuild (
+                    id_notifikasi TEXT PRIMARY KEY,
+                    dedupe_key TEXT NOT NULL,
+                    jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+                    id_siswa TEXT,
+                    tujuan_nomor TEXT NOT NULL,
+                    isi_pesan TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'Menunggu' CHECK (status IN ('Menunggu', 'Terkirim', 'Gagal', 'Dibatalkan')),
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    sent_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );"#
+                .to_string(),
+                vec![],
+            ),
+            Statement::new(
+                format!("INSERT INTO {staging} ({KOLOM}) SELECT {KOLOM} FROM notifikasi_wa;"),
+                vec![],
+            ),
+            Statement::new("DROP TABLE notifikasi_wa;".to_string(), vec![]),
+            Statement::new(
+                format!("ALTER TABLE {staging} RENAME TO notifikasi_wa;"),
+                vec![],
+            ),
+            Statement::new(
+                "CREATE INDEX IF NOT EXISTS idx_notifikasi_wa_status ON notifikasi_wa(status, created_at);".to_string(),
+                vec![],
+            ),
+            Statement::new(
+                "CREATE INDEX IF NOT EXISTS idx_notifikasi_wa_dedupe ON notifikasi_wa(dedupe_key);".to_string(),
+                vec![],
+            ),
+        ])
+        .await?;
+        Ok(())
+    }
+
     async fn ensure_column(
         &self,
         table: &str,
@@ -2608,7 +2684,7 @@ impl TursoClient {
                 r#"CREATE TABLE IF NOT EXISTS notifikasi_wa (
                     id_notifikasi TEXT PRIMARY KEY,
                     dedupe_key TEXT NOT NULL,
-                    jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa')),
+                    jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
                     id_siswa TEXT,
                     tujuan_nomor TEXT NOT NULL,
                     isi_pesan TEXT NOT NULL,
@@ -2634,6 +2710,8 @@ impl TursoClient {
                     scan_pulang_enabled INTEGER NOT NULL DEFAULT 0,
                     bolos_enabled INTEGER NOT NULL DEFAULT 1,
                     ambang_alfa_enabled INTEGER NOT NULL DEFAULT 1,
+                    koreksi_admin_enabled INTEGER NOT NULL DEFAULT 0,
+                    import_manual_enabled INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );"#,
@@ -3068,6 +3146,13 @@ impl TursoClient {
             // baris personil lama memang belum punya unit, dan memaksanya NOT
             // NULL akan menolak seluruh ALTER pada database yang sudah berisi.
             ("master_data", "unit", "ALTER TABLE master_data ADD COLUMN unit TEXT;"),
+            // Sakelar notifikasi WA untuk Koreksi Admin dan Import Manual.
+            // Nilai bawaannya 0 — sama dengan yang dibaca `wa_notify_enabled`
+            // untuk kunci `wa_notify_*` yang belum ada, sehingga pemasangan lama
+            // tidak mulai mengirim pesan ke wali hanya karena aplikasinya
+            // diperbarui.
+            ("app_wa_config", "koreksi_admin_enabled", "ALTER TABLE app_wa_config ADD COLUMN koreksi_admin_enabled INTEGER NOT NULL DEFAULT 0;"),
+            ("app_wa_config", "import_manual_enabled", "ALTER TABLE app_wa_config ADD COLUMN import_manual_enabled INTEGER NOT NULL DEFAULT 0;"),
         ] {
             self.ensure_column(table, column, sql).await?;
         }
@@ -3148,6 +3233,7 @@ impl TursoClient {
         // `ensure_sync_pulse` — karena membangun ulang tabel ikut membuang
         // trigger pulse-nya, dan pemasangan ulangnya terjadi di sana.
         self.ensure_payroll_calc_type_values().await?;
+        self.ensure_wa_notification_kind_values().await?;
 
         self.ensure_sync_pulse().await?;
         self.purge_legacy_rate_rows().await?;
@@ -5691,7 +5777,7 @@ impl TursoClient {
         self.ensure_schema_current().await?;
         let res = self
             .query_one(
-                "SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit, scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled, created_at, updated_at FROM app_wa_config WHERE id = 'default' LIMIT 1;",
+                "SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit, scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled, koreksi_admin_enabled, import_manual_enabled, created_at, updated_at FROM app_wa_config WHERE id = 'default' LIMIT 1;",
                 vec![],
             )
             .await?;
@@ -5749,10 +5835,16 @@ impl TursoClient {
                 "sender_number": null,
                 "is_active": 0,
                 "daily_limit": 1000,
+                // Keempatnya MATI, sama dengan yang dibaca mesin untuk kunci
+                // `wa_notify_*` yang belum ada. Dulu dua yang terakhir bernilai
+                // 1 di sini, sehingga kartu Pengaturan menampilkannya hidup
+                // padahal tidak ada notifikasi yang pernah diantrekan.
                 "scan_masuk_enabled": 0,
                 "scan_pulang_enabled": 0,
-                "bolos_enabled": 1,
-                "ambang_alfa_enabled": 1,
+                "bolos_enabled": 0,
+                "ambang_alfa_enabled": 0,
+                "koreksi_admin_enabled": 0,
+                "import_manual_enabled": 0,
                 "ambangAlfaLimit": super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT,
                 "ambangAlfaDays": super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS,
                 "created_at": "",
@@ -5796,34 +5888,15 @@ impl TursoClient {
             .and_then(Value::as_i64)
             .unwrap_or(1000)
             .max(1);
-        let scan_masuk_enabled = draft
-            .get("scan_masuk_enabled")
-            .and_then(|v| {
-                v.as_i64()
-                    .or_else(|| v.as_bool().map(|b| if b { 1 } else { 0 }))
-            })
-            .unwrap_or(0);
-        let scan_pulang_enabled = draft
-            .get("scan_pulang_enabled")
-            .and_then(|v| {
-                v.as_i64()
-                    .or_else(|| v.as_bool().map(|b| if b { 1 } else { 0 }))
-            })
-            .unwrap_or(0);
-        let bolos_enabled = draft
-            .get("bolos_enabled")
-            .and_then(|v| {
-                v.as_i64()
-                    .or_else(|| v.as_bool().map(|b| if b { 1 } else { 0 }))
-            })
-            .unwrap_or(1);
-        let ambang_alfa_enabled = draft
-            .get("ambang_alfa_enabled")
-            .and_then(|v| {
-                v.as_i64()
-                    .or_else(|| v.as_bool().map(|b| if b { 1 } else { 0 }))
-            })
-            .unwrap_or(1);
+        // Satu pembaca untuk baris `app_wa_config` dan untuk cerminan
+        // `setting_gex_system`; lihat `wa_notification::parse_wa_switches`.
+        let switches = super::wa_notification::parse_wa_switches(draft);
+        let scan_masuk_enabled = switches.scan_masuk;
+        let scan_pulang_enabled = switches.scan_pulang;
+        let bolos_enabled = switches.bolos;
+        let ambang_alfa_enabled = switches.ambang_alfa;
+        let koreksi_admin_enabled = switches.koreksi_admin;
+        let import_manual_enabled = switches.import_manual;
 
         let new_key = draft
             .get("api_key")
@@ -5861,8 +5934,9 @@ impl TursoClient {
             r#"INSERT INTO app_wa_config (
                 id, provider, api_key, api_url, sender_number, is_active, daily_limit,
                 scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled,
+                koreksi_admin_enabled, import_manual_enabled,
                 created_at, updated_at
-            ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
             ON CONFLICT(id) DO UPDATE SET
                 provider = excluded.provider,
                 api_key = excluded.api_key,
@@ -5874,6 +5948,8 @@ impl TursoClient {
                 scan_pulang_enabled = excluded.scan_pulang_enabled,
                 bolos_enabled = excluded.bolos_enabled,
                 ambang_alfa_enabled = excluded.ambang_alfa_enabled,
+                koreksi_admin_enabled = excluded.koreksi_admin_enabled,
+                import_manual_enabled = excluded.import_manual_enabled,
                 updated_at = datetime('now');"#,
             vec![
                 json!(provider),
@@ -5892,65 +5968,18 @@ impl TursoClient {
                 json!(scan_pulang_enabled),
                 json!(bolos_enabled),
                 json!(ambang_alfa_enabled),
+                json!(koreksi_admin_enabled),
+                json!(import_manual_enabled),
             ],
         )];
 
-        for (key, aktif) in [
-            (
-                super::wa_notification::WA_NOTIFY_SCAN_MASUK_KEY,
-                scan_masuk_enabled,
-            ),
-            (
-                super::wa_notification::WA_NOTIFY_SCAN_PULANG_KEY,
-                scan_pulang_enabled,
-            ),
-            (super::wa_notification::WA_NOTIFY_BOLOS_KEY, bolos_enabled),
-            (
-                super::wa_notification::WA_NOTIFY_AMBANG_ALFA_KEY,
-                ambang_alfa_enabled,
-            ),
-        ] {
+        for (key, value) in super::wa_notification::wa_setting_mirror(&switches) {
             statements.push(Statement::new(
                 r#"INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value;"#,
-                vec![json!(key), json!(if aktif != 0 { "true" } else { "false" })],
+                vec![json!(key), json!(value)],
             ));
         }
-
-        // Dinormalkan dengan aturan yang SAMA seperti `saveWaConfig` di
-        // `wa-notification.ts`. Sebelumnya sisi ini hanya menolak nilai <= 0,
-        // sehingga admin yang mengetik 500 lalu menyimpan dari Desktop/Mobile
-        // menyimpan 500, sementara menyimpan formulir yang sama dari Web
-        // menyimpan 3 — dan kedua jalur evaluasi lalu memakai angka berbeda.
-        let ambang_limit = super::wa_notification::clamp_ambang_alfa_limit(
-            draft
-                .get("ambangAlfaLimit")
-                .and_then(Value::as_i64)
-                .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT),
-        );
-        let ambang_days = super::wa_notification::clamp_ambang_alfa_days(
-            draft
-                .get("ambangAlfaDays")
-                .and_then(Value::as_i64)
-                .unwrap_or(super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS),
-        );
-
-        statements.push(Statement::new(
-            r#"INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value;"#,
-            vec![
-                json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY),
-                json!(ambang_limit.to_string()),
-            ],
-        ));
-        statements.push(Statement::new(
-            r#"INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value;"#,
-            vec![
-                json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_DAYS_KEY),
-                json!(ambang_days.to_string()),
-            ],
-        ));
 
         self.execute_atomic(statements).await?;
 

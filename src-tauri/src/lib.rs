@@ -219,6 +219,7 @@ pub fn run() {
             desktop::commands::desktop_list_wa_notifications,
             desktop::commands::desktop_get_wa_config,
             desktop::commands::desktop_save_wa_config,
+            desktop::commands::desktop_drain_wa_queue,
             desktop::commands::desktop_list_counseling_cases,
             desktop::commands::desktop_get_counseling_case,
             desktop::commands::desktop_create_counseling_case,

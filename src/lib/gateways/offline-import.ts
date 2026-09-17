@@ -11,6 +11,17 @@ export interface OfflineImportResult {
   sukses: boolean;
   berhasil: number;
   gagal: number;
+  /**
+   * Ringkasan notifikasi wali untuk aksi import ini.
+   *
+   * Kosong bila sakelar `wa_notify_import_manual` mati atau tidak ada baris
+   * siswa di dalamnya. Berisi kalimat peringatan bila batas per aksi tercapai
+   * — importnya tetap berjalan penuh, hanya notifikasinya yang dilewati, dan
+   * kesenyapan itu tidak boleh disalahartikan sebagai kegagalan.
+   */
+  catatanNotifikasi?: string;
+  notifikasiDiantre?: number;
+  notifikasiDibatasi?: boolean;
   results: { sukses: boolean; pesan: string; eventKey?: string }[];
 }
 

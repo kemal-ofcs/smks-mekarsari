@@ -485,6 +485,20 @@ export async function runDatabaseMigrations(client: Client) {
     // memang belum punya unit, dan NOT NULL akan menolak ALTER pada database
     // yang sudah berisi.
     ["master_data", "unit", "ALTER TABLE master_data ADD COLUMN unit TEXT;"],
+    // Sakelar notifikasi WA untuk Koreksi Admin dan Import Manual. Bawaannya 0,
+    // sama dengan yang dibaca mesin untuk kunci `wa_notify_*` yang belum ada:
+    // pemasangan lama tidak mulai mengirim pesan ke wali hanya karena
+    // aplikasinya diperbarui. Cerminan `ensure_column` di `turso.rs`.
+    [
+      "app_wa_config",
+      "koreksi_admin_enabled",
+      "ALTER TABLE app_wa_config ADD COLUMN koreksi_admin_enabled INTEGER NOT NULL DEFAULT 0;",
+    ],
+    [
+      "app_wa_config",
+      "import_manual_enabled",
+      "ALTER TABLE app_wa_config ADD COLUMN import_manual_enabled INTEGER NOT NULL DEFAULT 0;",
+    ],
   ] as const) {
     if (
       (await hasTable(client, table)) &&
@@ -609,6 +623,50 @@ export async function runDatabaseMigrations(client: Client) {
     `,
     args: [OPERATIONAL_SYNC_MIGRATION_VERSION, now],
   });
+  // Lebarkan CHECK `notifikasi_wa.jenis` pada database yang sudah ada.
+  //
+  // `CREATE TABLE IF NOT EXISTS` di atas tidak pernah memperbaiki tabel yang
+  // sudah terlanjur dibuat, sehingga tanpa blok ini `koreksi_admin` dan
+  // `import_manual` ditolak CHECK lama — dan pada jalur sinkronisasi penolakan
+  // itu mengunci outbox secara permanen.
+  //
+  // Idempoten lewat pemeriksaan teks DDL-nya sendiri; keempat nilai lama tetap
+  // sah pada CHECK baru sehingga tidak ada baris yang perlu diperbaiki.
+  // Cerminan `ensure_wa_notification_kind_values` di `storage.rs` dan `turso.rs`.
+  const notifDdl = await client.execute({
+    sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifikasi_wa';",
+  });
+  const ddlNotif = String(notifDdl.rows[0]?.sql ?? "");
+  if (ddlNotif && !ddlNotif.includes("'koreksi_admin'")) {
+    const kolomNotif =
+      "id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor, isi_pesan, status, attempt_count, last_error, sent_at, created_at, updated_at";
+    await client.batch(
+      [
+        "DROP TABLE IF EXISTS notifikasi_wa__rebuild;",
+        `CREATE TABLE notifikasi_wa__rebuild (
+          id_notifikasi TEXT PRIMARY KEY,
+          dedupe_key TEXT NOT NULL,
+          jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+          id_siswa TEXT,
+          tujuan_nomor TEXT NOT NULL,
+          isi_pesan TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'Menunggu' CHECK (status IN ('Menunggu', 'Terkirim', 'Gagal', 'Dibatalkan')),
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          sent_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`,
+        `INSERT INTO notifikasi_wa__rebuild (${kolomNotif}) SELECT ${kolomNotif} FROM notifikasi_wa;`,
+        "DROP TABLE notifikasi_wa;",
+        "ALTER TABLE notifikasi_wa__rebuild RENAME TO notifikasi_wa;",
+        "CREATE INDEX IF NOT EXISTS idx_notifikasi_wa_status ON notifikasi_wa(status, created_at);",
+        "CREATE INDEX IF NOT EXISTS idx_notifikasi_wa_dedupe ON notifikasi_wa(dedupe_key);",
+      ],
+      "write",
+    );
+  }
+
   await client.execute({
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'offline-import-foundation', ?);`,
@@ -1307,7 +1365,7 @@ export async function runDatabaseMigrations(client: Client) {
     CREATE TABLE IF NOT EXISTS notifikasi_wa (
       id_notifikasi TEXT PRIMARY KEY,
       dedupe_key TEXT NOT NULL,
-      jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa')),
+      jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
       id_siswa TEXT,
       tujuan_nomor TEXT NOT NULL,
       isi_pesan TEXT NOT NULL,
@@ -1333,6 +1391,8 @@ export async function runDatabaseMigrations(client: Client) {
       scan_pulang_enabled INTEGER NOT NULL DEFAULT 0,
       bolos_enabled INTEGER NOT NULL DEFAULT 1,
       ambang_alfa_enabled INTEGER NOT NULL DEFAULT 1,
+      koreksi_admin_enabled INTEGER NOT NULL DEFAULT 0,
+      import_manual_enabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

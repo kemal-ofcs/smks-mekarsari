@@ -951,6 +951,37 @@ pub fn create_correction(
         &json!({ "correction": correction, "attendance": attendance, "attendanceBaseUpdatedAt": previous_update, "log": log }),
         None,
     )?;
+
+    // Beri tahu wali bila yang dikoreksi adalah seorang siswa.
+    //
+    // Sebuah koreksi berarti kehadiran hari itu tidak tercatat sebagaimana
+    // mestinya, dan itulah yang perlu diketahui wali — bukan sekadar hasil
+    // akhirnya. Guru dan pegawai tidak tersentuh: `queue_wali_notification_tx`
+    // hanya meloloskan personil yang siswa.
+    //
+    // `status_kehadiran` ikut ke dalam kunci deduplikasi supaya koreksi ulang
+    // dengan hasil yang SAMA tidak mengirim dua kali, sementara koreksi yang
+    // MENGUBAH hasilnya tetap mengirim lagi. Tanpa itu, wali yang terlanjur
+    // diberi tahu "Hadir" tidak akan pernah tahu saat admin memperbaikinya.
+    let status_akhir = text(&attendance, "status_kehadiran");
+    let _ = super::wa_notification::queue_wali_notification_tx(
+        &transaction,
+        &client_id,
+        "koreksi_admin",
+        &employee_id,
+        &format!("koreksi_admin:{session_id}:{status_akhir}"),
+        |wali| {
+            format!(
+                "Yth. Wali Murid dari {} ({}). Kami informasikan bahwa catatan kehadiran ananda pada {} telah dikoreksi oleh admin sekolah menjadi: {}. Keterangan: {}. Mohon konfirmasi bila ada yang tidak sesuai.",
+                wali.nama,
+                wali.rombel,
+                date,
+                if status_akhir.is_empty() { "-" } else { status_akhir },
+                if note.is_empty() { correction_type } else { note },
+            )
+        },
+    )?;
+
     transaction.commit().map_err(|_| CommandError::internal())?;
     Ok(
         json!({ "sukses": true, "pesan": format!("Koreksi admin '{correction_type}' untuk {name} ({employee_id}) berhasil diproses."), "id_referensi": reference }),
@@ -1179,6 +1210,10 @@ pub fn import_offline(
     }
     let client_id = sync::ensure_client_id(state)?;
     let mut results = Vec::new();
+    // Lihat `MAX_WALI_NOTIFICATIONS_PER_IMPORT`: importnya berjalan penuh,
+    // notifikasinya yang dibatasi.
+    let mut notif_diantre: usize = 0;
+    let mut notif_dibatasi = false;
     for row in rows {
         let date_raw = text(row, "tanggal");
         let date = normalize_date(&date_raw);
@@ -1674,6 +1709,39 @@ pub fn import_offline(
                 &json!({ "import": import, "attendance": attendance, "attendanceBaseUpdatedAt": previous.map(|value| value.0), "logs": logs }),
                 None,
             )?;
+            // Beri tahu wali bila baris ini milik seorang siswa.
+            //
+            // Sebuah baris import berarti kehadiran hari itu tidak terekam
+            // lewat pemindai dan harus dimasukkan tangan — dan itulah yang perlu
+            // diketahui wali. Guru dan pegawai tidak tersentuh.
+            if notif_diantre < super::wa_notification::MAX_WALI_NOTIFICATIONS_PER_IMPORT {
+                let terkirim = super::wa_notification::queue_wali_notification_tx(
+                    &transaction,
+                    &client_id,
+                    "import_manual",
+                    &id,
+                    &format!("import_manual:{id}:{date}:{attendance_status}"),
+                    |wali| {
+                        format!(
+                            "Yth. Wali Murid dari {} ({}). Kami informasikan bahwa catatan kehadiran ananda pada {} dimasukkan secara manual oleh admin sekolah dengan status: {}. Keterangan: {}. Mohon konfirmasi bila ada yang tidak sesuai.",
+                            wali.nama,
+                            wali.rombel,
+                            date,
+                            attendance_status,
+                            {
+                                let catatan = text(row, "keterangan");
+                                if catatan.is_empty() { "Import manual" } else { catatan }
+                            },
+                        )
+                    },
+                )?;
+                if terkirim {
+                    notif_diantre += 1;
+                }
+            } else {
+                notif_dibatasi = true;
+            }
+
             Ok(
                 json!({ "sukses": true, "pesan": format!("Import {id} berhasil diproses."), "eventKey": event_key }),
             )
@@ -1693,9 +1761,25 @@ pub fn import_offline(
         .iter()
         .filter(|value| value.get("sukses").and_then(Value::as_bool) == Some(true))
         .count();
-    Ok(
-        json!({ "sukses": success > 0, "berhasil": success, "gagal": results.len() - success, "results": results }),
-    )
+    let catatan_notif = if notif_dibatasi {
+        format!(
+            " Notifikasi wali: {notif_diantre} diantrekan; sisanya dilewati karena melebihi batas {} per satu aksi import.",
+            super::wa_notification::MAX_WALI_NOTIFICATIONS_PER_IMPORT
+        )
+    } else if notif_diantre > 0 {
+        format!(" Notifikasi wali: {notif_diantre} diantrekan.")
+    } else {
+        String::new()
+    };
+    Ok(json!({
+        "sukses": success > 0,
+        "berhasil": success,
+        "gagal": results.len() - success,
+        "notifikasiDiantre": notif_diantre,
+        "notifikasiDibatasi": notif_dibatasi,
+        "catatanNotifikasi": catatan_notif,
+        "results": results,
+    }))
 }
 
 pub fn dashboard_data(

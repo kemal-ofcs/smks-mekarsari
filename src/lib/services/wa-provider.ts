@@ -27,6 +27,8 @@ export interface StoredWaConfig {
   scanPulangEnabled: boolean;
   bolosEnabled: boolean;
   ambangAlfaEnabled: boolean;
+  koreksiAdminEnabled: boolean;
+  importManualEnabled: boolean;
 }
 
 export async function readFullWaConfig(
@@ -35,7 +37,8 @@ export async function readFullWaConfig(
   const result = await client.execute({
     sql: `
       SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit,
-             scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled
+             scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled,
+      koreksi_admin_enabled, import_manual_enabled
       FROM app_wa_config
       WHERE id = 'default'
       LIMIT 1;
@@ -60,6 +63,8 @@ export async function readFullWaConfig(
     scanPulangEnabled: Number(row.scan_pulang_enabled ?? 0) === 1,
     bolosEnabled: Number(row.bolos_enabled ?? 1) === 1,
     ambangAlfaEnabled: Number(row.ambang_alfa_enabled ?? 1) === 1,
+    koreksiAdminEnabled: Number(row.koreksi_admin_enabled ?? 0) === 1,
+    importManualEnabled: Number(row.import_manual_enabled ?? 0) === 1,
   };
 }
 

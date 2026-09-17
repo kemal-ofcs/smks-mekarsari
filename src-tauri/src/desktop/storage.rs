@@ -227,6 +227,64 @@ fn ensure_payroll_calc_type_values(connection: &Connection) -> Result<(), String
     Ok(())
 }
 
+fn ensure_wa_notification_kind_values(connection: &Connection) -> Result<(), String> {
+    let existing: Option<String> = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifikasi_wa';",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| "Skema notifikasi_wa tidak dapat diperiksa.".to_string())?;
+    let Some(existing) = existing else {
+        return Ok(());
+    };
+    if existing.contains("'koreksi_admin'") {
+        return Ok(());
+    }
+
+    // Pola yang sama dengan `ensure_payroll_calc_type_values`: `CREATE TABLE IF
+    // NOT EXISTS` tidak pernah memperbaiki tabel yang sudah ada, sehingga
+    // menambah nilai pada DDL saja tidak mengubah apa pun di pemasangan yang
+    // sudah berjalan — barisnya ditolak CHECK lama, lalu ditolak lagi saat push
+    // dan mengunci outbox secara permanen.
+    //
+    // Idempoten lewat pemeriksaan teks DDL-nya sendiri, dan tidak ada baris
+    // yang perlu diperbaiki lebih dulu: keempat nilai lama tetap sah.
+    const KOLOM: &str = "id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor, isi_pesan, status, attempt_count, last_error, sent_at, created_at, updated_at";
+
+    let script = format!(
+        "BEGIN;
+        DROP TABLE IF EXISTS notifikasi_wa__rebuild;
+        CREATE TABLE notifikasi_wa__rebuild (
+          id_notifikasi TEXT PRIMARY KEY,
+          dedupe_key TEXT NOT NULL,
+          jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+          id_siswa TEXT,
+          tujuan_nomor TEXT NOT NULL,
+          isi_pesan TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'Menunggu' CHECK (status IN ('Menunggu', 'Terkirim', 'Gagal', 'Dibatalkan')),
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          sent_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO notifikasi_wa__rebuild ({KOLOM})
+          SELECT {KOLOM} FROM notifikasi_wa;
+        DROP TABLE notifikasi_wa;
+        ALTER TABLE notifikasi_wa__rebuild RENAME TO notifikasi_wa;
+        CREATE INDEX IF NOT EXISTS idx_local_notifikasi_wa_status ON notifikasi_wa(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_local_notifikasi_wa_dedupe ON notifikasi_wa(dedupe_key);
+        COMMIT;"
+    );
+
+    connection
+        .execute_batch(&script)
+        .map_err(|_| "Tabel notifikasi_wa tidak dapat dibangun ulang.".to_string())?;
+    Ok(())
+}
+
 fn ensure_attendance_source_check(connection: &Connection) -> Result<(), String> {
     let existing: Option<String> = connection
         .query_row(
@@ -1084,7 +1142,7 @@ pub fn initialize(path: &Path) -> Result<(), String> {
       CREATE TABLE IF NOT EXISTS notifikasi_wa (
         id_notifikasi TEXT PRIMARY KEY,
         dedupe_key TEXT NOT NULL,
-        jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa')),
+        jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
         id_siswa TEXT,
         tujuan_nomor TEXT NOT NULL,
         isi_pesan TEXT NOT NULL,
@@ -1193,6 +1251,7 @@ pub fn initialize(path: &Path) -> Result<(), String> {
 
     // v25: memperluas CHECK `calc_type` untuk tunjangan per JP dan per hadir.
     ensure_payroll_calc_type_values(&connection)?;
+    ensure_wa_notification_kind_values(&connection)?;
 
     // v17: melepas UNIQUE dari tabel akademik yang ikut sinkronisasi. Cerminan
     // `TursoClient::rebuild_without_unique` — lihat alasan lengkapnya di sana.

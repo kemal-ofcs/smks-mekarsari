@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/context/AuthContext";
 import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import {
   cancelWaNotificationGateway,
+  drainWaQueueGateway,
   getWaConfigGateway,
   listWaNotificationsGateway,
   saveWaConfigGateway,
@@ -132,6 +133,7 @@ export default function NotifikasiWaPage() {
 
   const canManage = hasPermission(user, "notification.manage");
   const canDelete = hasPermission(user, "notification.delete");
+  const canSend = hasPermission(user, "notification.send");
 
   const handleRefresh = async () => {
     setLoading(true);
@@ -153,6 +155,45 @@ export default function NotifikasiWaPage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  /**
+   * Kuras antrean sekarang, tanpa menunggu penjadwal.
+   *
+   * Pengirimannya berjalan di server aplikasi — lihat `drainWaQueueGateway`.
+   * Hasilnya dilaporkan apa adanya termasuk saat nol pesan terkirim: sebuah
+   * tombol yang selalu menjawab "berhasil" tidak membedakan antrean kosong dari
+   * gateway yang menolak, dan justru perbedaan itu yang perlu dilihat orang.
+   */
+  const handleDrainQueue = async () => {
+    if (isSubmittingRef.current || !canSend) return;
+    const confirmed = await konfirmasi({
+      title: `Kirim ${totalMenunggu} pesan menunggu sekarang?`,
+      description:
+        "Pesan dikirim ke nomor wali murid lewat gateway WhatsApp dan tidak dapat ditarik kembali.",
+      preserved:
+        "Hanya baris berstatus Menunggu yang dikirim. Baris yang sudah Terkirim, Gagal, atau Dibatalkan tidak disentuh.",
+      confirmLabel: "Ya, kirim sekarang",
+      tone: "warning",
+    });
+    if (!confirmed) return;
+
+    isSubmittingRef.current = true;
+    try {
+      const hasil = await drainWaQueueGateway();
+      setFeedback({
+        tone: hasil.sukses ? "success" : "error",
+        message: hasil.message,
+      });
+      void loadData();
+    } catch (err) {
+      setFeedback({
+        tone: "error",
+        message: err instanceof Error ? err.message : "Gagal menguras antrean.",
+      });
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 
@@ -203,6 +244,8 @@ export default function NotifikasiWaPage() {
       scanPulangEnabled: config.scanPulangEnabled,
       bolosEnabled: config.bolosEnabled,
       ambangAlfaEnabled: config.ambangAlfaEnabled,
+      koreksiAdminEnabled: config.koreksiAdminEnabled,
+      importManualEnabled: config.importManualEnabled,
     });
     setShowApiKey(false);
     setConfigModalOpen(true);
@@ -295,6 +338,18 @@ export default function NotifikasiWaPage() {
             Ambang Alfa
           </span>
         );
+      case "koreksi_admin":
+        return (
+          <span className="inline-flex items-center rounded-md bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400 ring-1 ring-inset ring-indigo-500/20">
+            Koreksi Admin
+          </span>
+        );
+      case "import_manual":
+        return (
+          <span className="inline-flex items-center rounded-md bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-400 ring-1 ring-inset ring-violet-500/20">
+            Import Manual
+          </span>
+        );
     }
   };
 
@@ -344,6 +399,22 @@ export default function NotifikasiWaPage() {
                 >
                   <Icon name="settings" className="h-4 w-4" />
                   Konfigurasi Gateway
+                </button>
+              )}
+              {canSend && (
+                <button
+                  type="button"
+                  onClick={handleDrainQueue}
+                  disabled={loading || totalMenunggu === 0}
+                  title={
+                    totalMenunggu === 0
+                      ? "Tidak ada pesan berstatus Menunggu"
+                      : "Kirim semua pesan menunggu lewat gateway WhatsApp"
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  <Icon name="whatsapp" className="h-4 w-4" />
+                  Kirim Antrean Sekarang
                 </button>
               )}
               <button
@@ -469,6 +540,8 @@ export default function NotifikasiWaPage() {
                 <option value="scan_pulang">Scan Pulang Gerbang</option>
                 <option value="bolos">Deteksi Bolos Kelas</option>
                 <option value="ambang_alfa">Peringatan Ambang Alfa</option>
+                <option value="koreksi_admin">Koreksi Admin</option>
+                <option value="import_manual">Import Manual</option>
               </select>
             </div>
 

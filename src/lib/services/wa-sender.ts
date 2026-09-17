@@ -168,11 +168,19 @@ export async function drainWaQueue(
     // yang hanya menyentuh baris berstatus akhir. Sebuah jenis yang dimatikan
     // lalu akan menyumbat antrean secara permanen — dan lebih buruk, memakan
     // jatah `LIMIT` setiap siklus sehingga pesan yang sah ikut tertunda.
-    const jenisAktif =
-      (jenis === "scan_masuk" && config.scanMasukEnabled) ||
-      (jenis === "scan_pulang" && config.scanPulangEnabled) ||
-      (jenis === "bolos" && config.bolosEnabled) ||
-      (jenis === "ambang_alfa" && config.ambangAlfaEnabled);
+    // Peta, bukan rantai OR. Bentuk lamanya mengeja keempat jenis satu per
+    // satu, sehingga jenis KELIMA yang ditambahkan kemudian jatuh ke `false`
+    // dan dibatalkan di titik kirim — meski sakelar antreannya menyala. Pesan
+    // yang tidak pernah terkirim tanpa ada yang salah di kodenya.
+    const SAKELAR_JENIS: Record<string, boolean> = {
+      scan_masuk: config.scanMasukEnabled,
+      scan_pulang: config.scanPulangEnabled,
+      bolos: config.bolosEnabled,
+      ambang_alfa: config.ambangAlfaEnabled,
+      koreksi_admin: config.koreksiAdminEnabled,
+      import_manual: config.importManualEnabled,
+    };
+    const jenisAktif = SAKELAR_JENIS[jenis] === true;
     if (!jenisAktif) {
       await client.execute({
         sql: "UPDATE notifikasi_wa SET status = 'Dibatalkan', last_error = ?, updated_at = datetime('now') WHERE id_notifikasi = ?;",

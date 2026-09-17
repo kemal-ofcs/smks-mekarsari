@@ -20,6 +20,8 @@ export const WA_NOTIFY_SCAN_MASUK_KEY = "wa_notify_scan_masuk";
 export const WA_NOTIFY_SCAN_PULANG_KEY = "wa_notify_scan_pulang";
 export const WA_NOTIFY_BOLOS_KEY = "wa_notify_bolos";
 export const WA_NOTIFY_AMBANG_ALFA_KEY = "wa_notify_ambang_alfa";
+export const WA_NOTIFY_KOREKSI_ADMIN_KEY = "wa_notify_koreksi_admin";
+export const WA_NOTIFY_IMPORT_MANUAL_KEY = "wa_notify_import_manual";
 
 /** Kunci setting dinamis untuk ambang jumlah alfa dan rentang hari evaluasi. */
 export const WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY = "wa_notify_ambang_alfa_limit";
@@ -33,6 +35,8 @@ export const WA_NOTIFICATION_KINDS = [
   "scan_pulang",
   "bolos",
   "ambang_alfa",
+  "koreksi_admin",
+  "import_manual",
 ] as const;
 
 export type WaNotificationKind = (typeof WA_NOTIFICATION_KINDS)[number];
@@ -84,6 +88,10 @@ export function waNotifySettingKey(jenis: string): string | null {
       return WA_NOTIFY_BOLOS_KEY;
     case "ambang_alfa":
       return WA_NOTIFY_AMBANG_ALFA_KEY;
+    case "koreksi_admin":
+      return WA_NOTIFY_KOREKSI_ADMIN_KEY;
+    case "import_manual":
+      return WA_NOTIFY_IMPORT_MANUAL_KEY;
     default:
       return null;
   }

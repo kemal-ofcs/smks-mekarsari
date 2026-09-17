@@ -15,6 +15,8 @@ import {
   WA_NOTIFY_AMBANG_ALFA_KEY,
   WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
   WA_NOTIFY_BOLOS_KEY,
+  WA_NOTIFY_IMPORT_MANUAL_KEY,
+  WA_NOTIFY_KOREKSI_ADMIN_KEY,
   WA_NOTIFY_SCAN_MASUK_KEY,
   WA_NOTIFY_SCAN_PULANG_KEY,
 } from "@/lib/validations/wa-notification";
@@ -200,6 +202,7 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
     sql: `
       SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit,
              scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled,
+      koreksi_admin_enabled, import_manual_enabled,
              created_at, updated_at
       FROM app_wa_config
       WHERE id = 'default'
@@ -233,10 +236,16 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
       senderNumber: null,
       isActive: false,
       dailyLimit: 1000,
+      // Keempatnya MATI, sama dengan yang dibaca `waNotifyEnabled` untuk
+      // kunci `wa_notify_*` yang belum ada. Dua yang terakhir dulu bernilai
+      // true di sini, sehingga kartu Pengaturan menampilkannya hidup sementara
+      // mesinnya tidak pernah mengantre apa pun.
       scanMasukEnabled: false,
       scanPulangEnabled: false,
-      bolosEnabled: true,
-      ambangAlfaEnabled: true,
+      bolosEnabled: false,
+      ambangAlfaEnabled: false,
+      koreksiAdminEnabled: false,
+      importManualEnabled: false,
       ambangAlfaLimit,
       ambangAlfaDays,
       createdAt: "",
@@ -272,8 +281,10 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
     dailyLimit: Number(row.daily_limit ?? 1000),
     scanMasukEnabled: Number(row.scan_masuk_enabled ?? 0) === 1,
     scanPulangEnabled: Number(row.scan_pulang_enabled ?? 0) === 1,
-    bolosEnabled: Number(row.bolos_enabled ?? 1) === 1,
-    ambangAlfaEnabled: Number(row.ambang_alfa_enabled ?? 1) === 1,
+    bolosEnabled: Number(row.bolos_enabled ?? 0) === 1,
+    ambangAlfaEnabled: Number(row.ambang_alfa_enabled ?? 0) === 1,
+    koreksiAdminEnabled: Number(row.koreksi_admin_enabled ?? 0) === 1,
+    importManualEnabled: Number(row.import_manual_enabled ?? 0) === 1,
     ambangAlfaLimit,
     ambangAlfaDays,
     createdAt: row.created_at != null ? String(row.created_at) : "",
@@ -310,8 +321,9 @@ export async function saveWaConfig(
       INSERT INTO app_wa_config (
         id, provider, api_key, api_url, sender_number, is_active, daily_limit,
         scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled,
+        koreksi_admin_enabled, import_manual_enabled,
         created_at, updated_at
-      ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
         provider = excluded.provider,
         api_key = excluded.api_key,
@@ -323,6 +335,8 @@ export async function saveWaConfig(
         scan_pulang_enabled = excluded.scan_pulang_enabled,
         bolos_enabled = excluded.bolos_enabled,
         ambang_alfa_enabled = excluded.ambang_alfa_enabled,
+        koreksi_admin_enabled = excluded.koreksi_admin_enabled,
+        import_manual_enabled = excluded.import_manual_enabled,
         updated_at = datetime('now');
     `,
     args: [
@@ -336,6 +350,8 @@ export async function saveWaConfig(
       draft.scanPulangEnabled ? 1 : 0,
       draft.bolosEnabled ? 1 : 0,
       draft.ambangAlfaEnabled ? 1 : 0,
+      draft.koreksiAdminEnabled ? 1 : 0,
+      draft.importManualEnabled ? 1 : 0,
     ],
   };
 
@@ -346,6 +362,14 @@ export async function saveWaConfig(
       [WA_NOTIFY_SCAN_PULANG_KEY, draft.scanPulangEnabled ? "true" : "false"],
       [WA_NOTIFY_BOLOS_KEY, draft.bolosEnabled ? "true" : "false"],
       [WA_NOTIFY_AMBANG_ALFA_KEY, draft.ambangAlfaEnabled ? "true" : "false"],
+      [
+        WA_NOTIFY_KOREKSI_ADMIN_KEY,
+        draft.koreksiAdminEnabled ? "true" : "false",
+      ],
+      [
+        WA_NOTIFY_IMPORT_MANUAL_KEY,
+        draft.importManualEnabled ? "true" : "false",
+      ],
       [
         WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
         String(parseAmbangAlfaLimit(draft.ambangAlfaLimit)),

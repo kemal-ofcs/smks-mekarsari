@@ -27,8 +27,14 @@ export function NotifikasiWaCard({
 }: NotifikasiWaCardProps) {
   const [scanMasuk, setScanMasuk] = useState(false);
   const [scanPulang, setScanPulang] = useState(false);
-  const [bolos, setBolos] = useState(true);
-  const [ambangAlfa, setAmbangAlfa] = useState(true);
+  // MATI, sama dengan yang dibaca mesin untuk kunci `wa_notify_*` yang belum
+  // ada. Nilai awal `true` di sini membuat kartu menampilkan dua sakelar hidup
+  // sebelum `config` datang — dan pada pemasangan yang belum pernah menyimpan,
+  // itulah satu-satunya yang pernah dilihat pengguna.
+  const [bolos, setBolos] = useState(false);
+  const [ambangAlfa, setAmbangAlfa] = useState(false);
+  const [koreksiAdmin, setKoreksiAdmin] = useState(false);
+  const [importManual, setImportManual] = useState(false);
   const [ambangLimit, setAmbangLimit] = useState(DEFAULT_AMBANG_ALFA_LIMIT);
   const [ambangDays, setAmbangDays] = useState(DEFAULT_AMBANG_ALFA_DAYS);
   const [isDirty, setIsDirty] = useState(false);
@@ -39,6 +45,8 @@ export function NotifikasiWaCard({
       setScanPulang(config.scanPulangEnabled);
       setBolos(config.bolosEnabled);
       setAmbangAlfa(config.ambangAlfaEnabled);
+      setKoreksiAdmin(config.koreksiAdminEnabled);
+      setImportManual(config.importManualEnabled);
       setAmbangLimit(config.ambangAlfaLimit ?? DEFAULT_AMBANG_ALFA_LIMIT);
       setAmbangDays(config.ambangAlfaDays ?? DEFAULT_AMBANG_ALFA_DAYS);
       setIsDirty(false);
@@ -58,6 +66,8 @@ export function NotifikasiWaCard({
       scanPulangEnabled: scanPulang,
       bolosEnabled: bolos,
       ambangAlfaEnabled: ambangAlfa,
+      koreksiAdminEnabled: koreksiAdmin,
+      importManualEnabled: importManual,
       ambangAlfaLimit: ambangLimit,
       ambangAlfaDays: ambangDays,
     };
@@ -291,6 +301,74 @@ export function NotifikasiWaCard({
               </div>
             </div>
           ) : null}
+        </div>
+
+        {/* Sakelar 5: Notifikasi Koreksi Admin */}
+        <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-950/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="text-sm font-bold text-white">
+              Notifikasi Koreksi Admin
+            </span>
+            <p className="text-xs text-slate-400">
+              Beri tahu wali saat catatan kehadiran seorang siswa dikoreksi
+              admin. Hanya siswa — koreksi untuk guru dan pegawai tidak pernah
+              memberi notifikasi.
+            </p>
+          </div>
+          {canManage ? (
+            <label className="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                checked={koreksiAdmin}
+                disabled={busy}
+                onChange={(e) => {
+                  setKoreksiAdmin(e.target.checked);
+                  setIsDirty(true);
+                }}
+                className="sr-only peer"
+                id="toggle-wa-koreksi-admin"
+              />
+              <div className="h-6 w-11 rounded-full bg-slate-800 peer peer-checked:bg-emerald-500 peer-focus:outline-none after:absolute after:top-0.5 after:left-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white disabled:opacity-50" />
+            </label>
+          ) : (
+            <span className="text-xs font-semibold text-slate-400">
+              {koreksiAdmin ? "Aktif" : "Nonaktif"}
+            </span>
+          )}
+        </div>
+
+        {/* Sakelar 6: Notifikasi Import Manual */}
+        <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-950/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="text-sm font-bold text-white">
+              Notifikasi Import Manual
+            </span>
+            <p className="text-xs text-slate-400">
+              Beri tahu wali saat kehadiran seorang siswa dimasukkan manual.
+              Dibatasi 25 siswa per satu aksi import agar backfill massal tidak
+              membanjiri wali; importnya sendiri tetap berjalan penuh.
+            </p>
+          </div>
+          {canManage ? (
+            <label className="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                checked={importManual}
+                disabled={busy}
+                onChange={(e) => {
+                  setImportManual(e.target.checked);
+                  setIsDirty(true);
+                }}
+                className="sr-only peer"
+                id="toggle-wa-import-manual"
+              />
+              <div className="h-6 w-11 rounded-full bg-slate-800 peer peer-checked:bg-emerald-500 peer-focus:outline-none after:absolute after:top-0.5 after:left-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white disabled:opacity-50" />
+            </label>
+          ) : (
+            <span className="text-xs font-semibold text-slate-400">
+              {importManual ? "Aktif" : "Nonaktif"}
+            </span>
+          )}
         </div>
       </div>
 

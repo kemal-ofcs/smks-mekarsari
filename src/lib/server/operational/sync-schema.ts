@@ -1340,7 +1340,14 @@ export const operationalSyncEventSchema = z.union([
       .object({
         id_notifikasi: shortText.min(1),
         dedupe_key: shortText.min(1),
-        jenis: z.enum(["scan_masuk", "scan_pulang", "bolos", "ambang_alfa"]),
+        jenis: z.enum([
+          "scan_masuk",
+          "scan_pulang",
+          "bolos",
+          "ambang_alfa",
+          "koreksi_admin",
+          "import_manual",
+        ]),
         id_siswa: optionalShortText,
         tujuan_nomor: shortText.min(1),
         isi_pesan: z.string().min(1).max(5000),

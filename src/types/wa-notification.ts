@@ -1,6 +1,8 @@
 export type WaNotificationJenis =
   | "scan_masuk"
   | "scan_pulang"
+  | "koreksi_admin"
+  | "import_manual"
   | "bolos"
   | "ambang_alfa";
 
@@ -61,6 +63,8 @@ export interface WaConfig {
   scanPulangEnabled: boolean;
   bolosEnabled: boolean;
   ambangAlfaEnabled: boolean;
+  koreksiAdminEnabled: boolean;
+  importManualEnabled: boolean;
   ambangAlfaLimit?: number;
   ambangAlfaDays?: number;
   createdAt?: string;
@@ -78,6 +82,28 @@ export interface WaConfigDraft {
   scanPulangEnabled: boolean;
   bolosEnabled: boolean;
   ambangAlfaEnabled: boolean;
+  koreksiAdminEnabled: boolean;
+  importManualEnabled: boolean;
   ambangAlfaLimit?: number;
   ambangAlfaDays?: number;
+}
+
+/**
+ * Hasil satu kali pengurasan antrean.
+ *
+ * Bentuknya sama persis dengan `DrainResult` di `services/wa-sender.ts` — di
+ * sanalah nilainya benar-benar dihitung. Dideklarasikan ulang di `types/` dan
+ * bukan diimpor dari `services/` supaya halaman tidak ikut menarik modul
+ * `server-only` beserta `@libsql/client` ke dalam bundel klien.
+ */
+export interface WaDrainResult {
+  sukses: boolean;
+  processed: number;
+  sent: number;
+  cancelled_dedupe: number;
+  cancelled_disabled: number;
+  failed: number;
+  purged: number;
+  skipped_quota: boolean;
+  message: string;
 }

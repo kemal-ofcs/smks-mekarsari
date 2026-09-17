@@ -208,6 +208,7 @@
     "allow-desktop-list-wa-notifications",
     "allow-desktop-get-wa-config",
     "allow-desktop-save-wa-config",
+    "allow-desktop-drain-wa-queue",
     "allow-desktop-list-counseling-cases",
     "allow-desktop-get-counseling-case",
     "allow-desktop-create-counseling-case",

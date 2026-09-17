@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-drain-wa-queue"
+description = "Enables the desktop_drain_wa_queue command without any pre-configured scope."
+commands.allow = ["desktop_drain_wa_queue"]
+
+[[permission]]
+identifier = "deny-desktop-drain-wa-queue"
+description = "Denies the desktop_drain_wa_queue command without any pre-configured scope."
+commands.deny = ["desktop_drain_wa_queue"]

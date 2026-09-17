@@ -203,6 +203,7 @@ const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_list_wa_notifications",
     "desktop_get_wa_config",
     "desktop_save_wa_config",
+    "desktop_drain_wa_queue",
     "desktop_list_counseling_cases",
     "desktop_get_counseling_case",
     "desktop_create_counseling_case",

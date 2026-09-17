@@ -3053,6 +3053,33 @@ pub async fn desktop_list_wa_notifications(
     Ok(gabung_antrean_wa(&lokal_belum_terkirim, &cloud))
 }
 
+/// Menguras antrean notifikasi WhatsApp lewat server aplikasi.
+///
+/// Pengirimannya TIDAK dijalankan di sini. Panggilan HTTP ke gateway
+/// (Fonnte/Wablas) hanya ada di TypeScript — `sendViaProvider`, digerakkan
+/// `drainWaQueue` — dan berjalan di server Next.js. Command ini meneruskan
+/// permintaannya ke sana lewat `secured_api`, memakai sesi web yang sama dengan
+/// tindakan keamanan lain.
+///
+/// Karena itu ia menuntut server aplikasi yang terjangkau. Pada pemasangan
+/// Mode Database Lokal tidak ada server seperti itu, dan `require_online_access`
+/// menolaknya dengan pesan yang menjelaskan sebabnya — jauh lebih baik daripada
+/// tombol yang menjawab "berhasil" sementara tidak satu pesan pun berpindah.
+#[tauri::command]
+pub async fn desktop_drain_wa_queue(
+    state: State<'_, DesktopState>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "notification.send")?;
+    secured_api(
+        &state,
+        "notification.send",
+        Method::POST,
+        "/api/notifications/wa/drain",
+        None,
+    )
+    .await
+}
+
 /// Membaca konfigurasi gateway WhatsApp (Cloud-Only via Turso).
 #[tauri::command]
 pub async fn desktop_get_wa_config(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
@@ -3067,7 +3094,25 @@ pub async fn desktop_save_wa_config(
     draft: Value,
 ) -> Result<Value, CommandError> {
     require_permission(&state, "notification.manage")?;
-    state.get_turso_client()?.save_wa_config(&draft).await
+    let hasil = state.get_turso_client()?.save_wa_config(&draft).await?;
+
+    // Cerminkan sakelarnya ke `setting_gex_system` LOKAL setelah cloud berhasil.
+    //
+    // Scanner membaca sakelar ini dari SQLite lokal, di dalam transaksinya
+    // sendiri. Tanpa langkah ini, menyalakan sakelar lalu langsung memindai
+    // tidak menghasilkan apa-apa: nilai barunya masih menunggu pull berikutnya,
+    // dan tidak ada apa pun di layar yang mengatakan begitu.
+    //
+    // Urutannya menentukan. Cloud ditulis LEBIH DULU dan tulisan lokal hanya
+    // menyusul kalau cloud berhasil — perangkat tidak boleh mulai mengantre
+    // pesan ke nomor wali atas dasar sakelar yang gagal tersimpan bagi orang
+    // lain.
+    super::wa_notification::mirror_wa_switches_local(
+        &state,
+        &super::wa_notification::parse_wa_switches(&draft),
+    )?;
+
+    Ok(hasil)
 }
 
 /// Menampilkan daftar kasus Bimbingan Konseling (BK, Cloud-Only).

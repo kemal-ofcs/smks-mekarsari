@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 
 use super::{config::DesktopState, models::CommandError, storage, sync};
@@ -26,6 +26,8 @@ pub const WA_NOTIFY_SCAN_MASUK_KEY: &str = "wa_notify_scan_masuk";
 pub const WA_NOTIFY_SCAN_PULANG_KEY: &str = "wa_notify_scan_pulang";
 pub const WA_NOTIFY_BOLOS_KEY: &str = "wa_notify_bolos";
 pub const WA_NOTIFY_AMBANG_ALFA_KEY: &str = "wa_notify_ambang_alfa";
+pub const WA_NOTIFY_KOREKSI_ADMIN_KEY: &str = "wa_notify_koreksi_admin";
+pub const WA_NOTIFY_IMPORT_MANUAL_KEY: &str = "wa_notify_import_manual";
 
 /// Kunci setting dinamis untuk ambang jumlah alfa dan rentang hari evaluasi.
 pub const WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY: &str = "wa_notify_ambang_alfa_limit";
@@ -90,6 +92,126 @@ pub fn parse_ambang_alfa_settings(settings: &HashMap<String, String>) -> (i64, i
 /// pengiriman yang perlu terlihat.
 pub const WA_QUEUE_RETENTION_DAYS: i64 = 90;
 
+/// Sakelar notifikasi WA sebagaimana dikirim formulir Pengaturan.
+pub struct WaSwitches {
+    pub scan_masuk: i64,
+    pub scan_pulang: i64,
+    pub bolos: i64,
+    pub ambang_alfa: i64,
+    pub koreksi_admin: i64,
+    pub import_manual: i64,
+    pub ambang_limit: i64,
+    pub ambang_days: i64,
+}
+
+fn flag(draft: &Value, key: &str) -> i64 {
+    draft
+        .get(key)
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_bool().map(|b| if b { 1 } else { 0 }))
+        })
+        // BAWAANNYA MATI untuk KEEMPATNYA.
+        //
+        // Sebelumnya `bolos` dan `ambang_alfa` berbawaan 1 di sini, di cabang
+        // "belum ada baris" milik `get_wa_config`, dan di state awal
+        // `NotifikasiWaCard`. Akibatnya kartu Pengaturan menampilkan dua sakelar
+        // itu HIDUP sementara mesinnya membaca MATI — `wa_notify_enabled`
+        // menjawab false untuk kunci yang belum ada, dan baris cerminnya baru
+        // lahir saat seseorang menekan Simpan. Pemasangan yang tidak pernah
+        // membuka kartu itu melihat sakelar menyala dan tidak menerima satu pun
+        // notifikasi, tanpa apa pun yang menjelaskan kenapa.
+        //
+        // Yang disamakan adalah TAMPILANNYA ke mesin, bukan sebaliknya:
+        // menyalakan bawaannya akan membuat setiap pemasangan lama mulai
+        // mengirim pesan ke nomor wali begitu gateway-nya aktif.
+        .unwrap_or(0)
+}
+
+/// Baca sakelar dari draft formulir.
+///
+/// SATU pembaca untuk dua penulis — baris `app_wa_config` di cloud dan cerminan
+/// `setting_gex_system`. Saat keduanya mengurai draft sendiri-sendiri, satu
+/// sisi bisa menyimpan nilai yang tidak sama dengan sisi lain, dan hasilnya
+/// terminal yang mengantre sementara pengirimnya menolak.
+pub fn parse_wa_switches(draft: &Value) -> WaSwitches {
+    WaSwitches {
+        scan_masuk: flag(draft, "scan_masuk_enabled"),
+        scan_pulang: flag(draft, "scan_pulang_enabled"),
+        bolos: flag(draft, "bolos_enabled"),
+        ambang_alfa: flag(draft, "ambang_alfa_enabled"),
+        koreksi_admin: flag(draft, "koreksi_admin_enabled"),
+        import_manual: flag(draft, "import_manual_enabled"),
+        ambang_limit: clamp_ambang_alfa_limit(
+            draft
+                .get("ambangAlfaLimit")
+                .and_then(Value::as_i64)
+                .unwrap_or(DEFAULT_AMBANG_ALFA_LIMIT),
+        ),
+        ambang_days: clamp_ambang_alfa_days(
+            draft
+                .get("ambangAlfaDays")
+                .and_then(Value::as_i64)
+                .unwrap_or(DEFAULT_AMBANG_ALFA_DAYS),
+        ),
+    }
+}
+
+/// Pasangan kunci/nilai `setting_gex_system` yang mencerminkan sakelar di atas.
+pub fn wa_setting_mirror(switches: &WaSwitches) -> [(&'static str, String); 8] {
+    let boolean = |v: i64| (if v != 0 { "true" } else { "false" }).to_owned();
+    [
+        (WA_NOTIFY_SCAN_MASUK_KEY, boolean(switches.scan_masuk)),
+        (WA_NOTIFY_SCAN_PULANG_KEY, boolean(switches.scan_pulang)),
+        (WA_NOTIFY_BOLOS_KEY, boolean(switches.bolos)),
+        (WA_NOTIFY_AMBANG_ALFA_KEY, boolean(switches.ambang_alfa)),
+        (
+            WA_NOTIFY_KOREKSI_ADMIN_KEY,
+            boolean(switches.koreksi_admin),
+        ),
+        (
+            WA_NOTIFY_IMPORT_MANUAL_KEY,
+            boolean(switches.import_manual),
+        ),
+        (
+            WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
+            switches.ambang_limit.to_string(),
+        ),
+        (
+            WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
+            switches.ambang_days.to_string(),
+        ),
+    ]
+}
+
+/// Tulis cerminan sakelar ke `setting_gex_system` LOKAL.
+///
+/// Cloud tetap sumber kebenarannya dan sudah ditulis lebih dulu; ini hanya
+/// membuat salinan baca milik perangkat ini mutakhir SEKARANG alih-alih setelah
+/// pull berikutnya. Tanpa ini, menyalakan sakelar lalu langsung memindai tidak
+/// menghasilkan apa-apa — scanner membaca `setting_gex_system` lokal di dalam
+/// transaksinya, dan di sana nilainya belum berubah.
+///
+/// SENGAJA tanpa event outbox: barisnya sudah ada di cloud lewat penulisan
+/// atomik `save_wa_config`, dan mengantrekannya lagi hanya menambah jalur tulis
+/// kedua untuk nilai yang sama.
+pub fn mirror_wa_switches_local(
+    state: &DesktopState,
+    switches: &WaSwitches,
+) -> Result<(), CommandError> {
+    let connection = storage::database(&state.data_dir)?;
+    for (key, value) in wa_setting_mirror(switches) {
+        connection
+            .execute(
+                "INSERT INTO setting_gex_system (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+                params![key, value],
+            )
+            .map_err(|_| CommandError::internal())?;
+    }
+    Ok(())
+}
+
 /// Kunci sakelar untuk sebuah jenis notifikasi.
 pub fn wa_notify_setting_key(jenis: &str) -> Option<&'static str> {
     match jenis {
@@ -97,6 +219,8 @@ pub fn wa_notify_setting_key(jenis: &str) -> Option<&'static str> {
         "scan_pulang" => Some(WA_NOTIFY_SCAN_PULANG_KEY),
         "bolos" => Some(WA_NOTIFY_BOLOS_KEY),
         "ambang_alfa" => Some(WA_NOTIFY_AMBANG_ALFA_KEY),
+        "koreksi_admin" => Some(WA_NOTIFY_KOREKSI_ADMIN_KEY),
+        "import_manual" => Some(WA_NOTIFY_IMPORT_MANUAL_KEY),
         _ => None,
     }
 }
@@ -195,6 +319,127 @@ pub fn new_wa_notification_id() -> String {
     id
 }
 
+
+
+/// Batas jumlah wali yang diberi tahu dalam SATU aksi import.
+///
+/// `import_offline` menerima sampai 500 baris sekali panggil, dan upload CSV
+/// massal memang dipakai untuk membackfill data setelah gangguan. Tanpa batas,
+/// satu klik pemulihan data akan mengirim ratusan pesan ke ratusan nomor wali
+/// tentang catatan rutin — tidak bisa ditarik kembali, dan berbiaya nyata.
+///
+/// Import-nya sendiri TIDAK pernah dibatasi: seluruh barisnya tetap diproses.
+/// Yang dibatasi hanya notifikasinya, dan operator diberi tahu saat batas ini
+/// tercapai supaya kesenyapannya tidak disalahartikan sebagai kegagalan.
+pub const MAX_WALI_NOTIFICATIONS_PER_IMPORT: usize = 25;
+
+/// Data wali seorang siswa untuk menyusun pesan.
+pub struct WaliSiswa {
+    pub nama: String,
+    pub rombel: String,
+}
+
+/// Antrekan notifikasi ke wali BILA personilnya siswa dan jenisnya dinyalakan.
+///
+/// Mengembalikan `true` hanya bila sebuah baris benar-benar diantrekan. Semua
+/// syaratnya diperiksa di sini supaya tidak tersebar di tiap pemanggil:
+///
+///   1. sakelar `wa_notify_<jenis>` menyala di `setting_gex_system` LOKAL,
+///   2. personilnya siswa, dinilai dengan predikat yang SAMA dengan scanner —
+///      `jenis_personil` tersimpan dengan ejaan berbeda-beda, dan perbandingan
+///      mentah `= 'Siswa'` tidak pernah cocok untuk siswa yang dibuat alur
+///      akademik,
+///   3. nomor walinya ada dan valid,
+///   4. `dedupe_key`-nya belum pernah diantrekan.
+///
+/// Guru dan pegawai TIDAK pernah lolos syarat kedua. Itu disengaja: pesan ini
+/// ditujukan kepada wali murid, dan seorang pegawai tidak punya wali.
+pub fn queue_wali_notification_tx(
+    tx: &Transaction<'_>,
+    client_id: &str,
+    jenis: &str,
+    id_personil: &str,
+    dedupe_key: &str,
+    pesan: impl FnOnce(&WaliSiswa) -> String,
+) -> Result<bool, CommandError> {
+    let Some(key) = wa_notify_setting_key(jenis) else {
+        return Ok(false);
+    };
+    let aktif: Option<String> = tx
+        .query_row(
+            "SELECT value FROM setting_gex_system WHERE key = ?1 LIMIT 1;",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+    if !aktif
+        .map(|value| value.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+
+    let sudah: bool = tx
+        .query_row(
+            "SELECT 1 FROM notifikasi_wa WHERE dedupe_key = ?1 LIMIT 1;",
+            params![dedupe_key],
+            |_| Ok(true),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .unwrap_or(false);
+    if sudah {
+        return Ok(false);
+    }
+
+    let info: Option<(String, String, String)> = tx
+        .query_row(
+            r#"
+            SELECT COALESCE(s.no_whatsapp_wali, m.no_hp, ''),
+                   COALESCE(s.nama_lengkap, m.nama, ''),
+                   COALESCE(r.nama_rombel, m.divisi, '')
+            FROM master_data m
+            LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik
+            LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
+            WHERE m.id_unik = ?1
+              AND (LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'siswa'
+                   OR s.id_siswa IS NOT NULL)
+            LIMIT 1;
+            "#,
+            params![id_personil],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+
+    let Some((phone, nama, rombel)) = info else {
+        return Ok(false);
+    };
+    let canon = normalize_phone_canonical(&phone);
+    if !is_valid_phone(&canon) {
+        return Ok(false);
+    }
+
+    let wali = WaliSiswa {
+        nama: if nama.is_empty() { "Siswa".to_owned() } else { nama },
+        rombel: if rombel.is_empty() { "-".to_owned() } else { rombel },
+    };
+
+    queue_wa_notification_tx(
+        tx,
+        client_id,
+        &json!({
+            "dedupe_key": dedupe_key,
+            "jenis": jenis,
+            "id_siswa": id_personil,
+            "tujuan_nomor": canon,
+            "isi_pesan": pesan(&wali),
+        }),
+    )?;
+    Ok(true)
+}
+
 /// Antrekan notifikasi WA ke tabel lokal `notifikasi_wa` dan daftarkan ke outbox
 /// dalam SATU transaksi SQLite atomik (Rule 3).
 pub fn queue_wa_notification_tx(
@@ -232,11 +477,16 @@ pub fn queue_wa_notification_tx(
         .trim();
     if !matches!(
         jenis,
-        "scan_masuk" | "scan_pulang" | "bolos" | "ambang_alfa"
+        "scan_masuk"
+            | "scan_pulang"
+            | "bolos"
+            | "ambang_alfa"
+            | "koreksi_admin"
+            | "import_manual"
     ) {
         return Err(CommandError::new(
             "VALIDATION_ERROR",
-            "Jenis notifikasi tidak valid. Pilihan: scan_masuk, scan_pulang, bolos, ambang_alfa.",
+            "Jenis notifikasi tidak valid. Pilihan: scan_masuk, scan_pulang, bolos, ambang_alfa, koreksi_admin, import_manual.",
         ));
     }
 
@@ -543,6 +793,195 @@ mod tests {
             vault_lock: std::sync::Mutex::new(()),
         };
         (dir, state)
+    }
+
+    /// Draft tanpa satu pun sakelar berarti KEEMPATNYA MATI.
+    ///
+    /// Ini yang dulu tidak berlaku: `bolos` dan `ambang_alfa` berbawaan HIDUP
+    /// di sisi konfigurasi sementara `wa_notify_enabled` membaca MATI untuk
+    /// kunci yang belum ada. Kartu Pengaturan menampilkan dua sakelar menyala,
+    /// tidak ada satu pun notifikasi yang pernah diantrekan, dan tidak ada apa
+    /// pun yang menjelaskan selisihnya. Test ini mengunci keduanya pada jawaban
+    /// yang sama.
+    #[test]
+    fn sakelar_wa_bawaannya_mati_semua() {
+        let switches = parse_wa_switches(&json!({}));
+        assert_eq!(switches.scan_masuk, 0);
+        assert_eq!(switches.scan_pulang, 0);
+        assert_eq!(switches.bolos, 0);
+        assert_eq!(switches.ambang_alfa, 0);
+
+        // Cerminan yang ditulis ke `setting_gex_system` harus dibaca MATI oleh
+        // mesin yang sama yang dipakai scanner.
+        let mirror = wa_setting_mirror(&switches);
+        let settings: HashMap<String, String> = mirror
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), v.clone()))
+            .collect();
+        for jenis in ["scan_masuk", "scan_pulang", "bolos", "ambang_alfa"] {
+            assert!(
+                !wa_notify_enabled(&settings, jenis),
+                "{jenis} seharusnya mati secara bawaan"
+            );
+        }
+    }
+
+    /// Sakelar yang dinyalakan benar-benar sampai ke pembaca mesin.
+    #[test]
+    fn sakelar_wa_yang_dinyalakan_terbaca_hidup() {
+        let switches = parse_wa_switches(&json!({
+            "scan_masuk_enabled": true,
+            "bolos_enabled": 1,
+        }));
+        let settings: HashMap<String, String> = wa_setting_mirror(&switches)
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), v.clone()))
+            .collect();
+        assert!(wa_notify_enabled(&settings, "scan_masuk"));
+        assert!(wa_notify_enabled(&settings, "bolos"));
+        assert!(!wa_notify_enabled(&settings, "scan_pulang"));
+        assert!(!wa_notify_enabled(&settings, "ambang_alfa"));
+    }
+
+    /// Cerminan lokal membuat sakelar berlaku SEBELUM pull berikutnya.
+    #[test]
+    fn cerminan_lokal_langsung_terbaca_scanner() {
+        let (_dir, state) = setup_test_state();
+        let switches = parse_wa_switches(&json!({ "scan_masuk_enabled": true }));
+        mirror_wa_switches_local(&state, &switches).expect("tulis cerminan lokal");
+
+        let connection = storage::database(&state.data_dir).expect("buka database lokal");
+        let mut statement = connection
+            .prepare("SELECT key, value FROM setting_gex_system;")
+            .expect("baca setting");
+        let settings: HashMap<String, String> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query setting")
+            .filter_map(Result::ok)
+            .collect();
+
+        assert!(wa_notify_enabled(&settings, "scan_masuk"));
+        assert!(!wa_notify_enabled(&settings, "scan_pulang"));
+    }
+
+    /// Seed satu siswa (punya nomor wali) dan satu pegawai.
+    fn seed_personil(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+        INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift, status_aktif, token_absensi, qr_code, jenis_personil)
+        VALUES ('S001', 'S001', 'Ananda Siswa', 'X-A', 1, 'Aktif', 'TOK-S', 'S001|TOK-S', 'SISWA');
+        INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift, status_aktif, token_absensi, qr_code, jenis_personil)
+        VALUES ('P001', 'P001', 'Budi Pegawai', 'Dapur', 1, 'Aktif', 'TOK-P', 'P001|TOK-P', 'Pegawai');
+        INSERT INTO siswa_data (id_siswa, nama_lengkap, id_rombel, no_whatsapp_wali, angkatan, created_at, updated_at)
+        VALUES ('S001', 'Ananda Siswa', 'RB1', '081234567890', 2026, '2026-01-01 00:00:00', '2026-01-01 00:00:00');
+        "#,
+            )
+            .expect("seed personil");
+    }
+
+    fn nyalakan(connection: &Connection, key: &str) {
+        connection
+            .execute(
+                "INSERT INTO setting_gex_system (key, value) VALUES (?1, 'true') ON CONFLICT(key) DO UPDATE SET value = 'true';",
+                params![key],
+            )
+            .expect("nyalakan sakelar");
+    }
+
+    /// Guru dan pegawai TIDAK pernah diberi notifikasi wali.
+    ///
+    /// Ini inti aturannya, bukan detail: pesan ini ditujukan kepada wali murid,
+    /// dan seorang pegawai tidak punya wali. Predikat siswanya juga sengaja
+    /// memakai bentuk `LOWER(TRIM(...))` — `jenis_personil` tersimpan dengan
+    /// ejaan berbeda-beda ('SISWA' dari alur akademik, 'Pegawai' dari impor),
+    /// dan perbandingan mentah akan melewatkan justru siswa yang dituju.
+    #[test]
+    fn notifikasi_wali_hanya_untuk_siswa() {
+        let (_dir, state) = setup_test_state();
+        let mut connection = storage::database(&state.data_dir).expect("database lokal");
+        seed_personil(&connection);
+        nyalakan(&connection, WA_NOTIFY_KOREKSI_ADMIN_KEY);
+
+        let tx = connection.transaction().expect("transaksi");
+
+        let pegawai = queue_wali_notification_tx(
+            &tx,
+            "cli_1",
+            "koreksi_admin",
+            "P001",
+            "koreksi_admin:P001:Hadir",
+            |_| "tidak boleh terkirim".to_owned(),
+        )
+        .expect("evaluasi pegawai");
+        assert!(!pegawai, "pegawai tidak boleh diberi notifikasi wali");
+
+        let siswa = queue_wali_notification_tx(
+            &tx,
+            "cli_1",
+            "koreksi_admin",
+            "S001",
+            "koreksi_admin:S001:Hadir",
+            |wali| format!("Halo wali dari {}", wali.nama),
+        )
+        .expect("evaluasi siswa");
+        assert!(siswa, "siswa dengan nomor wali valid harus diantrekan");
+
+        let jumlah: i64 = tx
+            .query_row("SELECT COUNT(*) FROM notifikasi_wa;", [], |row| row.get(0))
+            .expect("hitung antrean");
+        assert_eq!(jumlah, 1, "hanya barisan siswa yang boleh lahir");
+    }
+
+    /// Sakelar mati berarti tidak ada baris sama sekali.
+    #[test]
+    fn notifikasi_wali_menghormati_sakelar() {
+        let (_dir, state) = setup_test_state();
+        let mut connection = storage::database(&state.data_dir).expect("database lokal");
+        seed_personil(&connection);
+        // Sengaja TIDAK menyalakan sakelarnya.
+
+        let tx = connection.transaction().expect("transaksi");
+        let hasil = queue_wali_notification_tx(
+            &tx,
+            "cli_1",
+            "import_manual",
+            "S001",
+            "import_manual:S001:2026-09-17:Hadir",
+            |_| "tidak boleh terkirim".to_owned(),
+        )
+        .expect("evaluasi");
+        assert!(!hasil);
+
+        let jumlah: i64 = tx
+            .query_row("SELECT COUNT(*) FROM notifikasi_wa;", [], |row| row.get(0))
+            .expect("hitung antrean");
+        assert_eq!(jumlah, 0);
+    }
+
+    /// Kunci deduplikasi yang sama tidak pernah mengantre dua kali.
+    #[test]
+    fn notifikasi_wali_dedupe_sekali_saja() {
+        let (_dir, state) = setup_test_state();
+        let mut connection = storage::database(&state.data_dir).expect("database lokal");
+        seed_personil(&connection);
+        nyalakan(&connection, WA_NOTIFY_IMPORT_MANUAL_KEY);
+
+        let tx = connection.transaction().expect("transaksi");
+        let kunci = "import_manual:S001:2026-09-17:Hadir";
+        let pertama =
+            queue_wali_notification_tx(&tx, "cli_1", "import_manual", "S001", kunci, |_| {
+                "pesan".to_owned()
+            })
+            .expect("antrean pertama");
+        let kedua =
+            queue_wali_notification_tx(&tx, "cli_1", "import_manual", "S001", kunci, |_| {
+                "pesan".to_owned()
+            })
+            .expect("antrean kedua");
+
+        assert!(pertama);
+        assert!(!kedua, "kunci yang sama tidak boleh mengantre dua kali");
     }
 
     /// Vektor kembar dengan `wa-notification.test.ts`. Keduanya WAJIB memetakan
