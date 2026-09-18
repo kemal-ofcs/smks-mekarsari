@@ -34,6 +34,7 @@ import { getDaftarShift } from "@/lib/gateways/shift";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import { formatDisplayDate } from "@/lib/utils/date-display";
+import { opsiFilterUnit, TANPA_UNIT } from "@/lib/validations/personnel";
 import {
   createEmployeeIdentifiers,
   firstValidationMessage,
@@ -56,6 +57,7 @@ export default function KaryawanPage() {
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterBackup, setFilterBackup] = useState<string>("");
   const [filterDivisi, setFilterDivisi] = useState<string>("");
+  const [filterUnit, setFilterUnit] = useState<string>("");
   const importInputRef = useRef<HTMLInputElement>(null);
   const isSubmittingRef = useRef<boolean>(false);
 
@@ -144,11 +146,31 @@ export default function KaryawanPage() {
   // `status_backup` tidak tersedia sebagai parameter di gateway, jadi disaring
   // di sisi klien — pola yang sama dipakai versi Mobile.
   const karyawanTampil = useMemo(() => {
-    if (!filterBackup) return karyawanList;
-    return karyawanList.filter(
-      (row) => String(row.status_backup ?? "NORMAL") === filterBackup,
-    );
-  }, [karyawanList, filterBackup]);
+    return karyawanList.filter((row) => {
+      if (
+        filterBackup &&
+        String(row.status_backup ?? "NORMAL") !== filterBackup
+      ) {
+        return false;
+      }
+      if (filterUnit) {
+        const unitBaris = String(row.unit || "").trim();
+        if (
+          filterUnit === TANPA_UNIT
+            ? unitBaris !== ""
+            : unitBaris !== filterUnit
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [karyawanList, filterBackup, filterUnit]);
+
+  const unitOptions = useMemo(
+    () => opsiFilterUnit(unitList, karyawanList),
+    [unitList, karyawanList],
+  );
 
   const divisions = useMemo(
     () =>
@@ -510,6 +532,21 @@ export default function KaryawanPage() {
 
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <select
+            aria-label="Filter berdasarkan unit"
+            value={filterUnit}
+            onChange={(e) => setFilterUnit(e.target.value)}
+            className="min-h-10 rounded-xl border border-slate-800 bg-slate-950 px-3 text-xs text-slate-300 outline-none focus:border-sky-500"
+          >
+            <option value="">Semua Unit</option>
+            <option value={TANPA_UNIT}>(Tanpa unit)</option>
+            {unitOptions.map((nama) => (
+              <option key={nama} value={nama}>
+                {nama}
+              </option>
+            ))}
+          </select>
+
+          <select
             aria-label="Filter divisi"
             value={filterDivisi}
             onChange={(e) => setFilterDivisi(e.target.value)}
@@ -578,6 +615,7 @@ export default function KaryawanPage() {
                   <th className="p-3.5 bg-slate-950">Kode</th>
                   <th className="p-3.5 bg-slate-950">Nama Karyawan</th>
                   <th className="p-3.5 bg-slate-950">Divisi</th>
+                  <th className="p-3.5 bg-slate-950">Unit</th>
                   <th className="p-3.5 bg-slate-950">Jabatan</th>
                   <th className="p-3.5 bg-slate-950">No. HP</th>
                   <th className="p-3.5 bg-slate-950 text-center">L/P</th>
@@ -598,7 +636,7 @@ export default function KaryawanPage() {
                 {karyawanTampil.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={16}
+                      colSpan={17}
                       className="p-12 text-center text-slate-500"
                     >
                       Tidak ada data karyawan yang sesuai dengan filter.
@@ -630,6 +668,15 @@ export default function KaryawanPage() {
                       {/* 4. Divisi */}
                       <td className="p-3.5 text-slate-300 whitespace-nowrap">
                         {String(row.divisi || "-")}
+                      </td>
+                      <td className="p-3.5 whitespace-nowrap">
+                        {row.unit ? (
+                          <span className="inline-flex items-center rounded-lg bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-300 border border-violet-500/20">
+                            {String(row.unit)}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-500">—</span>
+                        )}
                       </td>
                       {/* 5. Jabatan */}
                       <td className="p-3.5 text-slate-400 whitespace-nowrap">

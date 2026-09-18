@@ -50,3 +50,39 @@ export function shiftLabel(shift: Record<string, unknown>): string {
   const pulang = String(shift.jam_pulang ?? "").trim();
   return masuk && pulang ? `${nama} (${masuk}–${pulang})` : nama;
 }
+
+/**
+ * Nilai filter "personil yang unitnya belum diisi".
+ *
+ * Sengaja sebuah sentinel, bukan string kosong: string kosong sudah dipakai
+ * pilihan "Semua Unit", dan tanpa pilihan tersendiri baris yang unitnya kosong
+ * tidak punya satu pun filter yang menampilkannya — padahal justru baris itu
+ * yang perlu ditemukan untuk dilengkapi. Diawali `__` supaya tidak mungkin
+ * bertabrakan dengan nama unit yang diketik manusia.
+ */
+export const TANPA_UNIT = "__tanpa_unit__";
+
+/**
+ * Pilihan dropdown filter unit: gabungan unit AKTIF dan unit yang benar-benar
+ * dipakai baris yang sedang ditampilkan.
+ *
+ * Gabungan, bukan hanya unit aktif: unit yang sudah dinonaktifkan tetap
+ * menempel pada personil lama, dan kalau ia hilang dari dropdown baris-baris
+ * itu tidak bisa disaring sama sekali — tepat ketika seseorang perlu
+ * memindahkannya ke unit pengganti.
+ */
+export function opsiFilterUnit(
+  unitAktif: Record<string, unknown>[],
+  baris: Record<string, unknown>[],
+): string[] {
+  const kumpulan = new Set<string>();
+  for (const unit of unitAktif) {
+    const nama = String(unit.nama_unit ?? "").trim();
+    if (nama) kumpulan.add(nama);
+  }
+  for (const item of baris) {
+    const nama = String(item.unit ?? "").trim();
+    if (nama) kumpulan.add(nama);
+  }
+  return [...kumpulan].sort((a, b) => a.localeCompare(b, "id"));
+}

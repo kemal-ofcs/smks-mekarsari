@@ -793,3 +793,90 @@ export const LANDING_PAGE_DEFAULTS: Record<string, string> = {
   "landing.fasilitas6_specs":
     "Kapasitas ampiteater 1.000 audiens\nVideotron LED raksasa P2.5 High-Definition\nSistem tata suara digital line array 20.000 watt\nRuang transit VIP dan ruang rias pengisi acara",
 };
+
+/**
+ * Koleksi berulang per sub-tab landing.
+ *
+ * Empat blok ini dulu berupa slot bernomor yang jumlahnya mati di dalam kode
+ * (`pilar1_title` sampai `pilar4_title`), sehingga menambah pilar kelima
+ * mustahil tanpa menyunting panel ini DAN komponen publiknya sekaligus.
+ * Sekarang tiap blok satu baris `konten_publik` berisi JSON array.
+ *
+ * `kunci` dan `fields[].name` adalah KONTRAK dengan
+ * `web-public/src/lib/services/landing-collections.ts`, yang diuji di sana.
+ * Mengubah salah satunya di satu sisi saja membuat koleksinya terbaca kosong
+ * di situs publik, tanpa satu pun pesan kesalahan yang menjelaskannya.
+ *
+ * Field bernomor lama SENGAJA dibiarkan di daftar di atas: situs publik masih
+ * membacanya sebagai lapis cadangan, jadi pemasangan yang sudah mengisinya
+ * tidak kehilangan apa pun sebelum sempat memindahkannya ke koleksi.
+ */
+export interface KoleksiLandingConfig {
+  kunci: string;
+  label: string;
+  description: string;
+  maksItem: number;
+  fields: {
+    name: string;
+    label: string;
+    type?: "text" | "textarea";
+    placeholder?: string;
+    multiline?: boolean;
+  }[];
+}
+
+export const MAKS_ITEM_KOLEKSI_LANDING = 24;
+
+export const KOLEKSI_LANDING: Record<string, KoleksiLandingConfig> = {
+  hero_stats: {
+    kunci: "landing.stat_items",
+    label: "Kartu Statistik",
+    description:
+      "Kartu angka di bawah judul hero. Ikonnya diputar otomatis mengikuti urutan.",
+    maksItem: MAKS_ITEM_KOLEKSI_LANDING,
+    fields: [
+      { name: "label", label: "Label", placeholder: "Akreditasi A" },
+      { name: "value", label: "Angka", placeholder: "98 / 100" },
+      {
+        name: "sub",
+        label: "Keterangan",
+        placeholder: "BAN-SM Predikat Unggul",
+      },
+    ],
+  },
+  pillars_leader: {
+    kunci: "landing.pilar_items",
+    label: "Pilar Keunggulan",
+    description:
+      "Kartu pilar pendidikan. Jumlahnya bebas; judul bagiannya tetap disunting di field di atas.",
+    maksItem: MAKS_ITEM_KOLEKSI_LANDING,
+    fields: [
+      { name: "title", label: "Judul Pilar" },
+      { name: "desc", label: "Deskripsi", type: "textarea" },
+      { name: "tag", label: "Label Kecil (tag)" },
+    ],
+  },
+  extracurricular: {
+    kunci: "landing.ekskul_items",
+    label: "Ekstrakurikuler",
+    description: "Daftar klub dan kegiatan kesiswaan.",
+    maksItem: MAKS_ITEM_KOLEKSI_LANDING,
+    fields: [
+      { name: "title", label: "Nama Kegiatan" },
+      { name: "category", label: "Kategori" },
+      { name: "desc", label: "Deskripsi", type: "textarea" },
+    ],
+  },
+  facilities: {
+    kunci: "landing.fasilitas_items",
+    label: "Fasilitas",
+    description: "Kartu fasilitas kampus beserta rincian spesifikasinya.",
+    maksItem: MAKS_ITEM_KOLEKSI_LANDING,
+    fields: [
+      { name: "name", label: "Nama Fasilitas" },
+      { name: "tag", label: "Label Kecil (tag)" },
+      { name: "desc", label: "Deskripsi Singkat", type: "textarea" },
+      { name: "specs", label: "Spesifikasi", multiline: true },
+    ],
+  },
+};

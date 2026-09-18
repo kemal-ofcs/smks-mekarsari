@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { hasPermission } from "@/lib/auth/access";
 import {
   type CmsFieldConfig,
+  KOLEKSI_LANDING,
   LANDING_PAGE_SUBSECTIONS,
 } from "@/lib/constants/landing-cms-fields";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -12,6 +13,7 @@ import {
   type PageContentMap,
   simpanKontenHalaman,
 } from "@/lib/gateways/content";
+import { CollectionRepeater } from "./CollectionRepeater";
 
 interface FieldConfig {
   key: string;
@@ -133,6 +135,11 @@ export function PageContentManager() {
   const [activeLandingSubTab, setActiveLandingSubTab] =
     useState<string>("hero_stats");
   const [contentMap, setContentMap] = useState<PageContentMap>({});
+  // Item koleksi disimpan terurai sebagai array supaya repeater-nya bisa
+  // menambah/menghapus/menggeser; baru diserialisasi jadi JSON saat disimpan.
+  const [koleksiItems, setKoleksiItems] = useState<
+    Record<string, Record<string, unknown>[]>
+  >({});
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -144,7 +151,29 @@ export function PageContentManager() {
     setSuccessMessage(null);
     try {
       const res = await ambilKontenHalaman(halaman);
-      setContentMap(res.items || {});
+      const items = res.items || {};
+      setContentMap(items);
+      // JSON yang tidak bisa diurai diperlakukan sebagai koleksi kosong, bukan
+      // galat: satu baris rusak tidak boleh mengunci seluruh panel konten.
+      const terurai: Record<string, Record<string, unknown>[]> = {};
+      for (const koleksi of Object.values(KOLEKSI_LANDING)) {
+        let daftar: Record<string, unknown>[] = [];
+        try {
+          const mentah = JSON.parse(String(items[koleksi.kunci] ?? "[]"));
+          if (Array.isArray(mentah)) {
+            daftar = mentah.filter(
+              (item): item is Record<string, unknown> =>
+                typeof item === "object" &&
+                item !== null &&
+                !Array.isArray(item),
+            );
+          }
+        } catch {
+          daftar = [];
+        }
+        terurai[koleksi.kunci] = daftar;
+      }
+      setKoleksiItems(terurai);
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Gagal memuat konten halaman.",
@@ -170,7 +199,18 @@ export function PageContentManager() {
     setSuccessMessage(null);
     startTransition(async () => {
       try {
-        await simpanKontenHalaman(activeTab, contentMap);
+        // Koleksi kosong disimpan sebagai string kosong, BUKAN "[]":
+        // `readPageContent` di situs publik mengabaikan nilai kosong, sehingga
+        // menghapus seluruh item mengembalikan tampilan ke isi bawaannya
+        // alih-alih menghasilkan bagian yang kosong melompong.
+        const denganKoleksi = { ...contentMap };
+        for (const koleksi of Object.values(KOLEKSI_LANDING)) {
+          const daftar = koleksiItems[koleksi.kunci] ?? [];
+          denganKoleksi[koleksi.kunci] =
+            daftar.length > 0 ? JSON.stringify(daftar) : "";
+        }
+        await simpanKontenHalaman(activeTab, denganKoleksi);
+        setContentMap(denganKoleksi);
         setSuccessMessage(
           "Konten halaman berhasil disimpan ke database cloud.",
         );
@@ -197,6 +237,11 @@ export function PageContentManager() {
     activeTab === "landing"
       ? currentLandingSubSection.description
       : "Perubahan konten di sini akan langsung tampil pada situs publik dengan sistem graceful degradation.";
+
+  const koleksiAktif =
+    activeTab === "landing"
+      ? (KOLEKSI_LANDING[currentLandingSubSection.id] ?? null)
+      : null;
 
   const currentFields: (FieldConfig | CmsFieldConfig)[] =
     activeTab === "landing"
@@ -323,6 +368,24 @@ export function PageContentManager() {
                 </div>
               );
             })}
+
+            {koleksiAktif ? (
+              <CollectionRepeater
+                label={koleksiAktif.label}
+                description={koleksiAktif.description}
+                kunci={koleksiAktif.kunci}
+                fields={koleksiAktif.fields}
+                items={koleksiItems[koleksiAktif.kunci] ?? []}
+                maksItem={koleksiAktif.maksItem}
+                disabled={!canManage}
+                onChange={(items) =>
+                  setKoleksiItems((prev) => ({
+                    ...prev,
+                    [koleksiAktif.kunci]: items,
+                  }))
+                }
+              />
+            ) : null}
 
             {canManage && (
               <div className="flex justify-end pt-4 border-t border-white/10">

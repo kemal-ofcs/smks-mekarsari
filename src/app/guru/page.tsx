@@ -28,7 +28,11 @@ import {
   simpanGuru,
 } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
-import { shiftLabel } from "@/lib/validations/personnel";
+import {
+  opsiFilterUnit,
+  shiftLabel,
+  TANPA_UNIT,
+} from "@/lib/validations/personnel";
 
 export default function GuruPage() {
   const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
@@ -44,6 +48,7 @@ export default function GuruPage() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterKepegawaian, setFilterKepegawaian] = useState("");
+  const [filterUnit, setFilterUnit] = useState("");
 
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error" | "warning";
@@ -137,9 +142,24 @@ export default function GuruPage() {
       ) {
         return false;
       }
+      if (filterUnit) {
+        const unitBaris = String(item.unit || "").trim();
+        if (
+          filterUnit === TANPA_UNIT
+            ? unitBaris !== ""
+            : unitBaris !== filterUnit
+        ) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [guruList, search, filterStatus, filterKepegawaian]);
+  }, [guruList, search, filterStatus, filterKepegawaian, filterUnit]);
+
+  const unitOptions = useMemo(
+    () => opsiFilterUnit(unitList, guruList),
+    [unitList, guruList],
+  );
 
   const handleOpenAdd = () => {
     setFormData({
@@ -483,6 +503,31 @@ export default function GuruPage() {
               </option>
             </select>
             <select
+              value={filterUnit}
+              onChange={(e) => setFilterUnit(e.target.value)}
+              aria-label="Filter berdasarkan unit"
+              className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+            >
+              <option value="" className="bg-slate-900 text-slate-100">
+                Semua Unit
+              </option>
+              <option
+                value={TANPA_UNIT}
+                className="bg-slate-900 text-slate-100"
+              >
+                (Tanpa unit)
+              </option>
+              {unitOptions.map((nama) => (
+                <option
+                  key={nama}
+                  value={nama}
+                  className="bg-slate-900 text-slate-100"
+                >
+                  {nama}
+                </option>
+              ))}
+            </select>
+            <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
               aria-label="Filter status keaktifan"
@@ -511,6 +556,7 @@ export default function GuruPage() {
                   <th className="px-6 py-4">NIP / NUPTK</th>
                   <th className="px-6 py-4">Spesialisasi Mapel</th>
                   <th className="px-6 py-4">Kepegawaian</th>
+                  <th className="px-6 py-4">Unit</th>
                   <th className="px-6 py-4">Kontak & Shift</th>
                   <th className="px-6 py-4 text-right">Aksi</th>
                 </tr>
@@ -519,7 +565,7 @@ export default function GuruPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-6 py-8 text-center text-slate-400"
                     >
                       Memuat direktori guru...
@@ -528,7 +574,7 @@ export default function GuruPage() {
                 ) : filteredTeachers.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-6 py-8 text-center text-slate-400"
                     >
                       Tidak ada data guru yang cocok dengan filter pencarian.
@@ -587,6 +633,15 @@ export default function GuruPage() {
                               </span>
                             )}
                           </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {item.unit ? (
+                            <span className="inline-flex items-center rounded-lg bg-violet-500/10 px-2.5 py-1 text-xs font-semibold text-violet-300 border border-violet-500/20">
+                              {String(item.unit)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-500">—</span>
+                          )}
                         </td>
                         <td className="px-6 py-4 text-xs text-slate-300">
                           <div>{String(item.no_hp || "-")}</div>
