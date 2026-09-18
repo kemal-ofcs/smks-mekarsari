@@ -231,6 +231,7 @@ const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_delete_article",
     "desktop_get_page_content",
     "desktop_save_page_content",
+    "desktop_open_external_url",
 ];
 
 fn local_build_values() -> HashMap<String, String> {

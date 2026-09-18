@@ -235,6 +235,7 @@
     "allow-desktop-save-article",
     "allow-desktop-delete-article",
     "allow-desktop-get-page-content",
-    "allow-desktop-save-page-content"
+    "allow-desktop-save-page-content",
+    "allow-desktop-open-external-url"
   ]
 }

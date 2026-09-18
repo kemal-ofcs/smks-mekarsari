@@ -247,6 +247,7 @@ pub fn run() {
             desktop::commands::desktop_delete_article,
             desktop::commands::desktop_get_page_content,
             desktop::commands::desktop_save_page_content,
+            desktop::commands::desktop_open_external_url,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| {

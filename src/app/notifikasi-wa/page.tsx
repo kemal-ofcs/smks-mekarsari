@@ -9,6 +9,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
+import { openWhatsAppChat } from "@/lib/client/open-url";
 import { useAuth } from "@/lib/context/AuthContext";
 import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import {
@@ -623,11 +624,6 @@ export default function NotifikasiWaPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-slate-300">
                   {displayItems.map((item) => {
-                    const cleanPhone = item.tujuan_nomor.replace(/[^\d]/g, "");
-                    const waMeUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
-                      item.isi_pesan,
-                    )}`;
-
                     return (
                       <tr
                         key={item.id_notifikasi}
@@ -666,16 +662,20 @@ export default function NotifikasiWaPage() {
                         <td className="whitespace-nowrap px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {/* Fallback 1-klik wa.me (Gratis & Mandiri) */}
-                            <a
-                              href={waMeUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/40 bg-emerald-600/10 px-2.5 py-1 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-600 hover:text-white"
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void openWhatsAppChat(
+                                  item.tujuan_nomor,
+                                  item.isi_pesan,
+                                )
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/40 bg-emerald-600/10 px-2.5 py-1 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-600 hover:text-white cursor-pointer"
                               title="Buka langsung di WhatsApp Web / App"
                             >
                               <Icon name="whatsapp" className="h-3.5 w-3.5" />
                               Kirim Manual
-                            </a>
+                            </button>
 
                             {canDelete && item.status === "Menunggu" && (
                               <button
@@ -707,18 +707,19 @@ export default function NotifikasiWaPage() {
             maxWidth="max-w-lg"
             footer={
               <div className="flex flex-wrap justify-end gap-3">
-                <a
-                  href={`https://wa.me/${selectedItem.tujuan_nomor.replace(
-                    /[^\d]/g,
-                    "",
-                  )}?text=${encodeURIComponent(selectedItem.isi_pesan)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-500"
+                <button
+                  type="button"
+                  onClick={() =>
+                    void openWhatsAppChat(
+                      selectedItem.tujuan_nomor,
+                      selectedItem.isi_pesan,
+                    )
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-500 cursor-pointer"
                 >
                   <Icon name="whatsapp" className="h-4 w-4" />
                   Buka di WhatsApp
-                </a>
+                </button>
                 <button
                   type="button"
                   onClick={() => setSelectedItem(null)}

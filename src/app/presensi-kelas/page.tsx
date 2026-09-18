@@ -9,6 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
+import { openWhatsAppChat } from "@/lib/client/open-url";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
   getDaftarMapel,
@@ -35,7 +36,6 @@ import {
 import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
-import { normalizeOperatorPhone } from "@/lib/operators/contact";
 import {
   buildParentNotificationText,
   buildPresentWithoutGateScanWarning,
@@ -563,20 +563,6 @@ export default function PresensiKelasPage() {
       isSubmittingRef.current = false;
       setDeleting(false);
     }
-  };
-
-  // Compose WhatsApp direct message link for parent notification
-  const getWhatsAppLink = (item: AttendanceAnomalyItem) => {
-    if (!item.no_whatsapp_wali) return null;
-    const normalized = normalizeOperatorPhone(item.no_whatsapp_wali);
-    if (!normalized) return null;
-
-    const cleanNumber = normalized.replace("+", "");
-    // Teks dibedakan per jenis anomali di satu tempat bersama; dua anomali
-    // rekonsiliasi artinya berlawanan dan tidak boleh memakai kalimat sama.
-    const text = encodeURIComponent(buildParentNotificationText(item));
-
-    return `https://wa.me/${cleanNumber}?text=${text}`;
   };
 
   if (!isAuthenticated && !authLoading) redirect("/login");
@@ -1267,7 +1253,6 @@ export default function PresensiKelasPage() {
                   </thead>
                   <tbody className="divide-y divide-white/5 font-sans">
                     {anomalies.map((item, idx) => {
-                      const waLink = getWhatsAppLink(item);
                       return (
                         <tr
                           key={`${item.id_presensi_mapel}-${item.id_siswa}-${idx}`}
@@ -1337,16 +1322,22 @@ export default function PresensiKelasPage() {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            {waLink ? (
-                              <a
-                                href={waLink}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-200 transition hover:bg-emerald-500/30 shadow"
+                            {item.no_whatsapp_wali ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const text =
+                                    buildParentNotificationText(item);
+                                  void openWhatsAppChat(
+                                    item.no_whatsapp_wali || "",
+                                    text,
+                                  );
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-200 transition hover:bg-emerald-500/30 shadow cursor-pointer"
                               >
                                 <Icon name="whatsapp" className="size-3.5" />
                                 <span>Hubungi Wali</span>
-                              </a>
+                              </button>
                             ) : (
                               <span className="text-[11px] text-slate-500 italic">
                                 No WA belum diisi

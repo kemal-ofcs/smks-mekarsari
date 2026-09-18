@@ -53,9 +53,15 @@ export async function ambilDetailArtikel(
   idBerita: string,
 ): Promise<{ article: ArticleDetail }> {
   if (isDesktopRuntime()) {
-    return invokeDesktop<{ article: ArticleDetail }>("desktop_get_article", {
+    const res = await invokeDesktop<
+      { article?: ArticleDetail } | ArticleDetail
+    >("desktop_get_article", {
       idBerita,
     });
+    if (res && typeof res === "object" && "article" in res && res.article) {
+      return { article: res.article };
+    }
+    return { article: res as ArticleDetail };
   }
   return requestWebApi<{ article: ArticleDetail }>(
     "/api/content/articles/get",

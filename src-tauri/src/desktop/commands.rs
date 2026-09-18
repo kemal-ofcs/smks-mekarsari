@@ -3798,3 +3798,37 @@ pub async fn desktop_save_page_content(
     require_permission(&state, "content.manage")?;
     state.get_turso_client()?.save_page_content(&halaman, &items).await
 }
+
+/// Membuka URL eksternal di browser default sistem (Chrome/Edge).
+#[tauri::command]
+pub fn desktop_open_external_url(url: String) -> Result<(), CommandError> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") && !trimmed.starts_with("whatsapp://") {
+        return Err(CommandError::new("INVALID_URL", "Skema URL tidak diizinkan."));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", trimmed])
+            .spawn()
+            .map_err(|e| CommandError::new("OPEN_FAILED", format!("Gagal membuka browser: {e}")))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| CommandError::new("OPEN_FAILED", format!("Gagal membuka browser: {e}")))?;
+    }
+    #[cfg(all(target_os = "linux", not(target_os = "android")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| CommandError::new("OPEN_FAILED", format!("Gagal membuka browser: {e}")))?;
+    }
+
+    Ok(())
+}
+

@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { hasPermission } from "@/lib/auth/access";
+import {
+  type CmsFieldConfig,
+  LANDING_PAGE_SUBSECTIONS,
+} from "@/lib/constants/landing-cms-fields";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
   ambilKontenHalaman,
@@ -15,6 +19,7 @@ interface FieldConfig {
   type: "text" | "textarea";
   placeholder: string;
   rows?: number;
+  description?: string;
 }
 
 const PAGE_SECTIONS: Record<string, { title: string; fields: FieldConfig[] }> =
@@ -116,43 +121,6 @@ const PAGE_SECTIONS: Record<string, { title: string; fields: FieldConfig[] }> =
         },
       ],
     },
-    landing: {
-      title: "Halaman Utama (Landing Page)",
-      fields: [
-        {
-          key: "landing.hero_title",
-          label: "Judul Utama (Hero Headline)",
-          type: "text",
-          placeholder: "Membentuk Generasi Unggul Berkarakter & Berdaya Saing",
-        },
-        {
-          key: "landing.hero_subtitle",
-          label: "Subjudul Utama (Hero Subtitle)",
-          type: "textarea",
-          placeholder:
-            "Lembaga pendidikan terakreditasi A dengan kurikulum berbasis teknologi dan industri...",
-          rows: 3,
-        },
-        {
-          key: "landing.keunggulan_1",
-          label: "Keunggulan 1",
-          type: "text",
-          placeholder: "Kurikulum Terkoneksi Industri",
-        },
-        {
-          key: "landing.keunggulan_2",
-          label: "Keunggulan 2",
-          type: "text",
-          placeholder: "Fasilitas Belajar & Lab Standar Internasional",
-        },
-        {
-          key: "landing.keunggulan_3",
-          label: "Keunggulan 3",
-          type: "text",
-          placeholder: "Penyaluran Kerja & Kerjasama Mitra Luas",
-        },
-      ],
-    },
   };
 
 export function PageContentManager() {
@@ -162,6 +130,8 @@ export function PageContentManager() {
   const [activeTab, setActiveTab] = useState<
     "profil" | "kontak" | "program" | "landing"
   >("profil");
+  const [activeLandingSubTab, setActiveLandingSubTab] =
+    useState<string>("hero_stats");
   const [contentMap, setContentMap] = useState<PageContentMap>({});
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -214,18 +184,35 @@ export function PageContentManager() {
     });
   };
 
-  const currentSection = PAGE_SECTIONS[activeTab];
+  const currentLandingSubSection =
+    LANDING_PAGE_SUBSECTIONS.find((s) => s.id === activeLandingSubTab) ??
+    LANDING_PAGE_SUBSECTIONS[0];
+
+  const currentTitle =
+    activeTab === "landing"
+      ? currentLandingSubSection.title
+      : PAGE_SECTIONS[activeTab].title;
+
+  const currentDesc =
+    activeTab === "landing"
+      ? currentLandingSubSection.description
+      : "Perubahan konten di sini akan langsung tampil pada situs publik dengan sistem graceful degradation.";
+
+  const currentFields: (FieldConfig | CmsFieldConfig)[] =
+    activeTab === "landing"
+      ? currentLandingSubSection.fields
+      : PAGE_SECTIONS[activeTab].fields;
 
   return (
     <div className="space-y-6">
-      {/* Tab Switcher */}
+      {/* Tab Switcher Utama */}
       <div className="flex border-b border-white/10 gap-2 overflow-x-auto pb-px">
         {(
           [
             { id: "profil", label: "Profil Sekolah" },
             { id: "kontak", label: "Kontak & Alamat" },
-            { id: "program", label: "Program & Fasilitas" },
-            { id: "landing", label: "Landing Hero" },
+            { id: "program", label: "Program & Fasilitas Ringkasan" },
+            { id: "landing", label: "Landing Page (Beranda)" },
           ] as const
         ).map((tab) => (
           <button
@@ -244,6 +231,27 @@ export function PageContentManager() {
         ))}
       </div>
 
+      {/* Sub-tab Switcher Khusus Landing Page */}
+      {activeTab === "landing" && (
+        <div className="flex flex-wrap gap-2 p-1.5 rounded-2xl bg-slate-800/60 border border-white/5">
+          {LANDING_PAGE_SUBSECTIONS.map((sub) => (
+            <button
+              key={sub.id}
+              id={`subtab-landing-${sub.id}`}
+              type="button"
+              onClick={() => setActiveLandingSubTab(sub.id)}
+              className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
+                activeLandingSubTab === sub.id
+                  ? "bg-sky-500 text-slate-950 shadow-md"
+                  : "text-slate-400 hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              {sub.title}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Alert Messages */}
       {errorMessage && (
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
@@ -259,13 +267,8 @@ export function PageContentManager() {
       {/* Form Content */}
       <div className="rounded-3xl border border-white/10 bg-slate-900 p-6 sm:p-8 shadow-xl space-y-6">
         <div className="border-b border-white/10 pb-4">
-          <h3 className="text-lg font-bold text-white">
-            {currentSection.title}
-          </h3>
-          <p className="mt-1 text-xs text-slate-400">
-            Perubahan konten di sini akan langsung tampil pada situs publik
-            dengan sistem graceful degradation.
-          </p>
+          <h3 className="text-lg font-bold text-white">{currentTitle}</h3>
+          <p className="mt-1 text-xs text-slate-400">{currentDesc}</p>
         </div>
 
         {loading ? (
@@ -274,7 +277,7 @@ export function PageContentManager() {
           </div>
         ) : (
           <div className="space-y-5">
-            {currentSection.fields.map((field) => {
+            {currentFields.map((field) => {
               const value = contentMap[field.key] ?? "";
               return (
                 <div key={field.key}>
@@ -284,6 +287,11 @@ export function PageContentManager() {
                   >
                     {field.label}
                   </label>
+                  {field.description ? (
+                    <p className="mb-2 text-[11px] text-sky-400/90 font-medium">
+                      ℹ️ {field.description}
+                    </p>
+                  ) : null}
                   {field.type === "textarea" ? (
                     <textarea
                       id={`input-${field.key}`}
