@@ -4,8 +4,11 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { hasPermission } from "@/lib/auth/access";
 import {
   type CmsFieldConfig,
+  HALAMAN_CMS,
   KOLEKSI_LANDING,
   LANDING_PAGE_SUBSECTIONS,
+  muatKoleksiLanding,
+  siapkanSimpanLanding,
 } from "@/lib/constants/landing-cms-fields";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -14,116 +17,6 @@ import {
   simpanKontenHalaman,
 } from "@/lib/gateways/content";
 import { CollectionRepeater } from "./CollectionRepeater";
-
-interface FieldConfig {
-  key: string;
-  label: string;
-  type: "text" | "textarea";
-  placeholder: string;
-  rows?: number;
-  description?: string;
-}
-
-const PAGE_SECTIONS: Record<string, { title: string; fields: FieldConfig[] }> =
-  {
-    profil: {
-      title: "Halaman Profil Sekolah",
-      fields: [
-        {
-          key: "profil.visi",
-          label: "Visi Sekolah",
-          type: "textarea",
-          placeholder: "Tuliskan visi sekolah...",
-          rows: 3,
-        },
-        {
-          key: "profil.misi",
-          label: "Misi Sekolah",
-          type: "textarea",
-          placeholder: "Tuliskan misi sekolah (pisahkan dengan baris baru)...",
-          rows: 5,
-        },
-        {
-          key: "profil.sejarah",
-          label: "Sejarah Singkat",
-          type: "textarea",
-          placeholder: "Tuliskan sejarah berdirinya sekolah...",
-          rows: 5,
-        },
-        {
-          key: "profil.sambutan",
-          label: "Sambutan Kepala Sekolah",
-          type: "textarea",
-          placeholder: "Sambutan hangat dari kepala sekolah...",
-          rows: 5,
-        },
-      ],
-    },
-    kontak: {
-      title: "Informasi Kontak & Lokasi",
-      fields: [
-        {
-          key: "kontak.alamat",
-          label: "Alamat Lengkap",
-          type: "textarea",
-          placeholder: "Alamat jalan, kelurahan, kecamatan, kota/kabupaten...",
-          rows: 2,
-        },
-        {
-          key: "kontak.telepon",
-          label: "Nomor Telepon Kantor",
-          type: "text",
-          placeholder: "(021) 1234567",
-        },
-        {
-          key: "kontak.whatsapp",
-          label: "Nomor WhatsApp Humas / Info",
-          type: "text",
-          placeholder: "+6281234567890",
-        },
-        {
-          key: "kontak.email",
-          label: "Email Resmi",
-          type: "text",
-          placeholder: "info@sekolah.sch.id",
-        },
-        {
-          key: "kontak.jam_kerja",
-          label: "Jam Layanan / Kerja",
-          type: "text",
-          placeholder: "Senin - Jumat, 07:00 - 16:00 WIB",
-        },
-      ],
-    },
-    program: {
-      title: "Program & Fasilitas",
-      fields: [
-        {
-          key: "program.kejuruan_ringkasan",
-          label: "Ringkasan Program Kejuruan",
-          type: "textarea",
-          placeholder:
-            "Penjelasan umum mengenai konsentrasi keahlian yang dibuka...",
-          rows: 4,
-        },
-        {
-          key: "program.fasilitas_ringkasan",
-          label: "Ringkasan Fasilitas",
-          type: "textarea",
-          placeholder:
-            "Laboratorium komputer modern, bengkel praktik standar industri...",
-          rows: 4,
-        },
-        {
-          key: "program.ekstrakurikuler_ringkasan",
-          label: "Ringkasan Ekstrakurikuler",
-          type: "textarea",
-          placeholder: "Pengembangan minat dan bakat siswa...",
-          rows: 4,
-        },
-      ],
-    },
-  };
 
 export function PageContentManager() {
   const { user } = useAuth();
@@ -153,27 +46,7 @@ export function PageContentManager() {
       const res = await ambilKontenHalaman(halaman);
       const items = res.items || {};
       setContentMap(items);
-      // JSON yang tidak bisa diurai diperlakukan sebagai koleksi kosong, bukan
-      // galat: satu baris rusak tidak boleh mengunci seluruh panel konten.
-      const terurai: Record<string, Record<string, unknown>[]> = {};
-      for (const koleksi of Object.values(KOLEKSI_LANDING)) {
-        let daftar: Record<string, unknown>[] = [];
-        try {
-          const mentah = JSON.parse(String(items[koleksi.kunci] ?? "[]"));
-          if (Array.isArray(mentah)) {
-            daftar = mentah.filter(
-              (item): item is Record<string, unknown> =>
-                typeof item === "object" &&
-                item !== null &&
-                !Array.isArray(item),
-            );
-          }
-        } catch {
-          daftar = [];
-        }
-        terurai[koleksi.kunci] = daftar;
-      }
-      setKoleksiItems(terurai);
+      setKoleksiItems(muatKoleksiLanding(items));
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Gagal memuat konten halaman.",
@@ -199,16 +72,13 @@ export function PageContentManager() {
     setSuccessMessage(null);
     startTransition(async () => {
       try {
-        // Koleksi kosong disimpan sebagai string kosong, BUKAN "[]":
-        // `readPageContent` di situs publik mengabaikan nilai kosong, sehingga
-        // menghapus seluruh item mengembalikan tampilan ke isi bawaannya
-        // alih-alih menghasilkan bagian yang kosong melompong.
-        const denganKoleksi = { ...contentMap };
-        for (const koleksi of Object.values(KOLEKSI_LANDING)) {
-          const daftar = koleksiItems[koleksi.kunci] ?? [];
-          denganKoleksi[koleksi.kunci] =
-            daftar.length > 0 ? JSON.stringify(daftar) : "";
-        }
+        // Hanya tab Landing yang punya koleksi. Halaman lain disimpan apa
+        // adanya — menyerialisasi koleksi di sana akan menulis kunci `landing.*`
+        // ke halaman yang salah.
+        const denganKoleksi =
+          activeTab === "landing"
+            ? siapkanSimpanLanding(contentMap, koleksiItems)
+            : contentMap;
         await simpanKontenHalaman(activeTab, denganKoleksi);
         setContentMap(denganKoleksi);
         setSuccessMessage(
@@ -231,7 +101,7 @@ export function PageContentManager() {
   const currentTitle =
     activeTab === "landing"
       ? currentLandingSubSection.title
-      : PAGE_SECTIONS[activeTab].title;
+      : HALAMAN_CMS[activeTab].title;
 
   const currentDesc =
     activeTab === "landing"
@@ -243,10 +113,10 @@ export function PageContentManager() {
       ? (KOLEKSI_LANDING[currentLandingSubSection.id] ?? null)
       : null;
 
-  const currentFields: (FieldConfig | CmsFieldConfig)[] =
+  const currentFields: CmsFieldConfig[] =
     activeTab === "landing"
       ? currentLandingSubSection.fields
-      : PAGE_SECTIONS[activeTab].fields;
+      : HALAMAN_CMS[activeTab].fields;
 
   return (
     <div className="space-y-6">

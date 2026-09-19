@@ -7,8 +7,24 @@
   --app-surface: rgba(15, 23, 42, 0.86);
   --app-surface-raised: rgba(30, 41, 59, 0.72);
   --app-border: rgba(255, 255, 255, 0.1);
-  --app-primary: #38bdf8;
-  --app-primary-strong: #0284c7;
+  --app-primary: #007aff;
+  --app-primary-strong: #003399;
+  --brand-primary: #003399;
+  --brand-primary-hover: #002266;
+  --brand-accent: #007aff;
+  --status-hadir: #059669;
+  --status-hadir-bg: rgba(5, 150, 105, 0.15);
+  --status-terlambat: #d97706;
+  --status-terlambat-bg: rgba(217, 119, 6, 0.15);
+  --status-izin: #2563eb;
+  --status-izin-bg: rgba(37, 99, 235, 0.15);
+  --status-sakit: #7c3aed;
+  --status-sakit-bg: rgba(124, 58, 237, 0.15);
+  --status-alfa: #dc2626;
+  --status-alfa-bg: rgba(220, 38, 38, 0.15);
+  --shadow-card: 0 4px 14px -2px rgba(0, 51, 153, 0.08);
+  --shadow-floating:
+    0 12px 32px -4px rgba(0, 34, 102, 0.18), 0 0 0 1px rgba(0, 51, 153, 0.06);
   --app-gold: #f6c453;
   --app-text: #f8fafc;
   --app-text-muted: #94a3b8;
@@ -19,7 +35,7 @@
   --app-input-border: rgba(255, 255, 255, 0.12);
   --app-input-text: #ffffff;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    var(--font-sans, "Plus Jakarta Sans"), -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
 }
 
@@ -31,8 +47,24 @@ html.light {
   --app-surface: #ffffff;
   --app-surface-raised: #ffffff;
   --app-border: #e2e8f0;
-  --app-primary: #0284c7;
-  --app-primary-strong: #0369a1;
+  --app-primary: #003399;
+  --app-primary-strong: #002266;
+  --brand-primary: #003399;
+  --brand-primary-hover: #002266;
+  --brand-accent: #007aff;
+  --status-hadir: #059669;
+  --status-hadir-bg: #ecfdf5;
+  --status-terlambat: #d97706;
+  --status-terlambat-bg: #fffbeb;
+  --status-izin: #2563eb;
+  --status-izin-bg: #eff6ff;
+  --status-sakit: #7c3aed;
+  --status-sakit-bg: #f5f3ff;
+  --status-alfa: #dc2626;
+  --status-alfa-bg: #fef2f2;
+  --shadow-card: 0 4px 14px -2px rgba(0, 51, 153, 0.08);
+  --shadow-floating:
+    0 12px 32px -4px rgba(0, 34, 102, 0.18), 0 0 0 1px rgba(0, 51, 153, 0.06);
   --app-gold: #d97706;
   --app-text: #0f172a;
   --app-text-muted: #475569;
@@ -97,6 +129,20 @@ textarea {
 button,
 a {
   -webkit-tap-highlight-color: transparent;
+}
+
+.font-mono-data {
+  font-family:
+    var(--font-mono, "JetBrains Mono"), ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.shadow-card-bca {
+  box-shadow: var(--shadow-card);
+}
+
+.shadow-floating-bca {
+  box-shadow: var(--shadow-floating);
 }
 
 ::selection {

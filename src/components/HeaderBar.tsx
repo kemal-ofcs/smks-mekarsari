@@ -159,9 +159,14 @@ const PRIMARY_AREAS = new Set<AppArea>([
   "home",
   "scanner",
   "dashboard",
-  "history",
+  "dasbor_kehadiran",
 ]);
-const MOBILE_FIXED_AREAS = new Set<AppArea>(["home", "scanner", "dashboard"]);
+const MOBILE_FIXED_AREAS = new Set<AppArea>([
+  "home",
+  "dasbor_kehadiran",
+  "scanner",
+  "siswa",
+]);
 
 /**
  * Pengelompokan isi menu "Kelola".
@@ -236,11 +241,11 @@ function NavigationLink({
       href={item.href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
-      className={`group flex items-center gap-2 rounded-xl font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 ${
+      className={`group flex items-center gap-2 rounded-xl font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
         compact ? "min-h-10 px-2.5 text-xs xl:px-3" : "min-h-11 px-4 text-sm"
       } ${
         active
-          ? "bg-sky-400 text-slate-950 shadow-lg shadow-sky-950/20"
+          ? "bg-[#003399] text-white shadow-md shadow-blue-950/30 ring-1 ring-white/15"
           : "text-slate-300 hover:bg-white/[0.07] hover:text-white"
       }`}
     >
@@ -387,9 +392,9 @@ export function HeaderBar() {
                     aria-expanded={desktopMenuOpen}
                     aria-controls="desktop-management-menu"
                     onClick={() => setDesktopMenuOpen((open) => !open)}
-                    className={`flex min-h-10 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 xl:px-3 ${
+                    className={`flex min-h-10 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 xl:px-3 ${
                       activeManagementItem
-                        ? "bg-sky-400 text-slate-950"
+                        ? "bg-[#003399] text-white shadow-md shadow-blue-950/30"
                         : "text-slate-300 hover:bg-white/[0.07] hover:text-white"
                     }`}
                   >
@@ -552,15 +557,48 @@ export function HeaderBar() {
         <div className="mx-auto flex w-full max-w-xl items-stretch justify-around gap-1">
           {mobileNavigation.map((item) => {
             const active = routeIsActive(pathname, item.href);
+            if (item.area === "scanner") {
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  aria-current={active ? "page" : undefined}
+                  aria-label="Buka Terminal Scanner QR Instan"
+                  className="group relative -top-3.5 flex flex-col items-center px-1"
+                >
+                  <div
+                    className={`grid size-12 place-items-center rounded-2xl shadow-floating-bca transition-all active:scale-90 ${
+                      active
+                        ? "bg-gradient-to-tr from-[#003399] via-blue-600 to-[#007aff] text-white ring-4 ring-slate-950 scale-105"
+                        : "bg-gradient-to-tr from-[#003399] to-blue-700 text-white ring-4 ring-slate-950 hover:scale-105"
+                    }`}
+                  >
+                    <Icon
+                      name="scanner"
+                      className="size-6 stroke-[2.2] text-white"
+                    />
+                  </div>
+                  <span
+                    className={`mt-0.5 text-[10px] font-black tracking-tight ${
+                      active ? "text-sky-300" : "text-slate-400"
+                    }`}
+                  >
+                    Scanner
+                  </span>
+                </Link>
+              );
+            }
+
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileMenuOpen(false)}
                 aria-current={active ? "page" : undefined}
-                className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 ${
+                className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:scale-95 ${
                   active
-                    ? "bg-sky-400/15 text-sky-200"
+                    ? "bg-[#003399]/30 text-sky-200"
                     : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
                 }`}
               >
