@@ -55,7 +55,6 @@ export function QuickActionTile({
   href,
   icon,
   title,
-  subtitle,
   badge,
   badgeColor = "rose",
   tone = "primary",
@@ -98,16 +97,9 @@ export function QuickActionTile({
       </div>
 
       {/* Title */}
-      <span className="mt-2.5 text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 tracking-tight line-clamp-1">
+      <span className="mt-2 text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 tracking-tight line-clamp-2 min-h-[2.25rem] flex items-center justify-center">
         {title}
       </span>
-
-      {/* Subtitle */}
-      {subtitle && (
-        <span className="mt-0.5 text-[10px] sm:text-[11px] font-medium text-slate-500 dark:text-slate-400 line-clamp-1">
-          {subtitle}
-        </span>
-      )}
     </Link>
   );
 }

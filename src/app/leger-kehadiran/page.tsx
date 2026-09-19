@@ -215,8 +215,8 @@ export default function LegerKehadiranPage() {
         <div className="print:hidden">
           <PageHeader
             eyebrow="AKADEMIK & RAPOR"
-            title="Leger Kehadiran Siswa"
-            description="Rekapitulasi kehadiran semesteran untuk buku rapor. Pratinjau langsung dihitung on-the-fly, dan dapat dibekukan saat penutupan semester."
+            title="Leger Kehadiran"
+            description="Matriks rekapitulasi kehadiran siswa per rombel dan mata pelajaran dalam satu periode."
             actions={
               <div className="flex items-center gap-2">
                 <button

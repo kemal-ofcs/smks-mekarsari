@@ -586,8 +586,8 @@ export default function SiswaPage() {
       <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6">
         <PageHeader
           eyebrow="Kesiswaan"
-          title="Master Data Peserta Didik"
-          description="Direktori siswa, pembagian rombel belajar, dan integrasi notifikasi wali murid."
+          title="PD (Peserta Didik)"
+          description="Direktori siswa, rombel/kelas, kontak wali, dan penerbitan token QR."
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <button

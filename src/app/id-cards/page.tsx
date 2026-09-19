@@ -1184,8 +1184,8 @@ export default function IdCardsPage() {
       {/* Header */}
       <PageHeader
         eyebrow="Identitas & Kartu Personil"
-        title="Dynamic ID Card Builder & Batch Print"
-        description="Sistem generator ID Card beresolusi tinggi (CR80 300 DPI) dengan visual template builder, barcode QR otomatis, dan cetak lembar A4 dengan tanda potong."
+        title="Studio Kartu Identitas"
+        description="Desain dan cetak kartu presensi QR standar CR80 untuk siswa, guru, dan karyawan."
         actions={
           <div className="flex items-center gap-2">
             <button

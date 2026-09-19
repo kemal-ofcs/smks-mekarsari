@@ -383,8 +383,8 @@ export default function GuruPage() {
       <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6">
         <PageHeader
           eyebrow="PTK"
-          title="Master Data Guru & PTK"
-          description="Direktori pendidik dan tenaga kependidikan sekolah serta identitas kartu barcode."
+          title="Guru & PTK"
+          description="Direktori tenaga pendidik, nomor telepon, dan pemetaan mata pelajaran."
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <button

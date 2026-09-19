@@ -573,8 +573,8 @@ export default function PresensiKelasPage() {
       <div className="space-y-6 pb-12">
         <PageHeader
           eyebrow="Akademik & Presensi"
-          title="Presensi Kelas KBM &amp; Deteksi Bolos"
-          description="Pencatatan kehadiran siswa per mata pelajaran dengan rekonsiliasi otomatis deteksi bolos di sekolah."
+          title="Presensi Mapel & Deteksi Anomali"
+          description="Presensi KBM di kelas per jam pelajaran dan pantau siswa yang meninggalkan sesi."
           actions={
             <div className="flex items-center gap-2">
               <button

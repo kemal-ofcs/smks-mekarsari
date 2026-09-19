@@ -174,8 +174,8 @@ export default function AuditAbsensiPage() {
     <AppShell contentClassName="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
       <PageHeader
         eyebrow="Kualitas Data"
-        title="Audit Kualitas Absensi"
-        description="Ringkasan kesehatan data absensi harian: siapa yang belum absen padahal jam absen sudah lewat, sesi yang menggantung tanpa scan pulang, dan scan yang perlu diverifikasi."
+        title="Live Audit Presensi"
+        description="Verifikasi integritas log pemindaian gerbang dan deteksi indikasi anomali kehadiran."
         badge={
           audit?.hariLibur ? (
             <StatusBadge tone="info">Hari Libur: {audit.hariLibur}</StatusBadge>

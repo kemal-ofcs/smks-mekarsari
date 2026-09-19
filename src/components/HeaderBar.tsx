@@ -158,14 +158,16 @@ const NAVIGATION: NavigationItem[] = [
 const PRIMARY_AREAS = new Set<AppArea>([
   "home",
   "scanner",
-  "dashboard",
-  "dasbor_kehadiran",
+  "operational",
+  "karyawan",
+  "settings",
 ]);
 const MOBILE_FIXED_AREAS = new Set<AppArea>([
   "home",
-  "dasbor_kehadiran",
+  "operational",
   "scanner",
-  "siswa",
+  "karyawan",
+  "settings",
 ]);
 
 /**
@@ -189,13 +191,11 @@ const MANAGEMENT_GROUPS: ReadonlyArray<{
   label: string;
   areas: readonly AppArea[];
 }> = [
-  { label: "Kepegawaian", areas: ["karyawan", "idcards", "shift"] },
+  { label: "Personil & PD", areas: ["karyawan", "guru", "siswa", "idcards"] },
   {
-    label: "Akademik",
+    label: "Akademik & KBM",
     areas: [
       "akademik",
-      "guru",
-      "siswa",
       "presensi_kelas",
       "jurnal_mengajar",
       "leger_kehadiran",
@@ -204,18 +204,21 @@ const MANAGEMENT_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    label: "Kehadiran",
-    areas: ["dasbor_kehadiran", "audit", "attendance_photo", "holidays"],
+    label: "Kehadiran & Gerbang",
+    areas: ["dasbor_kehadiran", "audit", "attendance_photo", "history"],
   },
   {
-    label: "Operasional",
+    label: "Operasional & Payroll",
     areas: ["operational", "payroll", "notifikasi_wa"],
   },
   {
     label: "Situs Publik",
     areas: ["konten", "pmb"],
   },
-  { label: "Sistem", areas: ["operators", "password_reset", "settings"] },
+  {
+    label: "Sistem & Pengaturan",
+    areas: ["settings", "operators", "password_reset", "shift", "holidays"],
+  },
 ];
 
 function routeIsActive(pathname: string, href: string) {
@@ -552,7 +555,7 @@ export function HeaderBar() {
 
       <nav
         aria-label="Navigasi mobile"
-        className="mobile-safe-bottom fixed inset-x-0 bottom-0 z-[70] border-t border-white/10 bg-slate-950/96 px-2 pt-2 shadow-[0_-14px_40px_rgba(2,8,23,0.55)] backdrop-blur-xl lg:hidden"
+        className="mobile-safe-bottom fixed inset-x-0 bottom-0 z-[70] border-t border-slate-200/80 dark:border-white/10 bg-white/95 dark:bg-slate-950/96 px-2 pt-2 shadow-[0_-10px_30px_rgba(0,0,0,0.06)] dark:shadow-[0_-14px_40px_rgba(2,8,23,0.55)] backdrop-blur-xl lg:hidden"
       >
         <div className="mx-auto flex w-full max-w-xl items-stretch justify-around gap-1">
           {mobileNavigation.map((item) => {
@@ -568,10 +571,10 @@ export function HeaderBar() {
                   className="group relative -top-3.5 flex flex-col items-center px-1"
                 >
                   <div
-                    className={`grid size-12 place-items-center rounded-2xl shadow-floating-bca transition-all active:scale-90 ${
+                    className={`grid size-12 place-items-center rounded-2xl shadow-lg transition-all active:scale-90 ${
                       active
-                        ? "bg-gradient-to-tr from-[#003399] via-blue-600 to-[#007aff] text-white ring-4 ring-slate-950 scale-105"
-                        : "bg-gradient-to-tr from-[#003399] to-blue-700 text-white ring-4 ring-slate-950 hover:scale-105"
+                        ? "bg-gradient-to-tr from-[#003399] via-blue-600 to-[#007aff] text-white ring-4 ring-white dark:ring-slate-950 shadow-blue-500/30 scale-105"
+                        : "bg-gradient-to-tr from-[#003399] via-[#0055cc] to-[#007aff] dark:from-[#003399] dark:to-blue-700 text-white ring-4 ring-white dark:ring-slate-950 shadow-blue-500/20 hover:scale-105"
                     }`}
                   >
                     <Icon
@@ -581,7 +584,9 @@ export function HeaderBar() {
                   </div>
                   <span
                     className={`mt-0.5 text-[10px] font-black tracking-tight ${
-                      active ? "text-sky-300" : "text-slate-400"
+                      active
+                        ? "text-blue-600 dark:text-sky-300"
+                        : "text-slate-600 dark:text-slate-400"
                     }`}
                   >
                     Scanner
@@ -598,8 +603,8 @@ export function HeaderBar() {
                 aria-current={active ? "page" : undefined}
                 className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:scale-95 ${
                   active
-                    ? "bg-[#003399]/30 text-sky-200"
-                    : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
+                    ? "bg-blue-50 dark:bg-[#003399]/30 text-blue-700 dark:text-sky-200 font-bold"
+                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/[0.06] hover:text-slate-900 dark:hover:text-white"
                 }`}
               >
                 <Icon name={item.icon} className="size-5" />

@@ -121,8 +121,8 @@ export default function DasborKehadiranPage() {
       <div className="space-y-6">
         <PageHeader
           eyebrow="DASBOR"
-          title="Dasbor Audit Kehadiran"
-          description="Analitik komprehensif kehadiran Guru, PTK, dan Siswa berbasis data operasional gerbang dan kelas."
+          title="Live Pantau Kehadiran"
+          description="Pemantauan realtime pergerakan siswa dan guru di gerbang serta kelas hari ini."
           actions={
             <div className="flex items-center gap-3">
               <input

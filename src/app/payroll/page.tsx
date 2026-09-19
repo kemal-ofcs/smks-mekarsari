@@ -187,8 +187,8 @@ export default function PayrollDashboardPage() {
       <div className="space-y-6">
         <PageHeader
           eyebrow="Penggajian"
-          title="Penggajian & Estimasi Upah"
-          description="Rekapitulasi jam kerja, perhitungan upah lembur berjenjang (PP 35/2021), potongan PPh 21 & BPJS."
+          title="Penggajian & Slip Gaji"
+          description="Hitung honor, tunjangan, potongan pajak/BPJS, dan cetak slip gaji personil."
           actions={
             <div className="flex flex-wrap gap-2">
               <Link

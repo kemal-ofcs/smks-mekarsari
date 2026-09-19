@@ -638,8 +638,8 @@ export default function HistoryPage() {
     <AppShell contentClassName="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 md:py-8 lg:px-8">
       <PageHeader
         eyebrow="Audited Database Records"
-        title="Riwayat Log Scan & Absensi Harian"
-        description="Tinjau seluruh rekaman log scan terminal dan mutasi absensi harian tersimpan dengan parameter lengkap."
+        title="Riwayat Presensi & Log Scan"
+        description="Audit rekaman data absensi harian dan log transmisi pemindai gerbang."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <button

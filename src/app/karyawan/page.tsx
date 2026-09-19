@@ -430,8 +430,8 @@ export default function KaryawanPage() {
     <AppShell contentClassName="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 md:py-8 lg:px-8">
       <PageHeader
         eyebrow="Master Data Management"
-        title="Manajemen Master Data Karyawan"
-        description="Kelola profil lengkap 14 parameter karyawan, shift kerja, status keaktifan, dan QR token absensi."
+        title="Data Karyawan"
+        description="Direktori pegawai dan staf kantor, penugasan shift, serta status keaktifan."
         actions={
           canManage ? (
             <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">

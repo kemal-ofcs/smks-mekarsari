@@ -5,6 +5,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import {
@@ -793,12 +794,30 @@ export default function ScannerPage() {
           </div>
         </div>
 
-        <div className="flex w-full items-center justify-between gap-4 sm:w-auto sm:justify-start sm:gap-6">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:justify-start sm:gap-4">
+          {/* Quick Shortcuts: Live Pantau & Riwayat */}
+          <div className="flex items-center gap-2">
+            <Link
+              href="/dasbor-kehadiran"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/30 bg-sky-500/15 hover:bg-sky-500/25 px-3 py-1.5 text-xs font-bold text-sky-200 transition active:scale-95"
+            >
+              <Icon name="dashboard" className="size-3.5" />
+              <span>Live Pantau</span>
+            </Link>
+            <Link
+              href="/history"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 hover:bg-white/15 px-3 py-1.5 text-xs font-bold text-slate-200 transition active:scale-95"
+            >
+              <Icon name="clock" className="size-3.5" />
+              <span>Riwayat</span>
+            </Link>
+          </div>
+
           {/* Audio & Status Toggle */}
           <button
             type="button"
             onClick={() => setAudioEnabled(!audioEnabled)}
-            className={`scanner-terminal-audio px-3 py-1 rounded-full text-xs font-mono font-medium transition border ${
+            className={`scanner-terminal-audio px-3 py-1.5 rounded-xl text-xs font-mono font-medium transition border ${
               audioEnabled
                 ? "bg-sky-500/20 text-sky-300 border-sky-500/40 hover:bg-sky-500/30"
                 : "bg-slate-800/80 text-slate-400 border-slate-700 hover:bg-slate-800"

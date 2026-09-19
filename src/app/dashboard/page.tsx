@@ -516,8 +516,12 @@ export default function DashboardPage() {
               Executive Analytics & Reports
             </span>
             <h1 className="text-xl sm:text-2xl font-bold text-white mt-1">
-              Dashboard Rekapitulasi Absensi {companyName}
+              Rekap & Laporan Kehadiran {companyName}
             </h1>
+            <p className="text-sm text-slate-400 mt-1">
+              Laporan agregasi absensi harian/bulanan, peringkat terajin, dan
+              ekspor data Excel.
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

@@ -3803,7 +3803,12 @@ pub async fn desktop_save_page_content(
 #[tauri::command]
 pub fn desktop_open_external_url(url: String) -> Result<(), CommandError> {
     let trimmed = url.trim();
-    if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") && !trimmed.starts_with("whatsapp://") {
+    // `tel:` ikut diizinkan supaya tombol telepon bisa menyerahkan nomornya ke
+    // aplikasi panggilan bawaan sistem, bukan ditolak di gerbang ini.
+    let diizinkan = ["https://", "http://", "whatsapp://", "tel:"]
+        .iter()
+        .any(|awalan| trimmed.starts_with(awalan));
+    if !diizinkan {
         return Err(CommandError::new("INVALID_URL", "Skema URL tidak diizinkan."));
     }
 

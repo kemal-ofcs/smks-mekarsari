@@ -4,69 +4,74 @@ import {
   QuickActionTile,
   type QuickActionTileProps,
 } from "@/components/ui/QuickActionTile";
+import { type AppArea, canAccessArea } from "@/lib/auth/access";
+import { useAuth } from "@/lib/context/AuthContext";
+
+export interface QuickActionItem extends QuickActionTileProps {
+  area?: AppArea;
+}
 
 interface QuickActionGridProps {
-  tiles?: QuickActionTileProps[];
+  tiles?: QuickActionItem[];
   className?: string;
 }
 
-const DEFAULT_TILES: QuickActionTileProps[] = [
-  {
-    href: "/scanner",
-    icon: "scanner",
-    title: "Terminal QR",
-    subtitle: "Pindai Absensi",
-    tone: "primary",
-    isPrimaryAction: true,
-  },
-  {
-    href: "/presensi-kelas",
-    icon: "clock",
-    title: "Presensi KBM",
-    subtitle: "Jam Mengajar",
-    tone: "emerald",
-  },
-  {
-    href: "/siswa",
-    icon: "users",
-    title: "Siswa & Guru",
-    subtitle: "Master Data",
-    tone: "primary",
-  },
-  {
-    href: "/payroll",
-    icon: "document",
-    title: "Penggajian",
-    subtitle: "Slip Gaji",
-    tone: "emerald",
-  },
-  {
-    href: "/dasbor-kehadiran",
-    icon: "dashboard",
-    title: "Live Pantau",
-    subtitle: "Audit Realtime",
-    tone: "amber",
-  },
+const DEFAULT_TILES: QuickActionItem[] = [
   {
     href: "/id-cards",
     icon: "user",
-    title: "Cetak Kartu",
-    subtitle: "Studio ID Card",
+    title: "Cetak ID Card",
     tone: "purple",
+    area: "idcards",
+  },
+  {
+    href: "/jurnal-mengajar",
+    icon: "document",
+    title: "Jurnal Mengajar",
+    tone: "primary",
+    area: "jurnal_mengajar",
+  },
+  {
+    href: "/leger-kehadiran",
+    icon: "calendar",
+    title: "Leger Kehadiran",
+    tone: "emerald",
+    area: "leger_kehadiran",
+  },
+  {
+    href: "/audit-absensi",
+    icon: "alert",
+    title: "Live Audit Presensi",
+    tone: "amber",
+    area: "audit",
   },
   {
     href: "/notifikasi-wa",
     icon: "whatsapp",
-    title: "Notifikasi WA",
-    subtitle: "Kirim ke Wali",
+    title: "Notifikasi WhatsApp",
     tone: "emerald",
+    area: "notifikasi_wa",
   },
   {
-    href: "/settings",
-    icon: "settings",
-    title: "Pengaturan",
-    subtitle: "Sistem & Sync",
+    href: "/payroll",
+    icon: "document",
+    title: "Penggajian & Slip Gaji",
+    tone: "emerald",
+    area: "payroll",
+  },
+  {
+    href: "/presensi-kelas",
+    icon: "clock",
+    title: "Presensi Mapel & Anomali",
+    tone: "primary",
+    area: "presensi_kelas",
+  },
+  {
+    href: "/history",
+    icon: "clock",
+    title: "Riwayat Presensi",
     tone: "neutral",
+    area: "history",
   },
 ];
 
@@ -74,19 +79,15 @@ export function QuickActionGrid({
   tiles = DEFAULT_TILES,
   className = "",
 }: QuickActionGridProps) {
-  return (
-    <section aria-label="Layanan Cepat Operasional" className={className}>
-      <div className="flex items-center justify-between mb-3 px-1">
-        <h2 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
-          Layanan Cepat (Quick Action)
-        </h2>
-        <span className="text-xs font-semibold text-blue-700 dark:text-sky-400">
-          Akses 1-Ketukan
-        </span>
-      </div>
+  const { user } = useAuth();
+  const visibleTiles = tiles.filter(
+    (tile) => !tile.area || canAccessArea(user, tile.area),
+  );
 
+  return (
+    <section aria-label="Aksi Cepat Operasional" className={className}>
       <div className="grid grid-cols-4 gap-2.5 sm:gap-3.5">
-        {tiles.map((tile) => (
+        {visibleTiles.map((tile) => (
           <QuickActionTile key={tile.href} {...tile} />
         ))}
       </div>

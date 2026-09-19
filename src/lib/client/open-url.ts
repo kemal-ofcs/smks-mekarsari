@@ -4,82 +4,99 @@ import { isDesktopRuntime, isMobileRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop } from "@/lib/runtime/desktop-commands";
 
 /**
- * Membuka URL eksternal (termasuk wa.me dan whatsapp://) di aplikasi target:
- * - Desktop (Tauri Windows/Mac/Linux): Meluncurkan browser Chrome / browser default sistem via OS.
- * - Mobile (Tauri Android): Meluncurkan APK WhatsApp langsung via deep link intent atau AndroidBridge.
- * - Web Browser: Membuka tab baru via window.open.
+ * Menyerahkan tautan ke aplikasi lain (WhatsApp, aplikasi telepon, browser).
+ *
+ * Di Android tautan TIDAK boleh dibuka dengan `window.location.href` maupun
+ * `window.open`. WebView yang dipakai Tauri tidak meneruskan skema non-http
+ * (`tel:`, `whatsapp:`) ke Intent sistem, dan `https://wa.me/...` hanya dimuat
+ * sebagai WhatsApp Web DI DALAM aplikasi lalu gagal. Satu-satunya jalan yang
+ * benar adalah command Rust `desktop_open_external_url`, yang di Android
+ * menjalankan Intent.ACTION_VIEW.
+ *
+ * Urutan sengaja menempatkan jalur Tauri lebih dulu untuk Mobile DAN Desktop;
+ * `window.open` hanya dipakai pada build Web di browser biasa.
  */
 export async function openExternalUrl(url: string): Promise<boolean> {
   const target = url.trim();
   if (!target) return false;
 
-  // 1. Mobile Android APK
-  if (
-    isMobileRuntime() ||
-    (typeof window !== "undefined" && window.AndroidBridge?.openExternal)
-  ) {
-    if (typeof window !== "undefined" && window.AndroidBridge?.openExternal) {
-      try {
-        const raw = window.AndroidBridge.openExternal(target);
-        const parsed = JSON.parse(raw) as { sukses?: boolean };
-        if (parsed?.sukses) return true;
-      } catch (e) {
-        console.warn("AndroidBridge openExternal error:", e);
-      }
-    }
-    try {
-      window.location.href = target;
-      return true;
-    } catch {
-      // Skema URI tidak dapat dibuka di lingkungan WebView saat ini; kembalikan false secara aman.
-      return false;
-    }
-  }
-
-  // 2. Desktop Tauri Native (buka Google Chrome / browser default OS)
-  if (isDesktopRuntime()) {
+  // 1. Aplikasi Tauri (Android/iOS maupun Desktop) — serahkan ke sistem operasi.
+  if (isMobileRuntime() || isDesktopRuntime()) {
     try {
       await invokeDesktop("desktop_open_external_url", { url: target });
       return true;
     } catch (e) {
-      console.warn("desktop_open_external_url error:", e);
+      console.warn("desktop_open_external_url gagal:", e);
+      // Jangan jatuh ke window.location.href di sini: pada WebView Android itu
+      // justru memunculkan layar error ERR_UNKNOWN_URL_SCHEME di dalam aplikasi.
+      if (isMobileRuntime()) return false;
     }
   }
 
-  // 3. Web Browser
+  // 2. Browser biasa (build Web).
   try {
     const win = window.open(target, "_blank", "noopener,noreferrer");
     if (win) return true;
   } catch {
-    // Popup diblokir oleh kebijakan browser atau lingkungan tidak mengizinkan window.open; lanjutkan ke navigasi langsung.
+    // Popup diblokir kebijakan browser; lanjut ke navigasi langsung.
   }
 
   try {
     window.location.href = target;
     return true;
   } catch {
-    // Tidak ada aplikasi atau penangan skema yang tersedia untuk membuka tautan ini.
     return false;
   }
 }
 
 /**
- * Helper khusus format WhatsApp sesuai target platform:
- * - Mobile: Mengutamakan skema deep-link `whatsapp://send` agar langsung membuka aplikasi WhatsApp APK.
- * - Desktop/Web: Menggunakan `https://wa.me/...` agar membuka WhatsApp Web / Desktop di browser Chrome.
+ * Normalisasi nomor Indonesia ke bentuk internasional tanpa tanda plus,
+ * satu-satunya bentuk yang diterima WhatsApp (`08…` dan `8…` → `628…`).
+ */
+export function normalizeWhatsAppNumber(phoneNumber: string): string {
+  let digits = phoneNumber.replace(/\D/g, "");
+  if (digits.startsWith("0")) {
+    digits = `62${digits.slice(1)}`;
+  } else if (digits.startsWith("8")) {
+    digits = `62${digits}`;
+  }
+  return digits;
+}
+
+/**
+ * Membuka percakapan WhatsApp dengan satu nomor.
+ *
+ * - Mobile: skema `whatsapp://send` supaya aplikasi WhatsApp yang terpasang
+ *   langsung terbuka pada chat nomor tersebut, bukan WhatsApp Web.
+ * - Desktop/Web: `https://wa.me/...` supaya terbuka di WhatsApp Desktop/Web.
  */
 export async function openWhatsAppChat(
   phoneNumber: string,
-  message: string,
+  message = "",
 ): Promise<boolean> {
-  const cleanPhone = phoneNumber.replace(/[^\d]/g, "");
+  const cleanPhone = normalizeWhatsAppNumber(phoneNumber);
+  if (cleanPhone.length < 8) return false;
   const encodedText = encodeURIComponent(message);
 
   if (isMobileRuntime()) {
-    const directApkUrl = `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`;
-    return openExternalUrl(directApkUrl);
+    const berhasil = await openExternalUrl(
+      `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`,
+    );
+    if (berhasil) return true;
+    // WhatsApp tidak terpasang: biarkan sistem memilih penangan lain daripada
+    // membiarkan tombolnya diam tanpa penjelasan.
+    return openExternalUrl(`https://wa.me/${cleanPhone}?text=${encodedText}`);
   }
 
-  const webUrl = `https://wa.me/${cleanPhone}?text=${encodedText}`;
-  return openExternalUrl(webUrl);
+  return openExternalUrl(`https://wa.me/${cleanPhone}?text=${encodedText}`);
+}
+
+/**
+ * Membuka aplikasi telepon dengan nomor sudah tercantum.
+ */
+export async function openPhoneDialer(phoneNumber: string): Promise<boolean> {
+  const raw = phoneNumber.trim();
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 5) return false;
+  return openExternalUrl(`tel:${raw.startsWith("+") ? `+${digits}` : digits}`);
 }

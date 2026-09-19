@@ -241,7 +241,7 @@ export default function JurnalMengajarPage() {
         <PageHeader
           eyebrow="AKADEMIK & KBM"
           title="Jurnal Mengajar"
-          description="Catatan materi yang tersampaikan di kelas, kendala pembelajaran, tindak lanjut, dan paraf digital guru pengampu."
+          description="Rekam materi pembelajaran, capaian KBM, dan catatan khusus kelas per jam pelajaran."
           actions={
             <button
               type="button"

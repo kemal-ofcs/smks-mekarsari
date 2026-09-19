@@ -479,8 +479,8 @@ export default function OperationalPage() {
     <AppShell contentClassName="mx-auto w-full max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:px-8 space-y-6">
       <PageHeader
         eyebrow="Operasional Absensi"
-        title="Koreksi Admin, Backup & Import Manual"
-        description="Kelola mutasi absensi, delegasi shift karyawan, dan input absensi manual dengan aturan prioritas terproteksi."
+        title="Pusat Operasional"
+        description="Layanan koreksi admin, penugasan backup staf, dan import data presensi manual."
       />
 
       {feedback ? (
