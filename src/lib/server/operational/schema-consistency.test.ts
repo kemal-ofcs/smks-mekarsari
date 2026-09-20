@@ -43,7 +43,7 @@ describe("Schema Consistency & Zero-Drift Guard", () => {
         'akademik_mapel', 'akademik_guru_mapel', 'akademik_jam_pelajaran',
         'jadwal_mengajar', 'guru_data', 'siswa_data',
         'presensi_mapel', 'presensi_mapel_detail',
-        'jurnal_mengajar', 'leger_kehadiran', 'siswa_foto',
+        'jurnal_mengajar', 'leger_kehadiran', 'personil_foto',
         'notifikasi_wa', 'app_wa_config', 'bk_kasus', 'bk_sesi',
         'pmb_gelombang', 'pmb_pendaftar', 'pmb_berkas',
         'wali_otp', 'wali_session', 'wali_kredensial',

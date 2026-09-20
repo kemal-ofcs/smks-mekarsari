@@ -1131,8 +1131,20 @@ pub fn initialize(path: &Path) -> Result<(), String> {
       );
       CREATE INDEX IF NOT EXISTS idx_local_leger_scope
         ON leger_kehadiran(id_tahun_ajaran, semester, id_rombel, id_siswa);
-      CREATE TABLE IF NOT EXISTS siswa_foto (
-        id_siswa TEXT PRIMARY KEY,
+      -- v32: foto profil SELURUH personil (guru, siswa, karyawan) dalam satu
+      -- tabel, berkunci `master_data.id_unik`.
+      --
+      -- Menggantikan `siswa_foto`, yang berkunci `siswa_data.id_siswa` sehingga
+      -- hanya bisa menampung siswa. Kartu identitas dirender dari baris
+      -- `master_data`, jadi kunci itu pula yang membuat foto langsung terpasang
+      -- di kartu tanpa satu pun join tambahan.
+      --
+      -- SENGAJA tabel terpisah, bukan kolom di `master_data`: tabel itu ada di
+      -- dalam `SNAPSHOT_TABLES`, sehingga satu kolom foto di sana membuat SETIAP
+      -- perangkat mengunduh ulang seluruh foto setiap kali ada satu baris
+      -- personil berubah. Pola yang sama dengan `absensi_foto`.
+      CREATE TABLE IF NOT EXISTS personil_foto (
+        id_unik TEXT PRIMARY KEY,
         foto_mime TEXT NOT NULL DEFAULT 'image/jpeg',
         foto_base64 TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -1609,7 +1621,7 @@ pub(crate) const CLOUD_MIRRORED_TABLES: &[&str] = &[
     // Di luar snapshot tetapi tetap milik database asalnya: foto didorong ke
     // cloud lewat outbox dan antrean WA berisi nomor wali siswa database lama.
     "absensi_foto",
-    "siswa_foto",
+    "personil_foto",
     "notifikasi_wa",
     "wali_kredensial",
 ];

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { hasPermission } from "@/lib/auth/access";
+import { optimizeImageFile } from "@/lib/client/image-optimizer";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
   type ArticleDetail,
@@ -119,8 +120,25 @@ export function ArticleManager() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * Kompresi lewat `optimizeImageFile`, bukan rantai FileReader→Image→canvas
+   * yang dirakit sendiri.
+   *
+   * Versi sebelumnya tidak punya satu pun penanganan kegagalan — tanpa
+   * `reader.onerror`, tanpa `img.onerror`, dan dengan `if (ctx)` tanpa cabang
+   * lain. Kalau salah satu langkah putus, `setFormGambarSampul` tidak pernah
+   * terpanggil: tidak ada pesan, tidak ada pratinjau, dan artikelnya tetap
+   * tersimpan "berhasil" tanpa sampul. Helper itu me-`reject` kedua jalur
+   * gagalnya, sehingga kegagalan selalu terlihat.
+   *
+   * Hasilnya kini JPEG, bukan WebP. Endpoint gambar situs publik menerima
+   * keduanya, tetapi `toDataURL("image/webp")` tidak didukung seluruh WebView
+   * dan diam-diam jatuh ke format lain di sebagian di antaranya.
+   */
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Dikosongkan supaya memilih berkas yang sama dua kali tetap memicu change.
+    e.target.value = "";
     if (!file) return;
 
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
@@ -133,47 +151,27 @@ export function ArticleManager() {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const MAX_WIDTH = 1200;
-        const MAX_HEIGHT = 800;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressedBase64 = canvas.toDataURL("image/webp", 0.85);
-          if (compressedBase64.length > 750_000) {
-            setFormError(
-              "Gambar masih terlalu besar setelah dikompres. Silakan pilih resolusi lebih rendah.",
-            );
-            return;
-          }
-          setFormGambarSampul(compressedBase64);
-          setFormError(null);
-        }
-      };
-      img.src = evt.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    try {
+      const { dataUrl } = await optimizeImageFile(file, {
+        maxWidth: 1200,
+        maxHeight: 800,
+        quality: 0.85,
+        mimeType: "image/jpeg",
+        fit: "contain",
+      });
+      if (dataUrl.length > 750_000) {
+        setFormError(
+          "Gambar masih terlalu besar setelah dikompres. Silakan pilih resolusi lebih rendah.",
+        );
+        return;
+      }
+      setFormGambarSampul(dataUrl);
+      setFormError(null);
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : "Gagal memproses gambar sampul.",
+      );
+    }
   };
 
   const handleSimpan = () => {

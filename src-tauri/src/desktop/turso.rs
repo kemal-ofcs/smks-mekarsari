@@ -2670,8 +2670,16 @@ impl TursoClient {
                 vec![],
             ),
             Statement::new(
-                r#"CREATE TABLE IF NOT EXISTS siswa_foto (
-                    id_siswa TEXT PRIMARY KEY,
+                // v32 — foto profil seluruh personil, berkunci
+                // `master_data.id_unik`. Cerminan DDL di `storage.rs`; alasan
+                // lengkapnya ditulis di sana.
+                //
+                // Menggantikan `siswa_foto`, yang berkunci `siswa_data.id_siswa`
+                // sehingga hanya bisa menampung siswa. Tabel lamanya dibongkar
+                // tanpa migrasi data: ia tidak pernah punya satu pun pemanggil
+                // UI dan tidak pernah berisi satu baris pun.
+                r#"CREATE TABLE IF NOT EXISTS personil_foto (
+                    id_unik TEXT PRIMARY KEY,
                     foto_mime TEXT NOT NULL DEFAULT 'image/jpeg',
                     foto_base64 TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -7043,9 +7051,17 @@ impl TursoClient {
             ));
         }
 
-        let gambar_sampul = draft
+        // Kunci yang TIDAK DIKIRIM berarti "jangan sentuh sampulnya"; kunci yang
+        // dikirim bernilai null/kosong berarti "hapus sampulnya". Keduanya dulu
+        // sama-sama menulis NULL, sehingga setiap penyimpanan yang kebetulan
+        // tidak membawa gambar — formulir yang gagal memuat pratinjaunya,
+        // pembaruan sebagian dari mana pun — menghapus sampul yang sudah ada
+        // tanpa satu pun peringatan.
+        let gambar_field = draft
             .get("gambarSampul")
-            .or_else(|| draft.get("gambar_sampul"))
+            .or_else(|| draft.get("gambar_sampul"));
+        let gambar_dikirim = gambar_field.is_some();
+        let gambar_sampul = gambar_field
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
@@ -7116,32 +7132,45 @@ impl TursoClient {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string);
 
-                self.query_one(
+                // Klausa sampulnya hanya ikut ketika kuncinya benar-benar
+                // dikirim. Lihat catatan pada `gambar_dikirim` di atas.
+                let set_gambar = if gambar_dikirim {
+                    "gambar_sampul = ?,"
+                } else {
+                    ""
+                };
+                let sql = format!(
                     r#"UPDATE berita
                           SET judul = ?, slug = ?, ringkasan = ?, isi = ?,
-                              gambar_sampul = ?, status = ?,
+                              {set_gambar} status = ?,
                               tanggal_terbit = CASE
                                   WHEN ? IS NOT NULL THEN ?
                                   WHEN ? = 'Terbit' THEN datetime('now', '+7 hours')
                                   ELSE NULL
                               END,
                               penulis = ?, updated_at = datetime('now')
-                        WHERE id_berita = ?;"#,
-                    vec![
-                        json!(judul),
-                        json!(final_slug),
-                        json!(ringkasan),
-                        json!(isi),
-                        json!(gambar_sampul),
-                        json!(status),
-                        tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
-                        tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
-                        json!(status),
-                        json!(penulis),
-                        json!(id),
-                    ],
-                )
-                .await?;
+                        WHERE id_berita = ?;"#
+                );
+
+                let mut args = vec![
+                    json!(judul),
+                    json!(final_slug),
+                    json!(ringkasan),
+                    json!(isi),
+                ];
+                if gambar_dikirim {
+                    args.push(json!(gambar_sampul));
+                }
+                args.extend([
+                    json!(status),
+                    tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
+                    tanggal_terbit.as_ref().map(|s| json!(s)).unwrap_or(Value::Null),
+                    json!(status),
+                    json!(penulis),
+                    json!(id),
+                ]);
+
+                self.query_one(sql, args).await?;
                 id.to_string()
             }
             None => {
@@ -7716,8 +7745,11 @@ fn canonical_sync_route(domain: &str, operation: &str) -> Option<(&'static str, 
         ("student" | "siswa", "create") => ("student", "create"),
         ("student" | "siswa", "update") => ("student", "update"),
         ("student" | "siswa", "delete") => ("student", "delete"),
-        ("student-photo" | "student_photo" | "siswa-foto" | "siswa_foto", "save") => {
-            ("student-photo", "save")
+        ("personnel-photo" | "personnel_photo" | "personil-foto" | "personil_foto", "save") => {
+            ("personnel-photo", "save")
+        }
+        ("personnel-photo" | "personnel_photo" | "personil-foto" | "personil_foto", "delete") => {
+            ("personnel-photo", "delete")
         }
         (
             "class-attendance" | "class_attendance" | "presensi-mapel" | "presensi_mapel",
@@ -10281,17 +10313,18 @@ async fn apply_event_to_turso(
                     .await?;
             }
         }
-        // Foto profil siswa. `siswa_foto` sengaja DI LUAR `SNAPSHOT_TABLES` —
-        // satu foto ratusan kilobyte, dan menariknya lewat snapshot membuat tiap
-        // siklus pull membengkak di setiap perangkat. Tetapi "di luar snapshot"
-        // hanya berarti tidak ikut DITARIK; ia tetap wajib DIDORONG lewat event
-        // ini, persis seperti `absensi_foto` yang menumpang `attendance/scan`.
-        // Tanpa event ini foto hanya hidup di perangkat yang memotretnya, dan
-        // kartu pelajar yang dicetak dari perangkat lain kehilangan fotonya.
-        ("student-photo", "save") => {
-            let row = payload.get("student_photo").unwrap_or(payload);
+        // Foto profil seluruh personil. `personil_foto` sengaja DI LUAR
+        // `SNAPSHOT_TABLES` — satu foto ratusan kilobyte, dan menariknya lewat
+        // snapshot membuat tiap siklus pull membengkak di setiap perangkat.
+        // Tetapi "di luar snapshot" hanya berarti tidak ikut DITARIK; ia tetap
+        // wajib DIDORONG lewat event ini, persis seperti `absensi_foto` yang
+        // menumpang `attendance/scan`. Tanpa event ini foto hanya hidup di
+        // perangkat yang mengunggahnya, dan kartu identitas yang dicetak dari
+        // perangkat lain kehilangan fotonya.
+        ("personnel-photo", "save") => {
+            let row = payload.get("personnel_photo").unwrap_or(payload);
             let id = row
-                .get("id_siswa")
+                .get("id_unik")
                 .and_then(Value::as_str)
                 .filter(|v| !v.is_empty())
                 .unwrap_or(entity_key);
@@ -10305,13 +10338,29 @@ async fn apply_event_to_turso(
                 let updated_at = row.get("updated_at").and_then(Value::as_str).unwrap_or("");
                 turso
                     .query_one(
-                        r#"INSERT INTO siswa_foto (id_siswa, foto_mime, foto_base64, updated_at)
+                        r#"INSERT INTO personil_foto (id_unik, foto_mime, foto_base64, updated_at)
                         VALUES (?, ?, ?, ?)
-                        ON CONFLICT(id_siswa) DO UPDATE SET
+                        ON CONFLICT(id_unik) DO UPDATE SET
                             foto_mime = excluded.foto_mime,
                             foto_base64 = excluded.foto_base64,
                             updated_at = excluded.updated_at;"#,
                         vec![json!(id), json!(mime), json!(base64), json!(updated_at)],
+                    )
+                    .await?;
+            }
+        }
+        ("personnel-photo", "delete") => {
+            let row = payload.get("personnel_photo").unwrap_or(payload);
+            let id = row
+                .get("id_unik")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(entity_key);
+            if !id.is_empty() {
+                turso
+                    .query_one(
+                        "DELETE FROM personil_foto WHERE id_unik = ?;",
+                        vec![json!(id)],
                     )
                     .await?;
             }
@@ -11300,27 +11349,29 @@ impl TursoClient {
         }))
     }
 
-    /// Foto profil siswa dari cloud, untuk perangkat yang tidak memotretnya.
+    /// Foto profil satu personil dari cloud, untuk perangkat yang belum punya
+    /// salinan lokalnya.
     ///
-    /// `siswa_foto` ada di luar `SNAPSHOT_TABLES`, jadi tidak pernah ikut ditarik
-    /// bersama snapshot — persis seperti `absensi_foto`. Perangkat yang tidak
-    /// menyimpan salinan lokalnya mengambil satu baris di sini saat dibutuhkan.
+    /// `personil_foto` ada di luar `SNAPSHOT_TABLES`, jadi tidak pernah ikut
+    /// ditarik bersama snapshot — persis seperti `absensi_foto`. Perangkat yang
+    /// tidak menyimpan salinan lokalnya mengambil satu baris di sini saat
+    /// dibutuhkan.
     ///
     /// Mengembalikan `null` bila belum ada foto, BUKAN error: kontrak gateway
-    /// (`getFotoSiswa`) bertipe nullable, dan siswa tanpa foto adalah keadaan
-    /// yang wajar, bukan kegagalan.
-    pub async fn get_student_photo(&self, id_siswa: &str) -> Result<Value, CommandError> {
+    /// (`ambilFotoPersonil`) bertipe nullable, dan personil tanpa foto adalah
+    /// keadaan yang wajar, bukan kegagalan.
+    pub async fn get_personnel_photo(&self, id_unik: &str) -> Result<Value, CommandError> {
         self.ensure_schema_current().await?;
-        let id = id_siswa.trim();
+        let id = id_unik.trim();
         if id.is_empty() || id.len() > 200 {
             return Err(CommandError::new(
                 "VALIDATION_ERROR",
-                "ID siswa tidak valid.",
+                "ID personil tidak valid.",
             ));
         }
         let Some(row) = self
             .query_one(
-                "SELECT id_siswa, COALESCE(foto_mime, 'image/jpeg') AS foto_mime, COALESCE(foto_base64, '') AS foto_base64, COALESCE(updated_at, '') AS updated_at FROM siswa_foto WHERE id_siswa = ? LIMIT 1;",
+                "SELECT id_unik, COALESCE(foto_mime, 'image/jpeg') AS foto_mime, COALESCE(foto_base64, '') AS foto_base64, COALESCE(updated_at, '') AS updated_at FROM personil_foto WHERE id_unik = ? LIMIT 1;",
                 vec![json!(id)],
             )
             .await?
@@ -11340,7 +11391,7 @@ impl TursoClient {
             return Ok(Value::Null);
         }
         Ok(json!({
-            "id_siswa": id,
+            "id_unik": id,
             "foto_mime": row.get("foto_mime").and_then(Value::as_str).unwrap_or("image/jpeg"),
             "foto_base64": base64,
             "updated_at": row.get("updated_at").and_then(Value::as_str).unwrap_or(""),

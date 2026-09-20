@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { PersonnelPhotoField } from "@/components/PersonnelPhotoField";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
@@ -1378,6 +1379,13 @@ export default function KaryawanPage() {
                 rows={2}
                 placeholder="Catatan tambahan karyawan..."
                 className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-white outline-none focus:border-sky-500"
+              />
+            </div>
+
+            <div className="pt-3 border-t border-slate-800">
+              <PersonnelPhotoField
+                idUnik={isEditing && editId ? editId : ""}
+                nama={formData.nama || "karyawan ini"}
               />
             </div>
 

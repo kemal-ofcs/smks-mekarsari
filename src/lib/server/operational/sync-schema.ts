@@ -29,11 +29,11 @@ const optionalNumber = finiteNumber.nullable().optional();
 /**
  * Batas foto profil siswa dalam karakter base64 (±500 KB).
  *
- * WAJIB sama dengan `MAX_STUDENT_PHOTO_BASE64` di `academic.rs`. Foto yang
+ * WAJIB sama dengan `MAX_PERSONNEL_PHOTO_BASE64` di `academic.rs`. Foto yang
  * lolos di perangkat tetapi ditolak di sini akan macet selamanya di outbox
  * tanpa pernah bisa berhasil — pelajaran yang sama dengan `MAX_SCAN_PHOTO_BASE64`.
  */
-export const MAX_STUDENT_PHOTO_SIZE = 512_000;
+export const MAX_PERSONNEL_PHOTO_SIZE = 512_000;
 
 /**
  * Bentuk kanonik `presensi_mapel.jam_ke` di batas sinkronisasi.
@@ -1081,21 +1081,33 @@ export const operationalSyncEventSchema = z.union([
       .strict(),
   ),
   /**
-   * Foto profil siswa yang didorong ke cloud.
+   * Foto profil SELURUH personil (guru, siswa, karyawan), berkunci
+   * `master_data.id_unik`.
    *
-   * `siswa_foto` sengaja di luar `SNAPSHOT_TABLES` supaya foto tidak ikut
-   * ditarik di setiap siklus pull — tetapi ia tetap harus DIDORONG, persis
-   * seperti `absensi_foto` yang menumpang event `attendance/scan`.
+   * `personil_foto` sengaja di luar `SNAPSHOT_TABLES` supaya foto tidak ikut
+   * ditarik di setiap siklus pull — tetapi ia tetap WAJIB DIDORONG, persis
+   * seperti `absensi_foto` yang menumpang event `attendance/scan`. Tanpa itu
+   * foto berhenti di perangkat yang mengunggahnya, dan kartu identitas yang
+   * dicetak di mesin lain kehilangan fotonya.
    */
   eventSchema(
-    "student-photo",
+    "personnel-photo",
     "save",
     z
       .object({
-        id_siswa: shortText.min(1),
+        id_unik: shortText.min(1),
         foto_mime: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
-        foto_base64: z.string().min(1).max(MAX_STUDENT_PHOTO_SIZE),
+        foto_base64: z.string().min(1).max(MAX_PERSONNEL_PHOTO_SIZE),
         updated_at: optionalShortText,
+      })
+      .strict(),
+  ),
+  eventSchema(
+    "personnel-photo",
+    "delete",
+    z
+      .object({
+        id_unik: shortText.min(1),
       })
       .strict(),
   ),
@@ -1370,16 +1382,6 @@ export const operationalSyncEventSchema = z.union([
       .strict(),
   ),
 ]);
-
-export const studentPhotoUploadSchema = z
-  .object({
-    id_siswa: shortText.min(1),
-    foto_mime: z
-      .enum(["image/jpeg", "image/png", "image/webp"])
-      .default("image/jpeg"),
-    foto_base64: z.string().min(1).max(MAX_STUDENT_PHOTO_SIZE),
-  })
-  .strict();
 
 export type OperationalSyncEvent = {
   eventId: string;

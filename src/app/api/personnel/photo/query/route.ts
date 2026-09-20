@@ -8,23 +8,23 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { getStudentPhoto } from "@/lib/services/academic";
+import { getPersonnelPhoto } from "@/lib/services/academic";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
     assertSameOriginMutation(request);
-    await requireWebPermission(request, "students.view");
+    await requireWebPermission(request, "employees.view");
     await ensureServerDatabaseInitialized();
-    const body = await readJsonBody<{ id_siswa?: string }>(request);
-    const idSiswa = body?.id_siswa?.trim();
+    const body = await readJsonBody<{ id_unik?: string }>(request);
+    const idUnik = body?.id_unik?.trim();
 
-    if (!idSiswa) {
-      throw new ApiRequestError("ID Siswa wajib disertakan.", 400);
+    if (!idUnik) {
+      throw new ApiRequestError("ID personil wajib disertakan.", 400);
     }
 
-    const photo = await getStudentPhoto(idSiswa);
+    const photo = await getPersonnelPhoto(idUnik);
     return noStoreJson(photo);
   } catch (error) {
     return toApiErrorResponse(error);

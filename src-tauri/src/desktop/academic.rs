@@ -117,14 +117,14 @@ fn ensure_scan_token(
     Ok((token, qr_code, is_new))
 }
 
-/// Batas foto profil siswa dalam karakter base64 (±500 KB).
+/// Batas foto profil personil dalam karakter base64 (±500 KB).
 ///
-/// Angkanya WAJIB sama dengan `MAX_STUDENT_PHOTO_SIZE` di `sync-schema.ts`.
+/// Angkanya WAJIB sama dengan `MAX_PERSONNEL_PHOTO_SIZE` di `sync-schema.ts`.
 /// Alasannya sama dengan `MAX_SCAN_PHOTO_BASE64`: foto yang lolos di perangkat
 /// tetapi ditolak validator di batas sinkronisasi akan macet selamanya di outbox
 /// tanpa pernah bisa berhasil. Diberi nama supaya kedua sisi tidak bisa bergeser
 /// diam-diam.
-pub const MAX_STUDENT_PHOTO_BASE64: usize = 512_000;
+pub const MAX_PERSONNEL_PHOTO_BASE64: usize = 512_000;
 
 /// Tolak nilai yang seharusnya unik, di lapisan aplikasi — bukan lewat UNIQUE.
 ///
@@ -2330,19 +2330,16 @@ pub fn get_wali_credentials_for_printing(
     )?))
 }
 
-pub fn save_student_photo(
-    state: &DesktopState,
-    id_siswa: &str,
-    foto_base64: &str,
-    foto_mime: Option<&str>,
-) -> Result<Value, CommandError> {
-    let clean_id = id_siswa.trim();
-    if clean_id.is_empty() {
-        return Err(CommandError::new(
-            "VALIDATION_ERROR",
-            "ID Siswa tidak boleh kosong.",
-        ));
-    }
+/// Validasi muatan foto personil sebelum satu byte pun menyentuh SQLite.
+///
+/// Dipisahkan supaya simpan dan seluruh pemanggilnya memakai aturan yang sama.
+/// Nilai MIME-nya WAJIB tetap identik dengan enum di `sync-schema.ts`: baris
+/// yang lolos di perangkat tetapi ditolak validator di batas sinkronisasi akan
+/// macet permanen di outbox, tanpa jalan pulih dari UI.
+fn validasi_foto_personil<'a>(
+    foto_base64: &'a str,
+    foto_mime: Option<&'a str>,
+) -> Result<(&'a str, &'a str), CommandError> {
     let clean_foto = foto_base64.trim();
     if clean_foto.is_empty() {
         return Err(CommandError::new(
@@ -2350,16 +2347,12 @@ pub fn save_student_photo(
             "Foto base64 tidak boleh kosong.",
         ));
     }
-    if clean_foto.len() > MAX_STUDENT_PHOTO_BASE64 {
+    if clean_foto.len() > MAX_PERSONNEL_PHOTO_BASE64 {
         return Err(CommandError::new(
             "VALIDATION_ERROR",
-            "Ukuran foto siswa melebihi batas 500 KB.",
+            "Ukuran foto personil melebihi batas 500 KB.",
         ));
     }
-    // Ketiga nilai ini WAJIB sama dengan enum `foto_mime` di `sync-schema.ts`.
-    // Menerima mime lain di sini berarti barisnya tersimpan mulus di perangkat
-    // lalu ditolak validator di batas sinkronisasi — event-nya macet permanen
-    // di outbox tanpa pernah bisa berhasil.
     let mime = match foto_mime.unwrap_or("image/jpeg").trim() {
         "" => "image/jpeg",
         valid @ ("image/jpeg" | "image/png" | "image/webp") => valid,
@@ -2370,6 +2363,28 @@ pub fn save_student_photo(
             ));
         }
     };
+    Ok((clean_foto, mime))
+}
+
+/// Simpan foto profil satu personil (guru, siswa, atau karyawan).
+///
+/// Berkunci `master_data.id_unik`, sehingga satu jalur ini melayani ketiga
+/// jenis personil sekaligus dan kartu identitas — yang dirender dari baris
+/// `master_data` — langsung menemukan fotonya tanpa join tambahan.
+pub fn save_personnel_photo(
+    state: &DesktopState,
+    id_unik: &str,
+    foto_base64: &str,
+    foto_mime: Option<&str>,
+) -> Result<Value, CommandError> {
+    let clean_id = id_unik.trim();
+    if clean_id.is_empty() {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "ID personil tidak boleh kosong.",
+        ));
+    }
+    let (clean_foto, mime) = validasi_foto_personil(foto_base64, foto_mime)?;
 
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
@@ -2377,33 +2392,29 @@ pub fn save_student_photo(
 
     tx.execute(
         r#"
-        INSERT INTO siswa_foto (id_siswa, foto_mime, foto_base64, updated_at)
+        INSERT INTO personil_foto (id_unik, foto_mime, foto_base64, updated_at)
         VALUES (?1, ?2, ?3, ?4)
-        ON CONFLICT(id_siswa) DO UPDATE SET
+        ON CONFLICT(id_unik) DO UPDATE SET
             foto_mime = excluded.foto_mime,
             foto_base64 = excluded.foto_base64,
             updated_at = excluded.updated_at;
         "#,
         params![clean_id, mime, clean_foto, now],
     )
-    .map_err(|e| CommandError::new("DB_ERROR", format!("Gagal menyimpan foto siswa: {e}")))?;
+    .map_err(|e| CommandError::new("DB_ERROR", format!("Gagal menyimpan foto personil: {e}")))?;
 
-    // Salinan lokal saja TIDAK CUKUP. `siswa_foto` berada di luar
-    // `SNAPSHOT_TABLES` — itu benar, karena foto tidak boleh membengkakkan tiap
-    // siklus pull — tetapi "di luar snapshot" hanya berarti tidak ikut DITARIK.
-    // Tanpa event outbox ini, foto berhenti di perangkat yang memotretnya:
-    // cloud tidak pernah menerimanya, perangkat lain tidak pernah melihatnya,
-    // dan kartu pelajar yang dicetak di tempat lain kehilangan fotonya. Sama
-    // seperti `absensi_foto` yang menumpang event `attendance/scan`.
+    // `personil_foto` di luar `SNAPSHOT_TABLES`, jadi ia tidak pernah DITARIK —
+    // tetapi tetap WAJIB DIDORONG. Tanpa event ini foto berhenti di perangkat
+    // yang mengunggahnya, dan kartu yang dicetak di mesin lain kosong fotonya.
     let client_id = sync::ensure_client_id(state)?;
     sync::enqueue(
         &tx,
         &client_id,
-        "student-photo",
+        "personnel-photo",
         "save",
         clean_id,
         &json!({
-            "id_siswa": clean_id,
+            "id_unik": clean_id,
             "foto_mime": mime,
             "foto_base64": clean_foto,
             "updated_at": now,
@@ -2412,20 +2423,25 @@ pub fn save_student_photo(
     )?;
 
     tx.commit().map_err(|_| CommandError::internal())?;
-    Ok(json!({ "sukses": true, "id_siswa": clean_id }))
+    Ok(json!({ "sukses": true, "id_unik": clean_id }))
 }
 
-pub fn get_student_photo(state: &DesktopState, id_siswa: &str) -> Result<Value, CommandError> {
+/// Foto profil satu personil dari SQLite lokal.
+///
+/// Mengembalikan `null` bila belum ada — personil tanpa foto adalah keadaan
+/// wajar, bukan kegagalan. Pemanggil yang tidak menemukannya di sini boleh
+/// mencoba cloud lewat `TursoClient::get_personnel_photo`.
+pub fn get_personnel_photo(state: &DesktopState, id_unik: &str) -> Result<Value, CommandError> {
     use rusqlite::OptionalExtension;
     let conn = storage::database(&state.data_dir)?;
     let mut stmt = conn
-        .prepare("SELECT id_siswa, foto_mime, foto_base64, updated_at FROM siswa_foto WHERE id_siswa = ?1 LIMIT 1;")
+        .prepare("SELECT id_unik, foto_mime, foto_base64, updated_at FROM personil_foto WHERE id_unik = ?1 LIMIT 1;")
         .map_err(|_| CommandError::internal())?;
 
     let row = stmt
-        .query_row(params![id_siswa], |row| {
+        .query_row(params![id_unik.trim()], |row| {
             Ok(json!({
-                "id_siswa": row.get::<_, String>(0)?,
+                "id_unik": row.get::<_, String>(0)?,
                 "foto_mime": row.get::<_, String>(1)?,
                 "foto_base64": row.get::<_, String>(2)?,
                 "updated_at": row.get::<_, String>(3)?,
@@ -2435,6 +2451,44 @@ pub fn get_student_photo(state: &DesktopState, id_siswa: &str) -> Result<Value, 
         .map_err(|_| CommandError::internal())?;
 
     Ok(json!(row))
+}
+
+/// Hapus foto profil satu personil, lokal dan cloud.
+///
+/// Menghapus baris yang tidak ada BUKAN error: dua perangkat boleh menghapus
+/// foto yang sama saat offline, dan menolak yang kedua akan memacetkan
+/// outbox-nya secara permanen.
+pub fn delete_personnel_photo(state: &DesktopState, id_unik: &str) -> Result<Value, CommandError> {
+    let clean_id = id_unik.trim();
+    if clean_id.is_empty() {
+        return Err(CommandError::new(
+            "VALIDATION_ERROR",
+            "ID personil tidak boleh kosong.",
+        ));
+    }
+
+    let mut conn = storage::database(&state.data_dir)?;
+    let tx = conn.transaction().map_err(|_| CommandError::internal())?;
+
+    tx.execute(
+        "DELETE FROM personil_foto WHERE id_unik = ?1;",
+        params![clean_id],
+    )
+    .map_err(|e| CommandError::new("DB_ERROR", format!("Gagal menghapus foto personil: {e}")))?;
+
+    let client_id = sync::ensure_client_id(state)?;
+    sync::enqueue(
+        &tx,
+        &client_id,
+        "personnel-photo",
+        "delete",
+        clean_id,
+        &json!({ "id_unik": clean_id }),
+        None,
+    )?;
+
+    tx.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true, "id_unik": clean_id }))
 }
 
 #[cfg(test)]
@@ -2580,14 +2634,14 @@ mod tests {
         assert_eq!(shift_of(&state, &id), 2);
     }
 
-    /// Batas foto siswa WAJIB sama dengan `MAX_STUDENT_PHOTO_SIZE` di
+    /// Batas foto siswa WAJIB sama dengan `MAX_PERSONNEL_PHOTO_SIZE` di
     /// `sync-schema.ts`. Foto yang lolos di perangkat tetapi ditolak validator
     /// di batas sinkronisasi akan macet selamanya di outbox.
     #[test]
     fn batas_foto_siswa_sepadan_dengan_validator_sync() {
         assert_eq!(
-            MAX_STUDENT_PHOTO_BASE64, 512_000,
-            "ubah bersamaan dengan MAX_STUDENT_PHOTO_SIZE di sync-schema.ts"
+            MAX_PERSONNEL_PHOTO_BASE64, 512_000,
+            "ubah bersamaan dengan MAX_PERSONNEL_PHOTO_SIZE di sync-schema.ts"
         );
     }
 }

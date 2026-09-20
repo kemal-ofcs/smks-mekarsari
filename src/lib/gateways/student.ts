@@ -81,42 +81,10 @@ export async function hapusSiswa(id: string) {
   });
 }
 
-export async function simpanFotoSiswa(
-  idSiswa: string,
-  fotoBase64: string,
-  fotoMime = "image/jpeg",
-) {
-  if (isDesktopRuntime()) {
-    return invokeDesktop<{ sukses: boolean; id_siswa: string }>(
-      "desktop_save_student_photo",
-      { idSiswa, fotoBase64, fotoMime },
-    );
-  }
-  return requestWebApi<{ sukses: boolean; id_siswa: string }>(
-    "/api/academic/students/photo/upload",
-    "POST",
-    { id_siswa: idSiswa, foto_base64: fotoBase64, foto_mime: fotoMime },
-  );
-}
-
-export async function getFotoSiswa(idSiswa: string) {
-  if (isDesktopRuntime()) {
-    return invokeDesktop<{
-      id_siswa: string;
-      foto_mime: string;
-      foto_base64: string;
-      updated_at: string;
-    } | null>("desktop_get_student_photo", { idSiswa });
-  }
-  return requestWebApi<{
-    id_siswa: string;
-    foto_mime: string;
-    foto_base64: string;
-    updated_at: string;
-  } | null>("/api/academic/students/photo/query", "POST", {
-    id_siswa: idSiswa,
-  });
-}
+// Foto siswa kini dilayani `@/lib/gateways/personnel-photo`, yang berkunci
+// `master_data.id_unik` sehingga satu jalur melayani guru, siswa, dan karyawan
+// sekaligus. Jalur `siswa_foto` yang lama dibongkar: ia tidak pernah punya satu
+// pun pemanggil UI dan tabelnya tidak pernah berisi satu baris pun.
 
 export async function backfillKartuPelajar() {
   if (isDesktopRuntime()) {

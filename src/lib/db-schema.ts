@@ -2,7 +2,7 @@ import type { Client } from "@libsql/client";
 import { BRANDING } from "@/lib/constants/branding";
 import { runDatabaseMigrations } from "./db-migrations";
 
-export const CURRENT_SCHEMA_VERSION = 31;
+export const CURRENT_SCHEMA_VERSION = 32;
 export const REQUIRED_TABLE_COUNT = 65;
 
 export async function isDatabaseSchemaReady(client: Client) {
@@ -30,7 +30,7 @@ export async function isDatabaseSchemaReady(client: Client) {
             'akademik_mapel', 'akademik_guru_mapel', 'akademik_jam_pelajaran',
             'jadwal_mengajar', 'guru_data', 'siswa_data',
             'presensi_mapel', 'presensi_mapel_detail',
-            'jurnal_mengajar', 'leger_kehadiran', 'siswa_foto',
+            'jurnal_mengajar', 'leger_kehadiran', 'personil_foto',
             'notifikasi_wa', 'app_wa_config', 'bk_kasus', 'bk_sesi',
             'pmb_gelombang', 'pmb_pendaftar', 'pmb_berkas',
             'wali_otp', 'wali_session', 'wali_kredensial',

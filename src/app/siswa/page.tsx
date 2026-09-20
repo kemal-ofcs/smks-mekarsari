@@ -4,6 +4,7 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { PersonnelPhotoField } from "@/components/PersonnelPhotoField";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
@@ -1272,6 +1273,13 @@ export default function SiswaPage() {
                     setFormData({ ...formData, alamat: e.target.value })
                   }
                   className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="border-t border-white/10 pt-4">
+                <PersonnelPhotoField
+                  idUnik={isEditing ? (formData.id_siswa ?? "") : ""}
+                  nama={formData.nama_lengkap || "siswa ini"}
                 />
               </div>
 

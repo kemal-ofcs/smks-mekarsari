@@ -371,47 +371,88 @@ export async function backfillMissingIdCards() {
   return { sukses: true, total_inserted: result.rowsAffected };
 }
 
-export async function saveStudentPhoto(data: {
-  id_siswa: string;
+/** Batas base64 foto personil. Sama dengan `MAX_PERSONNEL_PHOTO_BASE64` di Rust. */
+const MAX_PERSONNEL_PHOTO_BASE64 = 512_000;
+
+/**
+ * MIME yang diterima. WAJIB identik dengan enum `foto_mime` di `sync-schema.ts`
+ * dan dengan `validasi_foto_personil` di `academic.rs` — satu sisi yang lebih
+ * longgar akan menerima baris yang sisi lain tolak selamanya.
+ */
+const PERSONNEL_PHOTO_MIMES = ["image/jpeg", "image/png", "image/webp"];
+
+/**
+ * Simpan foto profil satu personil (guru, siswa, atau karyawan).
+ *
+ * Berkunci `master_data.id_unik`. Lihat `personil_foto` di `storage.rs` untuk
+ * alasan tabel terpisah alih-alih kolom di `master_data`.
+ */
+export async function savePersonnelPhoto(data: {
+  id_unik: string;
   foto_base64: string;
   foto_mime?: string;
 }) {
   await ensureDbInitialized();
-  const idSiswa = data.id_siswa.trim();
+  const idUnik = data.id_unik.trim();
   const fotoBase64 = data.foto_base64.trim();
-  if (!idSiswa || !fotoBase64) {
-    throw new ApiRequestError("ID Siswa dan foto wajib diisi.", 400);
+  if (!idUnik || !fotoBase64) {
+    throw new ApiRequestError("ID personil dan foto wajib diisi.", 400);
   }
-  if (fotoBase64.length > 512_000) {
+  if (fotoBase64.length > MAX_PERSONNEL_PHOTO_BASE64) {
     throw new ApiRequestError("Ukuran foto melebihi batas 500 KB.", 400);
   }
-  const mime = (data.foto_mime || "image/jpeg").trim();
+  const mime = (data.foto_mime || "image/jpeg").trim() || "image/jpeg";
+  if (!PERSONNEL_PHOTO_MIMES.includes(mime)) {
+    throw new ApiRequestError(
+      `Format foto '${mime}' tidak didukung. Gunakan JPEG, PNG, atau WebP.`,
+      400,
+    );
+  }
   await db.execute({
     sql: `
-      INSERT INTO siswa_foto (id_siswa, foto_mime, foto_base64, updated_at)
+      INSERT INTO personil_foto (id_unik, foto_mime, foto_base64, updated_at)
       VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(id_siswa) DO UPDATE SET
+      ON CONFLICT(id_unik) DO UPDATE SET
         foto_mime = excluded.foto_mime,
         foto_base64 = excluded.foto_base64,
         updated_at = excluded.updated_at;
     `,
-    args: [idSiswa, mime, fotoBase64],
+    args: [idUnik, mime, fotoBase64],
   });
-  return { sukses: true, id_siswa: idSiswa };
+  return { sukses: true, id_unik: idUnik };
 }
 
-export async function getStudentPhoto(idSiswa: string) {
+export async function getPersonnelPhoto(idUnik: string) {
   await ensureDbInitialized();
   const result = await db.execute({
-    sql: "SELECT id_siswa, foto_mime, foto_base64, updated_at FROM siswa_foto WHERE id_siswa = ? LIMIT 1;",
-    args: [idSiswa],
+    sql: "SELECT id_unik, foto_mime, foto_base64, updated_at FROM personil_foto WHERE id_unik = ? LIMIT 1;",
+    args: [idUnik],
   });
   if (result.rows.length === 0) return null;
   const row = result.rows[0];
   return {
-    id_siswa: String(row.id_siswa),
+    id_unik: String(row.id_unik),
     foto_mime: String(row.foto_mime),
     foto_base64: String(row.foto_base64),
     updated_at: String(row.updated_at),
   };
+}
+
+/**
+ * Hapus foto profil satu personil.
+ *
+ * Baris yang memang tidak ada BUKAN error — sama seperti sisi Rust-nya, supaya
+ * dua penghapusan atas foto yang sama tidak berakhir sebagai kegagalan.
+ */
+export async function deletePersonnelPhoto(idUnik: string) {
+  await ensureDbInitialized();
+  const clean = idUnik.trim();
+  if (!clean) {
+    throw new ApiRequestError("ID personil wajib disertakan.", 400);
+  }
+  await db.execute({
+    sql: "DELETE FROM personil_foto WHERE id_unik = ?;",
+    args: [clean],
+  });
+  return { sukses: true, id_unik: clean };
 }

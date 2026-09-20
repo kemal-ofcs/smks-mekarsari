@@ -35,6 +35,7 @@ const GRADES_MIGRATION_VERSION = 28;
 const ACADEMIC_UNIT_MIGRATION_VERSION = 29;
 const WALI_KREDENSIAL_MIGRATION_VERSION = 30;
 const CMS_LANDING_PAGE_MIGRATION_VERSION = 31;
+const PERSONNEL_PHOTO_MIGRATION_VERSION = 32;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -1336,14 +1337,24 @@ export async function runDatabaseMigrations(client: Client) {
     );
   `);
 
+  // v32 — foto profil seluruh personil, berkunci `master_data.id_unik`.
+  // Cerminan DDL Rust di `storage.rs`/`turso.rs`; alasan lengkapnya di sana.
   await client.execute(`
-    CREATE TABLE IF NOT EXISTS siswa_foto (
-      id_siswa TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS personil_foto (
+      id_unik TEXT PRIMARY KEY,
       foto_mime TEXT NOT NULL DEFAULT 'image/jpeg',
       foto_base64 TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `);
+
+  // Baris versi WAJIB dicatat: `isDatabaseSchemaReady` membandingkan
+  // MAX(version) dengan CURRENT_SCHEMA_VERSION.
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'personnel-photo', ?);`,
+    args: [PERSONNEL_PHOTO_MIGRATION_VERSION, now],
+  });
 
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_jurnal_presensi ON jurnal_mengajar(id_presensi_mapel);",

@@ -36,6 +36,7 @@ import {
   getIdCardTemplate,
   saveIdCardTemplate,
 } from "@/lib/gateways/id-card-template";
+import { ambilFotoPersonil } from "@/lib/gateways/personnel-photo";
 import { backfillKartuPelajar } from "@/lib/gateways/student";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
@@ -531,6 +532,50 @@ export default function IdCardsPage() {
     }
   };
 
+  /**
+   * Lengkapi satu baris personil dengan `avatar_url` dari `personil_foto`.
+   *
+   * Renderer kartu sudah lama mendukung elemen `photo|employee.avatar` dan
+   * membacanya dari `employee.avatar_url`, tetapi tidak ada satu pun sumber
+   * yang pernah mengisi field itu — elemennya selalu tergambar kosong. Di
+   * sinilah isinya datang.
+   *
+   * Dibungkus di satu tempat, bukan disebar ke tiap titik render, supaya kartu
+   * depan dan belakang orang yang sama tidak mengambil foto dua kali; cache-nya
+   * hidup selama halaman terbuka. Kegagalan mengambil foto BUKAN error: kartu
+   * tetap harus bisa dicetak tanpa fotonya, persis seperti yang sudah berlaku
+   * pada logo dan tanda tangan.
+   */
+  const avatarCacheRef = useRef(new Map<string, string | null>());
+  const renderKartu = useCallback(
+    async (args: Parameters<typeof renderIdCardSideToCanvas>[0]) => {
+      const row = args.employee as Record<string, unknown>;
+      const id = String(row?.id_unik ?? "").trim();
+      if (!id) return renderIdCardSideToCanvas(args);
+
+      const cache = avatarCacheRef.current;
+      if (!cache.has(id)) {
+        try {
+          const foto = await ambilFotoPersonil(id);
+          cache.set(
+            id,
+            foto?.foto_base64
+              ? `data:${foto.foto_mime || "image/jpeg"};base64,${foto.foto_base64.replace(/^data:[^,]+,/, "")}`
+              : null,
+          );
+        } catch {
+          cache.set(id, null);
+        }
+      }
+
+      const avatar = cache.get(id) ?? null;
+      return renderIdCardSideToCanvas(
+        avatar ? { ...args, employee: { ...row, avatar_url: avatar } } : args,
+      );
+    },
+    [],
+  );
+
   // Render preview when modal opens
   useEffect(() => {
     if (!previewEmployee || !template) return;
@@ -539,13 +584,13 @@ export default function IdCardsPage() {
     const empTpl = resolveTemplateForEmployee(previewEmployee);
 
     Promise.all([
-      renderIdCardSideToCanvas({
+      renderKartu({
         template: empTpl,
         side: "front",
         employee: previewEmployee,
         company: companyProfile,
       }),
-      renderIdCardSideToCanvas({
+      renderKartu({
         template: empTpl,
         side: "back",
         employee: previewEmployee,
@@ -572,7 +617,13 @@ export default function IdCardsPage() {
     return () => {
       cancelled = true;
     };
-  }, [previewEmployee, template, companyProfile, resolveTemplateForEmployee]);
+  }, [
+    previewEmployee,
+    template,
+    companyProfile,
+    resolveTemplateForEmployee,
+    renderKartu,
+  ]);
 
   // Set default filename when preview employee opens
   useEffect(() => {
@@ -655,7 +706,7 @@ export default function IdCardsPage() {
     setWorkingId(id);
     isSubmittingRef.current = true;
     try {
-      const pngUrl = await renderIdCardSideToCanvas({
+      const pngUrl = await renderKartu({
         template,
         side,
         employee: row,
@@ -748,7 +799,7 @@ export default function IdCardsPage() {
       for (const row of printTargetRows) {
         let frontPng = "";
         if (needFront) {
-          frontPng = await renderIdCardSideToCanvas({
+          frontPng = await renderKartu({
             template,
             side: "front",
             employee: row,
@@ -758,7 +809,7 @@ export default function IdCardsPage() {
 
         let backPng: string | undefined;
         if (needBack) {
-          backPng = await renderIdCardSideToCanvas({
+          backPng = await renderKartu({
             template,
             side: "back",
             employee: row,

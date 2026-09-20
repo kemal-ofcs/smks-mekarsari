@@ -105,6 +105,10 @@ describe("dynamic RBAC migration", () => {
       // v31 — CMS landing page: tabel `berita` dan `konten_publik` (cloud-only)
       // untuk pengelolaan konten dan artikel sekolah di situs publik.
       31,
+      // v32 — foto profil personil: tabel `personil_foto` berkunci
+      // `master_data.id_unik`, melayani guru, siswa, dan karyawan sekaligus
+      // serta mengisi elemen foto pada kartu identitas.
+      32,
     ]);
 
     const sessionColumns = await client.execute(

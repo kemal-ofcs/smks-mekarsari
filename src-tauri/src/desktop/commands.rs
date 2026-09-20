@@ -2873,36 +2873,42 @@ pub fn desktop_backfill_id_cards(state: State<'_, DesktopState>) -> Result<Value
     academic::backfill_missing_id_cards(&state)
 }
 
+/// Simpan foto profil satu personil (guru, siswa, atau karyawan).
+///
+/// Izinnya `employees.manage`, bukan `students.manage`: perintah ini menyentuh
+/// SELURUH baris `master_data` tanpa membedakan jenis personil, jadi izin
+/// domain siswa di sini akan menjadi celah eskalasi hak akses — alasan yang
+/// sama persis dengan `desktop_backfill_id_cards` di atas.
 #[tauri::command]
-pub fn desktop_save_student_photo(
+pub fn desktop_save_personnel_photo(
     state: State<'_, DesktopState>,
-    id_siswa: String,
+    id_unik: String,
     foto_base64: String,
     foto_mime: Option<String>,
 ) -> Result<Value, CommandError> {
-    require_permission(&state, "students.manage")?;
-    academic::save_student_photo(&state, &id_siswa, &foto_base64, foto_mime.as_deref())
+    require_permission(&state, "employees.manage")?;
+    academic::save_personnel_photo(&state, &id_unik, &foto_base64, foto_mime.as_deref())
 }
 
-/// Foto profil siswa: salinan lokal lebih dulu, cloud sebagai cadangan.
+/// Foto profil personil: salinan lokal lebih dulu, cloud sebagai cadangan.
 ///
-/// Urutannya disengaja. `siswa_foto` tidak ikut ditarik bersama snapshot, jadi
-/// perangkat yang tidak memotret siswa itu memang tidak memilikinya secara
-/// lokal — dan tanpa cadangan cloud, kartu pelajarnya tercetak tanpa foto.
+/// Urutannya disengaja. `personil_foto` tidak ikut ditarik bersama snapshot,
+/// jadi perangkat yang tidak mengunggah foto itu memang tidak memilikinya
+/// secara lokal — dan tanpa cadangan cloud, kartunya tercetak tanpa foto.
 /// Sebaliknya, mendahulukan lokal membuat perangkat yang sudah punya salinannya
 /// tetap bisa mencetak kartu saat jaringan mati, sesuai janji offline-first.
 ///
 /// Kegagalan menjangkau cloud diperlakukan sebagai "belum ada foto", bukan
-/// error: siswa tanpa foto adalah keadaan wajar, dan kartu tetap harus bisa
+/// error: personil tanpa foto adalah keadaan wajar, dan kartu tetap harus bisa
 /// dicetak tanpa fotonya.
 #[tauri::command]
-pub async fn desktop_get_student_photo(
+pub async fn desktop_get_personnel_photo(
     state: State<'_, DesktopState>,
-    id_siswa: String,
+    id_unik: String,
 ) -> Result<Value, CommandError> {
-    require_permission(&state, "students.view")?;
+    require_permission(&state, "employees.view")?;
 
-    let local = academic::get_student_photo(&state, &id_siswa)?;
+    let local = academic::get_personnel_photo(&state, &id_unik)?;
     if !local.is_null() {
         return Ok(local);
     }
@@ -2911,9 +2917,19 @@ pub async fn desktop_get_student_photo(
         return Ok(Value::Null);
     };
     Ok(client
-        .get_student_photo(&id_siswa)
+        .get_personnel_photo(&id_unik)
         .await
         .unwrap_or(Value::Null))
+}
+
+/// Hapus foto profil satu personil.
+#[tauri::command]
+pub fn desktop_delete_personnel_photo(
+    state: State<'_, DesktopState>,
+    id_unik: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "employees.manage")?;
+    academic::delete_personnel_photo(&state, &id_unik)
 }
 
 /// Mengambil metrik analitik kehadiran komprehensif untuk Dasbor Audit Kehadiran.

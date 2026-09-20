@@ -220,6 +220,11 @@ export async function saveArticle(
   const isi = teksWajib(draft.isi, "Isi artikel wajib diisi.");
 
   const status = draft.status === "Terbit" ? "Terbit" : "Draft";
+  // Kunci yang TIDAK DIKIRIM berarti "jangan sentuh sampulnya"; kunci yang
+  // dikirim bernilai null/kosong berarti "hapus sampulnya". Cerminan
+  // `gambar_dikirim` di `turso.rs` — keduanya WAJIB sepakat, karena satu baris
+  // yang sama bisa ditulis Web hari ini dan Desktop besok.
+  const gambarDikirim = draft.gambarSampul !== undefined;
   const gambarSampul = validasiGambarSampul(draft.gambarSampul);
   const penulis = draft.penulis?.trim() || null;
   const tanggalTerbit =
@@ -258,7 +263,7 @@ export async function saveArticle(
         slug = excluded.slug,
         ringkasan = excluded.ringkasan,
         isi = excluded.isi,
-        gambar_sampul = excluded.gambar_sampul,
+        ${gambarDikirim ? "gambar_sampul = excluded.gambar_sampul," : ""}
         status = excluded.status,
         tanggal_terbit = excluded.tanggal_terbit,
         penulis = excluded.penulis,
