@@ -294,6 +294,8 @@ export async function hapusLogScan(
     args: [idKaryawan, tanggalKerja, tanggalKerja, tanggalKerja],
   });
 
+  let deletedAbsensiIdSesi: string | null = null;
+
   if (absRes.rows.length > 0) {
     const abs = absRes.rows[0] as Record<string, unknown>;
     const idSesi = String(abs.id_sesi);
@@ -303,12 +305,17 @@ export async function hapusLogScan(
         sql: "DELETE FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day'));",
         args: [idKaryawan, tanggalKerja, tanggalKerja],
       });
+      deletedAbsensiIdSesi = idSesi;
     } else {
       const inLog = remainRes.rows.find(
-        (r) => String(r.jenis_scan) === "Masuk",
+        (r) =>
+          String(r.jenis_scan) === "Masuk" &&
+          String(r.status_proses || "Berhasil") === "Berhasil",
       );
       const outLog = remainRes.rows.find(
-        (r) => String(r.jenis_scan) === "Pulang",
+        (r) =>
+          String(r.jenis_scan) === "Pulang" &&
+          String(r.status_proses || "Berhasil") === "Berhasil",
       );
 
       const existingIn = String(abs.jam_masuk || "");
@@ -334,68 +341,77 @@ export async function hapusLogScan(
             ? formatDateTime(tanggalKerja, String(outLog.jam_scan))
             : existingOut;
 
-      const statusAbsen =
-        inVal && outVal
-          ? "Lengkap"
-          : inVal
-            ? "Belum Pulang"
-            : "Perlu Verifikasi";
+      if (!inVal && !outVal) {
+        await db.execute({
+          sql: "DELETE FROM absensi_harian WHERE id_sesi = ?;",
+          args: [idSesi],
+        });
+        deletedAbsensiIdSesi = idSesi;
+      } else {
+        const statusAbsen =
+          inVal && outVal
+            ? "Lengkap"
+            : inVal
+              ? "Belum Pulang"
+              : "Perlu Verifikasi";
 
-      const idShift = Number(abs.id_shift || 1);
-      const shiftRes = await db.execute({
-        sql: "SELECT jam_masuk, jam_pulang, jam_kerja_normal_menit, istirahat_menit, offset_istirahat_mulai FROM tbl_shift WHERE id_shift = ? LIMIT 1;",
-        args: [idShift],
-      });
-      const aturanShift = aturanShiftDariBaris(
-        shiftRes.rows[0] as Record<string, unknown> | undefined,
-      );
+        const idShift = Number(abs.id_shift || 1);
+        const shiftRes = await db.execute({
+          sql: "SELECT jam_masuk, jam_pulang, jam_kerja_normal_menit, istirahat_menit, offset_istirahat_mulai FROM tbl_shift WHERE id_shift = ? LIMIT 1;",
+          args: [idShift],
+        });
+        const aturanShift = aturanShiftDariBaris(
+          shiftRes.rows[0] as Record<string, unknown> | undefined,
+        );
 
-      const inMin = inVal ? parseTimeToMinutes(inVal) : null;
-      const outMin = outVal ? parseTimeToMinutes(outVal) : null;
-      let duration: number | null = null;
-      if (inMin !== null && outMin !== null) {
-        duration = outMin - inMin;
-        if (duration < 0) {
-          duration += 1440;
+        const inMin = inVal ? parseTimeToMinutes(inVal) : null;
+        const outMin = outVal ? parseTimeToMinutes(outVal) : null;
+        let duration: number | null = null;
+        if (inMin !== null && outMin !== null) {
+          duration = outMin - inMin;
+          if (duration < 0) {
+            duration += 1440;
+          }
         }
+
+        const hasil = hitungUlangAbsensiDariJam({
+          masukMenit: inMin,
+          durasiMenit: duration,
+          shift: aturanShift,
+        });
+        // Log Pulang yang dihapus tidak mengubah kapan karyawannya masuk, jadi
+        // terlambat/datang awal yang sudah tercatat dipertahankan.
+        const pertahankanMasuk =
+          jenisScanDeleted === "Pulang" && Boolean(inVal);
+        const calculatedLate = pertahankanMasuk
+          ? existingLate
+          : hasil.menitTerlambat;
+        const calculatedEarly = pertahankanMasuk
+          ? existingEarly
+          : hasil.menitDatangAwal;
+        const calculatedWork = hasil.jamKerja;
+        const calculatedOvertime = hasil.lembur;
+        const calculatedShortage = hasil.jamKerjaKurang;
+
+        await db.execute({
+          sql: `UPDATE absensi_harian SET
+                jam_masuk = ?, jam_pulang = ?, status_absen = ?, update_terakhir = ?,
+                menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ?
+                WHERE id_sesi = ?;`,
+          args: [
+            inVal,
+            outVal,
+            statusAbsen,
+            nowStr,
+            calculatedLate,
+            calculatedEarly,
+            calculatedWork,
+            calculatedOvertime,
+            calculatedShortage,
+            idSesi,
+          ],
+        });
       }
-
-      const hasil = hitungUlangAbsensiDariJam({
-        masukMenit: inMin,
-        durasiMenit: duration,
-        shift: aturanShift,
-      });
-      // Log Pulang yang dihapus tidak mengubah kapan karyawannya masuk, jadi
-      // terlambat/datang awal yang sudah tercatat dipertahankan.
-      const pertahankanMasuk = jenisScanDeleted === "Pulang" && Boolean(inVal);
-      const calculatedLate = pertahankanMasuk
-        ? existingLate
-        : hasil.menitTerlambat;
-      const calculatedEarly = pertahankanMasuk
-        ? existingEarly
-        : hasil.menitDatangAwal;
-      const calculatedWork = hasil.jamKerja;
-      const calculatedOvertime = hasil.lembur;
-      const calculatedShortage = hasil.jamKerjaKurang;
-
-      await db.execute({
-        sql: `UPDATE absensi_harian SET
-              jam_masuk = ?, jam_pulang = ?, status_absen = ?, update_terakhir = ?,
-              menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ?
-              WHERE id_sesi = ?;`,
-        args: [
-          inVal,
-          outVal,
-          statusAbsen,
-          nowStr,
-          calculatedLate,
-          calculatedEarly,
-          calculatedWork,
-          calculatedOvertime,
-          calculatedShortage,
-          idSesi,
-        ],
-      });
     }
   }
 
@@ -447,6 +463,7 @@ export async function hapusLogScan(
   return {
     sukses: true,
     pesan: "Log scan berhasil dihapus dan absensi telah diperbarui.",
+    deletedAbsensiIdSesi,
   };
 }
 

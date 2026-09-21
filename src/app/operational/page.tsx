@@ -12,6 +12,7 @@ import {
   batalkanPenugasanBackup,
   buatPenugasanBackup,
   getDaftarBackup,
+  hapusPenugasanBackup,
 } from "@/lib/gateways/backup";
 import {
   getDaftarKoreksi,
@@ -58,7 +59,7 @@ export default function OperationalPage() {
   } | null>(null);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
-    type?: "correction" | "import";
+    type?: "correction" | "import" | "backup";
     idReferensi: string;
     title: string;
     subtitle: string;
@@ -76,6 +77,12 @@ export default function OperationalPage() {
           tone: result.sukses ? "success" : "error",
           text: result.pesan,
         });
+      } else if (deleteConfirm.type === "backup") {
+        const result = await hapusPenugasanBackup(deleteConfirm.idReferensi);
+        setFeedback({
+          tone: result.sukses ? "success" : "error",
+          text: result.pesan,
+        });
       } else {
         const result = await hapusKoreksiAdmin(deleteConfirm.idReferensi);
         setFeedback({
@@ -85,7 +92,11 @@ export default function OperationalPage() {
       }
       setDeleteConfirm(null);
       await load(
-        deleteConfirm.type === "import" ? "import" : "correction",
+        deleteConfirm.type === "import"
+          ? "import"
+          : deleteConfirm.type === "backup"
+            ? "backup"
+            : "correction",
         false,
         false,
       );
@@ -1264,29 +1275,51 @@ export default function OperationalPage() {
                       </span>
                     </td>
                     <td className="p-2.5">
-                      {item.status_tugas === "Aktif" &&
-                      hasPermission(user, "backups.manage") ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            run(async () => {
-                              const result = await batalkanPenugasanBackup(
-                                String(item.id_backup),
-                              );
-                              setFeedback({
-                                tone: result.sukses ? "success" : "error",
-                                text: result.pesan,
-                              });
-                              load();
-                            })
-                          }
-                          className="px-2.5 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px]"
-                        >
-                          Batalkan
-                        </button>
-                      ) : (
-                        "-"
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {item.status_tugas === "Aktif" &&
+                        hasPermission(user, "backups.manage") ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              run(async () => {
+                                const result = await batalkanPenugasanBackup(
+                                  String(item.id_backup),
+                                );
+                                setFeedback({
+                                  tone: result.sukses ? "success" : "error",
+                                  text: result.pesan,
+                                });
+                                load();
+                              })
+                            }
+                            className="px-2.5 py-1 rounded bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-300 text-[11px]"
+                          >
+                            Batalkan
+                          </button>
+                        ) : null}
+                        {hasPermission(user, "backups.manage") ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDeleteConfirm({
+                                type: "backup",
+                                idReferensi: String(item.id_backup || ""),
+                                title: `Hapus Backup: ${item.id_backup}`,
+                                subtitle: `${item.nama_karyawan_pengganti} (${item.id_karyawan_pengganti}) menggantikan ${item.nama_karyawan_asal} (${item.id_karyawan_asal}) pada ${item.tanggal_tugas}`,
+                              })
+                            }
+                            className="px-2.5 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold transition flex items-center gap-1"
+                            title="Hapus baris backup ini"
+                          >
+                            <span>🗑️</span>
+                            <span>Hapus</span>
+                          </button>
+                        ) : null}
+                        {!hasPermission(user, "backups.manage") &&
+                        item.status_tugas !== "Aktif" ? (
+                          <span>-</span>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1462,7 +1495,7 @@ export default function OperationalPage() {
         <Modal
           isOpen
           onClose={() => setDeleteConfirm(null)}
-          title={`Konfirmasi Hapus ${deleteConfirm.type === "import" ? "Import Manual" : "Koreksi"}`}
+          title={`Konfirmasi Hapus ${deleteConfirm.type === "import" ? "Import Manual" : deleteConfirm.type === "backup" ? "Penugasan Backup" : "Koreksi"}`}
           subtitle={deleteConfirm.title}
           maxWidth="max-w-md"
           footer={
@@ -1491,7 +1524,11 @@ export default function OperationalPage() {
                     <span>🗑️</span>
                     <span>
                       Ya, Hapus{" "}
-                      {deleteConfirm.type === "import" ? "Import" : "Koreksi"}
+                      {deleteConfirm.type === "import"
+                        ? "Import"
+                        : deleteConfirm.type === "backup"
+                          ? "Backup"
+                          : "Koreksi"}
                     </span>
                   </>
                 )}
@@ -1503,10 +1540,9 @@ export default function OperationalPage() {
             <div className="bg-slate-950/60 p-3.5 rounded-2xl border border-slate-800 text-xs font-mono text-slate-300 space-y-1">
               <p>{deleteConfirm.subtitle}</p>
               <p className="text-amber-400 text-[11px] pt-1">
-                Menghapus{" "}
-                {deleteConfirm.type === "import" ? "rekaman import" : "koreksi"}{" "}
-                akan membatalkan efeknya pada absensi harian dan mencatat jejak
-                audit operator.
+                {deleteConfirm.type === "backup"
+                  ? "Menghapus data penugasan backup akan menghapus riwayat penugasan ini secara permanen dan menyelaraskan kembali status backup karyawan jika tidak ada penugasan aktif lainnya."
+                  : `Menghapus ${deleteConfirm.type === "import" ? "rekaman import" : "koreksi"} akan membatalkan efeknya pada absensi harian dan mencatat jejak audit operator.`}
               </p>
             </div>
           </div>

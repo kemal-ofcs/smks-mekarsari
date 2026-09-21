@@ -459,12 +459,22 @@ export default function SettingsPage() {
       const conflictItems = await getSyncConflicts();
       setSyncStatus(status);
       setConflicts(conflictItems);
-      if (synchronize)
-        setFeedback({
-          type: "success",
-          message:
-            "Sinkronisasi berhasil: event lokal terkirim dan snapshot server diterapkan ke database Desktop.",
-        });
+      if (synchronize) {
+        if (status?.pushError) {
+          setAutoSyncError(status.pushError);
+          setFeedback({
+            type: "error",
+            message: `Data cloud berhasil ditarik, tetapi antrean kirim gagal: ${status.pushError}`,
+          });
+        } else {
+          setAutoSyncError(null);
+          setFeedback({
+            type: "success",
+            message:
+              "Sinkronisasi berhasil: event lokal terkirim dan snapshot server diterapkan ke database Desktop.",
+          });
+        }
+      }
     } catch (error) {
       try {
         const [currentStatus, currentConflicts] = await Promise.all([
@@ -476,12 +486,14 @@ export default function SettingsPage() {
       } catch {
         // Pesan utama tetap berasal dari kegagalan sinkronisasi.
       }
+      const errorMsg =
+        error instanceof Error
+          ? error.message
+          : "Status sinkronisasi tidak dapat dibaca.";
+      setAutoSyncError(errorMsg);
       setFeedback({
         type: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Status sinkronisasi tidak dapat dibaca.",
+        message: errorMsg,
       });
     } finally {
       setSyncBusy(false);
@@ -494,15 +506,26 @@ export default function SettingsPage() {
       const status = await retryFailedSync();
       setSyncStatus(status);
       setConflicts(await getSyncConflicts());
-      setFeedback({
-        type: "success",
-        message: "Antrean gagal sudah dicoba ulang.",
-      });
+      if (status?.pushError) {
+        setAutoSyncError(status.pushError);
+        setFeedback({
+          type: "error",
+          message: `Data cloud berhasil ditarik, tetapi antrean kirim gagal: ${status.pushError}`,
+        });
+      } else {
+        setAutoSyncError(null);
+        setFeedback({
+          type: "success",
+          message: "Antrean gagal sudah dicoba ulang dan tersinkronisasi.",
+        });
+      }
     } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : "Retry sinkronisasi gagal.";
+      setAutoSyncError(errorMsg);
       setFeedback({
         type: "error",
-        message:
-          error instanceof Error ? error.message : "Retry sinkronisasi gagal.",
+        message: errorMsg,
       });
     } finally {
       setSyncBusy(false);

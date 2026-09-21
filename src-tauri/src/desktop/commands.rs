@@ -1562,6 +1562,15 @@ pub fn desktop_cancel_backup(
 }
 
 #[tauri::command]
+pub fn desktop_delete_backup(
+    state: State<'_, DesktopState>,
+    id_backup: String,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "backups.manage")?;
+    administration::delete_backup(&state, &id_backup, &operator.kode_operator)
+}
+
+#[tauri::command]
 pub fn desktop_delete_correction(
     state: State<'_, DesktopState>,
     id_referensi: String,

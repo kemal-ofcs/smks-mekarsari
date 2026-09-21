@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "@/components/ui/Icon";
 import { hasPermission } from "@/lib/auth/access";
 import type { useAuth } from "@/lib/context/AuthContext";
 import type { SyncConflict, SyncStatus } from "@/lib/gateways/sync-status";
@@ -132,13 +133,18 @@ export function SinkronisasiDesktopCard({
         </div>
       </div>
 
-      {autoSyncError ? (
+      {syncStatus?.pushError || autoSyncError ? (
         <div className="mt-4 rounded-2xl border border-rose-400/40 bg-rose-400/10 p-4">
-          <p className="text-xs font-black text-rose-200">
-            Sinkronisasi otomatis terakhir gagal
-          </p>
-          <p className="mt-1 break-words text-xs text-rose-100/80">
-            {autoSyncError}
+          <div className="flex items-center gap-2">
+            <Icon name="alert" className="size-4 shrink-0 text-rose-400" />
+            <p className="text-xs font-black text-rose-200">
+              {syncStatus?.pushError
+                ? "Data cloud berhasil ditarik, tetapi antrean kirim gagal"
+                : "Sinkronisasi otomatis terakhir gagal"}
+            </p>
+          </div>
+          <p className="mt-1.5 break-words text-xs leading-relaxed text-rose-100/90">
+            {syncStatus?.pushError || autoSyncError}
           </p>
         </div>
       ) : null}

@@ -133,6 +133,48 @@ export async function batalkanPenugasanBackup(
   };
 }
 
+export async function hapusPenugasanBackup(id_backup: string) {
+  await ensureDbInitialized();
+
+  const existing = await db.execute({
+    sql: "SELECT id_karyawan_pengganti FROM backup_karyawan WHERE id_backup = ? LIMIT 1;",
+    args: [id_backup],
+  });
+  const pengganti = existing.rows[0]?.id_karyawan_pengganti
+    ? String(existing.rows[0].id_karyawan_pengganti)
+    : null;
+
+  const res = await db.execute({
+    sql: "DELETE FROM backup_karyawan WHERE id_backup = ?;",
+    args: [id_backup],
+  });
+
+  if (res.rowsAffected === 0) {
+    return {
+      sukses: false,
+      pesan: `Penugasan backup '${id_backup}' tidak ditemukan.`,
+    };
+  }
+
+  if (pengganti) {
+    await db.execute({
+      sql: `UPDATE master_data
+            SET status_backup = CASE
+              WHEN EXISTS(
+                SELECT 1 FROM backup_karyawan
+                WHERE id_karyawan_pengganti = ?1 AND status_tugas = 'Aktif'
+              ) THEN 'BACKUP' ELSE 'NORMAL' END
+            WHERE id_unik = ?1;`,
+      args: [pengganti],
+    });
+  }
+
+  return {
+    sukses: true,
+    pesan: `Penugasan backup '${id_backup}' berhasil dihapus.`,
+  };
+}
+
 export async function getDaftarBackup(filter?: {
   tanggal?: string;
   status_tugas?: string;

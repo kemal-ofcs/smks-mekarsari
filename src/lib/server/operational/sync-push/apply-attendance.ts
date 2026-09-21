@@ -632,6 +632,32 @@ export async function applyBackup(
     if (changed.rowsAffected === 0) {
       throw new Error("Penugasan backup aktif tidak ditemukan di server.");
     }
+  } else if (event.operation === "delete") {
+    const existing = await transaction.execute({
+      sql: "SELECT id_karyawan_pengganti FROM backup_karyawan WHERE id_backup = ? LIMIT 1;",
+      args: [event.entityKey],
+    });
+    const pengganti = existing.rows[0]?.id_karyawan_pengganti
+      ? String(existing.rows[0].id_karyawan_pengganti)
+      : null;
+
+    await transaction.execute({
+      sql: "DELETE FROM backup_karyawan WHERE id_backup = ?;",
+      args: [event.entityKey],
+    });
+
+    if (pengganti) {
+      await transaction.execute({
+        sql: `UPDATE master_data
+              SET status_backup = CASE
+                WHEN EXISTS(
+                  SELECT 1 FROM backup_karyawan
+                  WHERE id_karyawan_pengganti = ?1 AND status_tugas = 'Aktif'
+                ) THEN 'BACKUP' ELSE 'NORMAL' END
+              WHERE id_unik = ?1;`,
+        args: [pengganti],
+      });
+    }
   } else {
     throw new Error("Operasi penugasan backup tidak dikenali.");
   }
