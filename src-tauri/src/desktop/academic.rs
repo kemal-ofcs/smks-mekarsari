@@ -2453,6 +2453,38 @@ pub fn get_personnel_photo(state: &DesktopState, id_unik: &str) -> Result<Value,
     Ok(json!(row))
 }
 
+/// Simpan foto profil personil dari cloud langsung ke SQLite lokal tanpa antrean outbox.
+///
+/// Dipakai saat perangkat menarik foto on-demand dari Turso Cloud: datanya sudah
+/// ada di cloud, jadi mendaftarkannya ke outbox justru akan menciptakan loop
+/// push mutasi yang berulang. Menyimpannya ke SQLite lokal membuat pembacaan
+/// berikutnya instan (0ms) dan berfungsi offline.
+pub fn cache_personnel_photo_local(state: &DesktopState, photo: &Value) -> Result<(), CommandError> {
+    let id_unik = text(photo, "id_unik");
+    let foto_base64 = text(photo, "foto_base64");
+    if id_unik.is_empty() || foto_base64.is_empty() {
+        return Ok(());
+    }
+    let mime = optional_text(photo, "foto_mime").unwrap_or_else(|| "image/jpeg".to_string());
+    let updated_at = optional_text(photo, "updated_at").unwrap_or_default();
+
+    let conn = storage::database(&state.data_dir)?;
+    conn.execute(
+        r#"
+        INSERT INTO personil_foto (id_unik, foto_mime, foto_base64, updated_at)
+        VALUES (?1, ?2, ?3, COALESCE(NULLIF(?4, ''), datetime('now','+7 hours')))
+        ON CONFLICT(id_unik) DO UPDATE SET
+            foto_mime = excluded.foto_mime,
+            foto_base64 = excluded.foto_base64,
+            updated_at = excluded.updated_at;
+        "#,
+        params![id_unik, mime, foto_base64, updated_at],
+    )
+    .map_err(|e| CommandError::new("DB_ERROR", format!("Gagal mencache foto personil lokal: {e}")))?;
+
+    Ok(())
+}
+
 /// Hapus foto profil satu personil, lokal dan cloud.
 ///
 /// Menghapus baris yang tidak ada BUKAN error: dua perangkat boleh menghapus

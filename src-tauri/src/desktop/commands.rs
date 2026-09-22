@@ -67,6 +67,32 @@ pub(crate) fn require_permission(
     Ok(session.operator.clone())
 }
 
+pub(crate) fn require_any_permission(
+    state: &DesktopState,
+    permissions: &[&str],
+) -> Result<OperatorUser, CommandError> {
+    let session = state.session.lock().map_err(|_| CommandError::internal())?;
+    let session = session.as_ref().ok_or_else(|| {
+        CommandError::new(
+            "DESKTOP_SESSION_MISSING",
+            "Session Desktop tidak tersedia. Silakan login kembali.",
+        )
+    })?;
+    if !session.operator.is_superadmin
+        && !session
+            .operator
+            .permissions
+            .iter()
+            .any(|key| permissions.contains(&key.as_str()))
+    {
+        return Err(CommandError::new(
+            "DESKTOP_ACCESS_DENIED",
+            "Akses ditolak untuk tindakan ini.",
+        ));
+    }
+    Ok(session.operator.clone())
+}
+
 fn require_online_access(
     state: &DesktopState,
     permission: &str,
@@ -2895,7 +2921,7 @@ pub fn desktop_save_personnel_photo(
     foto_base64: String,
     foto_mime: Option<String>,
 ) -> Result<Value, CommandError> {
-    require_permission(&state, "employees.manage")?;
+    require_any_permission(&state, &["employees.manage", "students.manage", "teachers.manage"])?;
     academic::save_personnel_photo(&state, &id_unik, &foto_base64, foto_mime.as_deref())
 }
 
@@ -2915,7 +2941,7 @@ pub async fn desktop_get_personnel_photo(
     state: State<'_, DesktopState>,
     id_unik: String,
 ) -> Result<Value, CommandError> {
-    require_permission(&state, "employees.view")?;
+    require_any_permission(&state, &["employees.view", "students.view", "teachers.view"])?;
 
     let local = academic::get_personnel_photo(&state, &id_unik)?;
     if !local.is_null() {
@@ -2925,10 +2951,18 @@ pub async fn desktop_get_personnel_photo(
     let Ok(client) = state.get_turso_client() else {
         return Ok(Value::Null);
     };
-    Ok(client
-        .get_personnel_photo(&id_unik)
-        .await
-        .unwrap_or(Value::Null))
+    match client.get_personnel_photo(&id_unik).await {
+        Ok(photo) => {
+            if !photo.is_null() {
+                let _ = academic::cache_personnel_photo_local(&state, &photo);
+            }
+            Ok(photo)
+        }
+        Err(err) => {
+            eprintln!("[desktop_get_personnel_photo] Gagal mengambil foto dari cloud untuk {id_unik}: {err}");
+            Ok(Value::Null)
+        }
+    }
 }
 
 /// Hapus foto profil satu personil.
@@ -2937,7 +2971,7 @@ pub fn desktop_delete_personnel_photo(
     state: State<'_, DesktopState>,
     id_unik: String,
 ) -> Result<Value, CommandError> {
-    require_permission(&state, "employees.manage")?;
+    require_any_permission(&state, &["employees.manage", "students.manage", "teachers.manage"])?;
     academic::delete_personnel_photo(&state, &id_unik)
 }
 

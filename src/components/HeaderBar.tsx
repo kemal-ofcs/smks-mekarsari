@@ -248,8 +248,8 @@ function NavigationLink({
         compact ? "min-h-10 px-2.5 text-xs xl:px-3" : "min-h-11 px-4 text-sm"
       } ${
         active
-          ? "bg-[#003399] text-white shadow-md shadow-blue-950/30 ring-1 ring-white/15"
-          : "text-slate-300 hover:bg-white/[0.07] hover:text-white"
+          ? "bg-sky-600 dark:bg-[#003399] text-white shadow-md shadow-sky-600/20 dark:shadow-blue-950/30 ring-1 ring-black/5 dark:ring-white/15"
+          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.07] hover:text-slate-900 dark:hover:text-white"
       }`}
     >
       <Icon name={item.icon} className="size-4 shrink-0" />
@@ -397,8 +397,8 @@ export function HeaderBar() {
                     onClick={() => setDesktopMenuOpen((open) => !open)}
                     className={`flex min-h-10 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 xl:px-3 ${
                       activeManagementItem
-                        ? "bg-[#003399] text-white shadow-md shadow-blue-950/30"
-                        : "text-slate-300 hover:bg-white/[0.07] hover:text-white"
+                        ? "bg-sky-600 dark:bg-[#003399] text-white shadow-md shadow-sky-600/20 dark:shadow-blue-950/30"
+                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.07] hover:text-slate-900 dark:hover:text-white"
                     }`}
                   >
                     <Icon

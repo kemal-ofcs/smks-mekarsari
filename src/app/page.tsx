@@ -259,7 +259,7 @@ export default function Home() {
             {canAccessArea(user, "scanner") && (
               <Link
                 href="/scanner"
-                className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#003399] text-white font-bold text-xs shadow-sm hover:bg-[#002266] transition-all"
+                className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 dark:bg-[#003399] dark:hover:bg-[#002266] text-white font-bold text-xs shadow-sm shadow-sky-600/20 dark:shadow-blue-950/30 transition-all"
               >
                 <Icon name="scanner" className="size-3.5" />
                 <span>Mulai Pindai QR</span>

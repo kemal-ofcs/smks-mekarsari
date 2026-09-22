@@ -12,7 +12,10 @@ interface AppShellProps {
   contentClassName?: string;
 }
 
-export function AppShell({ children, contentClassName = "" }: AppShellProps) {
+export function AppShell({
+  children,
+  contentClassName = "mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 md:py-8 lg:px-8",
+}: AppShellProps) {
   return (
     <div className="app-shell min-h-dvh text-slate-100">
       <VisualProvider />
