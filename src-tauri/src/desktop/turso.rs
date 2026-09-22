@@ -3027,7 +3027,8 @@ impl TursoClient {
                 (28, 'academic-grades', datetime('now')),
                 (29, 'academic-unit', datetime('now')),
                 (30, 'wali-kredensial', datetime('now')),
-                (31, 'cms-landing-page', datetime('now'));"#,
+                (31, 'cms-landing-page', datetime('now')),
+                (32, 'personnel-photo', datetime('now'));"#,
                 vec![],
             ),
         ];
