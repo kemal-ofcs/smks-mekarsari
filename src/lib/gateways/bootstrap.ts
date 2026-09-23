@@ -33,6 +33,11 @@ export type BootstrapDraft = {
   authToken?: string;
   provider?: DatabaseProvider;
   allowInsecureTransport?: boolean;
+  /**
+   * Teks lisensi `LIS1.…`. Wajib saat database masih baru: Rust menolak
+   * membuat Superadmin sebelum lisensinya terbukti sah untuk perangkat ini.
+   */
+  license: string;
 };
 
 /**
@@ -97,6 +102,7 @@ export async function bootstrapSuperadmin(
       authToken: draft.authToken?.trim() || null,
       provider: draft.provider ?? null,
       allowInsecureTransport: draft.allowInsecureTransport ?? null,
+      license: draft.license.trim() || null,
     },
   );
   return Array.isArray(response.recoveryCodes)

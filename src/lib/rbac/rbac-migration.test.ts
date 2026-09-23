@@ -109,6 +109,10 @@ describe("dynamic RBAC migration", () => {
       // `master_data.id_unik`, melayani guru, siswa, dan karyawan sekaligus
       // serta mengisi elemen foto pada kartu identitas.
       32,
+      // v33 — riwayat penggantian identitas karyawan (khusus cloud).
+      33,
+      // v34 — klaim pengiriman WhatsApp antar-pengirim.
+      34,
     ]);
 
     const sessionColumns = await client.execute(

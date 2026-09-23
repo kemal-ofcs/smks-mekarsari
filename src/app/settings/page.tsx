@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { DatabaseBackupCard } from "@/components/DatabaseBackupCard";
 import { JamPelajaranCard } from "@/components/JamPelajaranCard";
+import { LicenseCard } from "@/components/license/LicenseCard";
 import { MailSettingsCard } from "@/components/MailSettingsCard";
 import { PasswordRecoveryCard } from "@/components/PasswordRecoveryCard";
 import { GeofencingCard } from "@/components/settings/GeofencingCard";
@@ -1214,6 +1215,7 @@ export default function SettingsPage() {
           operator berhak mengamankan akunnya — termasuk role paling terbatas. */}
       <TwoFactorCard />
       <PasswordRecoveryCard />
+      <LicenseCard />
 
       {hasPermission(user, "settings.manage") ? <MailSettingsCard /> : null}
 

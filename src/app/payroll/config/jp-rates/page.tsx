@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarMapel } from "@/lib/gateways/academic";
@@ -125,7 +126,7 @@ export default function JpRatesPage() {
       id_mapel: "",
       id_guru: null,
       rate_per_jp: 0,
-      effective_date: new Date().toISOString().slice(0, 10),
+      effective_date: formatTanggalOperasional(Date.now()),
       status_aktif: 1,
     });
     setModalOpen(true);

@@ -14,12 +14,11 @@ export { hitungJarakHaversine, parseQrToken } from "@/lib/validations/scanner";
 
 export async function prosesScanAbsensi(
   payload: ScanPayload,
-  options?: { actorOperatorId?: number; policy?: ScanSecurityPolicy },
+  options?: { policy?: ScanSecurityPolicy },
 ): Promise<ScanResult> {
   await ensureDbInitialized();
   return processWebAttendanceScan(db, payload, {
     waktuScan: new Date(),
-    actorOperatorId: options?.actorOperatorId,
     policy: options?.policy,
   });
 }

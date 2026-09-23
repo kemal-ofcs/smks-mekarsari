@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { LicenseHolderLabel } from "@/components/license/LicenseNotice";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -140,6 +141,12 @@ const NAVIGATION: NavigationItem[] = [
     href: "/riwayat-reset-password",
     icon: "lock",
     label: "Riwayat Reset",
+  },
+  {
+    area: "karyawan",
+    href: "/riwayat-identitas-karyawan",
+    icon: "history",
+    label: "Riwayat Identitas",
   },
   {
     area: "attendance_photo",
@@ -363,6 +370,10 @@ export function HeaderBar() {
                 <span className="block max-w-28 truncate text-[10px] font-semibold text-sky-300 xl:max-w-36">
                   {companyName}
                 </span>
+                <LicenseHolderLabel
+                  unlessEqualTo={companyName}
+                  className="block max-w-28 truncate text-[10px] font-medium text-slate-400 xl:max-w-36"
+                />
                 <span className="flex items-center gap-1.5 text-[10px] font-medium text-slate-400">
                   <span
                     className={`size-1.5 rounded-full ${isOnline ? "bg-emerald-400" : "bg-amber-300"}`}

@@ -29,6 +29,13 @@ pub const WA_NOTIFY_AMBANG_ALFA_KEY: &str = "wa_notify_ambang_alfa";
 pub const WA_NOTIFY_KOREKSI_ADMIN_KEY: &str = "wa_notify_koreksi_admin";
 pub const WA_NOTIFY_IMPORT_MANUAL_KEY: &str = "wa_notify_import_manual";
 
+/// Sakelar "Kirim otomatis": runner di aplikasi menguras antrean sendiri tanpa
+/// tombol. BAWAANNYA MATI — pemasangan berjalan tidak boleh mulai mengirim
+/// pesan ke wali hanya karena aplikasinya diperbarui. Diperiksa oleh pengirim
+/// (`wa_sender::drain` dan `drainWaQueue`), bukan oleh runner, supaya aturannya
+/// hanya ada di satu tempat per bahasa.
+pub const WA_AUTO_SEND_KEY: &str = "wa_kirim_otomatis";
+
 /// Kunci setting dinamis untuk ambang jumlah alfa dan rentang hari evaluasi.
 pub const WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY: &str = "wa_notify_ambang_alfa_limit";
 pub const WA_NOTIFY_AMBANG_ALFA_DAYS_KEY: &str = "wa_notify_ambang_alfa_days";
@@ -102,6 +109,7 @@ pub struct WaSwitches {
     pub import_manual: i64,
     pub ambang_limit: i64,
     pub ambang_days: i64,
+    pub auto_send: i64,
 }
 
 fn flag(draft: &Value, key: &str) -> i64 {
@@ -128,7 +136,10 @@ fn flag(draft: &Value, key: &str) -> i64 {
         .unwrap_or(0)
 }
 
-/// Baca sakelar dari draft formulir.
+/// Baca sakelar dari draft formulir — bentuk `WaConfigDraft` di
+/// `src/types/wa-notification.ts`, yaitu camelCase. Dulu yang dibaca kunci
+/// snake_case yang tidak pernah dikirim UI, sehingga setiap Simpan dari
+/// Desktop/Mobile mematikan seluruh sakelar tanpa pesan apa pun.
 ///
 /// SATU pembaca untuk dua penulis — baris `app_wa_config` di cloud dan cerminan
 /// `setting_gex_system`. Saat keduanya mengurai draft sendiri-sendiri, satu
@@ -136,12 +147,13 @@ fn flag(draft: &Value, key: &str) -> i64 {
 /// terminal yang mengantre sementara pengirimnya menolak.
 pub fn parse_wa_switches(draft: &Value) -> WaSwitches {
     WaSwitches {
-        scan_masuk: flag(draft, "scan_masuk_enabled"),
-        scan_pulang: flag(draft, "scan_pulang_enabled"),
-        bolos: flag(draft, "bolos_enabled"),
-        ambang_alfa: flag(draft, "ambang_alfa_enabled"),
-        koreksi_admin: flag(draft, "koreksi_admin_enabled"),
-        import_manual: flag(draft, "import_manual_enabled"),
+        scan_masuk: flag(draft, "scanMasukEnabled"),
+        scan_pulang: flag(draft, "scanPulangEnabled"),
+        bolos: flag(draft, "bolosEnabled"),
+        ambang_alfa: flag(draft, "ambangAlfaEnabled"),
+        koreksi_admin: flag(draft, "koreksiAdminEnabled"),
+        import_manual: flag(draft, "importManualEnabled"),
+        auto_send: flag(draft, "autoSendEnabled"),
         ambang_limit: clamp_ambang_alfa_limit(
             draft
                 .get("ambangAlfaLimit")
@@ -158,7 +170,7 @@ pub fn parse_wa_switches(draft: &Value) -> WaSwitches {
 }
 
 /// Pasangan kunci/nilai `setting_gex_system` yang mencerminkan sakelar di atas.
-pub fn wa_setting_mirror(switches: &WaSwitches) -> [(&'static str, String); 8] {
+pub fn wa_setting_mirror(switches: &WaSwitches) -> [(&'static str, String); 9] {
     let boolean = |v: i64| (if v != 0 { "true" } else { "false" }).to_owned();
     [
         (WA_NOTIFY_SCAN_MASUK_KEY, boolean(switches.scan_masuk)),
@@ -181,6 +193,7 @@ pub fn wa_setting_mirror(switches: &WaSwitches) -> [(&'static str, String); 8] {
             WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
             switches.ambang_days.to_string(),
         ),
+        (WA_AUTO_SEND_KEY, boolean(switches.auto_send)),
     ]
 }
 
@@ -830,8 +843,9 @@ mod tests {
     #[test]
     fn sakelar_wa_yang_dinyalakan_terbaca_hidup() {
         let switches = parse_wa_switches(&json!({
-            "scan_masuk_enabled": true,
-            "bolos_enabled": 1,
+            "scanMasukEnabled": true,
+            "bolosEnabled": 1,
+            "autoSendEnabled": true,
         }));
         let settings: HashMap<String, String> = wa_setting_mirror(&switches)
             .iter()
@@ -841,13 +855,17 @@ mod tests {
         assert!(wa_notify_enabled(&settings, "bolos"));
         assert!(!wa_notify_enabled(&settings, "scan_pulang"));
         assert!(!wa_notify_enabled(&settings, "ambang_alfa"));
+        assert!(super::super::scanner::setting_enabled(
+            &settings,
+            WA_AUTO_SEND_KEY
+        ));
     }
 
     /// Cerminan lokal membuat sakelar berlaku SEBELUM pull berikutnya.
     #[test]
     fn cerminan_lokal_langsung_terbaca_scanner() {
         let (_dir, state) = setup_test_state();
-        let switches = parse_wa_switches(&json!({ "scan_masuk_enabled": true }));
+        let switches = parse_wa_switches(&json!({ "scanMasukEnabled": true }));
         mirror_wa_switches_local(&state, &switches).expect("tulis cerminan lokal");
 
         let connection = storage::database(&state.data_dir).expect("buka database lokal");

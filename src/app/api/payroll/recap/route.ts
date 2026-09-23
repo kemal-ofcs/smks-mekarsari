@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
 import {
   ensureServerDatabaseInitialized,
@@ -26,8 +27,8 @@ export async function POST(request: NextRequest) {
       periodEnd?: string;
     }>(request);
     const periodStart =
-      body.periodStart || new Date().toISOString().slice(0, 10);
-    const periodEnd = body.periodEnd || new Date().toISOString().slice(0, 10);
+      body.periodStart || formatTanggalOperasional(Date.now());
+    const periodEnd = body.periodEnd || formatTanggalOperasional(Date.now());
 
     const recap = await computePayrollRecap(client, periodStart, periodEnd);
 

@@ -11,7 +11,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   JP_DURATION_SETTING_KEY,
   JP_MAX_PER_DAY_SETTING_KEY,
@@ -51,7 +50,7 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const actor = await requireWebPermission(request, "settings.manage");
+    await requireWebPermission(request, "settings.manage");
     assertSameOriginMutation(request);
     await ensureServerDatabaseInitialized();
     const client = getServerDatabase();
@@ -99,19 +98,6 @@ export async function PUT(request: NextRequest) {
       ],
       "write",
     );
-
-    for (const [key, value] of [
-      [JP_MAX_PER_DAY_SETTING_KEY, String(maxPerHari)],
-      [JP_DURATION_SETTING_KEY, String(durasiMenit)],
-    ]) {
-      await recordOperationalChange(client, {
-        domain: "setting",
-        entityKey: key,
-        operation: "update",
-        payload: { key, value },
-        actorOperatorId: actor.id,
-      });
-    }
 
     return noStoreJson({ sukses: true, maxPerHari, durasiMenit });
   } catch (error) {

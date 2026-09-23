@@ -10,7 +10,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   parseTeacherOvertimeSetting,
   TEACHER_OVERTIME_SETTING_KEY,
@@ -42,7 +41,7 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const actor = await requireWebPermission(request, "payroll.config.manage");
+    await requireWebPermission(request, "payroll.config.manage");
     assertSameOriginMutation(request);
     await ensureServerDatabaseInitialized();
     const client = getServerDatabase();
@@ -54,14 +53,6 @@ export async function PUT(request: NextRequest) {
       sql: `INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
       args: [TEACHER_OVERTIME_SETTING_KEY, enabled ? "true" : "false"],
-    });
-
-    await recordOperationalChange(client, {
-      domain: "setting",
-      entityKey: TEACHER_OVERTIME_SETTING_KEY,
-      operation: "update",
-      payload: { enabled },
-      actorOperatorId: actor.id,
     });
 
     return noStoreJson({ sukses: true, enabled });

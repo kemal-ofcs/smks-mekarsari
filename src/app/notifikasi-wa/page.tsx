@@ -162,7 +162,7 @@ export default function NotifikasiWaPage() {
   /**
    * Kuras antrean sekarang, tanpa menunggu penjadwal.
    *
-   * Pengirimannya berjalan di server aplikasi — lihat `drainWaQueueGateway`.
+   * Jalur pengirimannya per build — lihat `drainWaQueueGateway`.
    * Hasilnya dilaporkan apa adanya termasuk saat nol pesan terkirim: sebuah
    * tombol yang selalu menjawab "berhasil" tidak membedakan antrean kosong dari
    * gateway yang menolak, dan justru perbedaan itu yang perlu dilihat orang.
@@ -247,6 +247,11 @@ export default function NotifikasiWaPage() {
       ambangAlfaEnabled: config.ambangAlfaEnabled,
       koreksiAdminEnabled: config.koreksiAdminEnabled,
       importManualEnabled: config.importManualEnabled,
+      // Ikut dibawa walau formulir ini tidak menampilkannya: draft yang
+      // menghilangkannya menyimpan ulang ambang alfa ke bawaan 3/30.
+      ambangAlfaLimit: config.ambangAlfaLimit,
+      ambangAlfaDays: config.ambangAlfaDays,
+      autoSendEnabled: config.autoSendEnabled,
     });
     setShowApiKey(false);
     setConfigModalOpen(true);
@@ -1022,6 +1027,28 @@ export default function NotifikasiWaPage() {
                   Bila nonaktif, antrean tetap dicatat dan Anda dapat mengirim
                   pesan satu per satu secara gratis menggunakan tautan WhatsApp
                   Web (wa.me).
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 p-3.5">
+                <label className="flex items-center gap-2.5 text-xs font-semibold text-sky-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={configDraft.autoSendEnabled}
+                    onChange={(e) =>
+                      setConfigDraft({
+                        ...configDraft,
+                        autoSendEnabled: e.target.checked,
+                      })
+                    }
+                    className="h-4 w-4 rounded border-slate-700 text-sky-500 focus:ring-sky-400"
+                  />
+                  Kirim otomatis tanpa menekan tombol
+                </label>
+                <p className="mt-1 text-[11px] text-sky-400/80">
+                  Antrean dikuras sendiri setiap menit selama aplikasi terbuka
+                  oleh operator yang berizin mengirim notifikasi. Bila mati,
+                  pesan hanya terkirim lewat tombol Kirim antrean.
                 </p>
               </div>
 

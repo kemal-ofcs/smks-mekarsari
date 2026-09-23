@@ -13,7 +13,6 @@ export type { ScanTerminalInput } from "@/lib/contracts/scanner";
 export async function submitTerminalScan(
   input: ScanTerminalInput,
   options?: {
-    actorOperatorId?: number;
     ipAddress?: string;
     policy?: ScanSecurityPolicy;
   },

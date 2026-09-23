@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -11,7 +8,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   batalkanPenugasanBackup,
   buatPenugasanBackup,
@@ -57,14 +53,7 @@ export async function POST(request: NextRequest) {
     await ensureServerDatabaseInitialized();
     const result = await buatPenugasanBackup(draft);
     if (!result.sukses) throw new ApiRequestError(result.pesan, 409);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "backup",
-      entityKey: result.id_backup ?? "invalid",
-      operation: "create",
-      payload: draft,
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ ...result, revision }, 201);
+    return noStoreJson(result, 201);
   } catch (error) {
     return toApiErrorResponse(error);
   }
@@ -73,38 +62,32 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     assertSameOriginMutation(request);
-    const actor = await requireWebPermission(request, "backups.manage");
     const body = await readJsonBody<Record<string, unknown>>(request);
-    const id = typeof body.id_backup === "string" ? body.id_backup.trim() : "";
-    if (!id) throw new ApiRequestError("ID backup tidak valid.", 400);
     const action =
       typeof body.action === "string"
         ? body.action.trim().toLowerCase()
         : "cancel";
+    if (action !== "cancel" && action !== "delete") {
+      throw new ApiRequestError("Aksi penugasan backup tidak dikenali.", 400);
+    }
+    // Hapus permanen menghilangkan jejak pembatalan, jadi setara hapus data
+    // operasional lain dan tidak ikut paket bawaan Admin.
+    const actor = await requireWebPermission(
+      request,
+      action === "delete" ? "operational.delete" : "backups.manage",
+    );
+    const id = typeof body.id_backup === "string" ? body.id_backup.trim() : "";
+    if (!id) throw new ApiRequestError("ID backup tidak valid.", 400);
     await ensureServerDatabaseInitialized();
 
     if (action === "delete") {
       const result = await hapusPenugasanBackup(id);
       if (!result.sukses) throw new ApiRequestError(result.pesan, 400);
-      const revision = await recordOperationalChange(getServerDatabase(), {
-        domain: "backup",
-        entityKey: id,
-        operation: "delete",
-        payload: { id_backup: id },
-        actorOperatorId: actor.id,
-      });
-      return noStoreJson({ ...result, revision });
+      return noStoreJson(result);
     }
 
     const result = await batalkanPenugasanBackup(id, actor.kode_operator);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "backup",
-      entityKey: id,
-      operation: "cancel",
-      payload: { id_backup: id },
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ ...result, revision });
+    return noStoreJson(result);
   } catch (error) {
     return toApiErrorResponse(error);
   }

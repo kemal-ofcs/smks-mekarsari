@@ -439,6 +439,25 @@ export async function getPersonnelPhoto(idUnik: string) {
 }
 
 /**
+ * Dari `ids`, mana yang punya foto. Hanya ID, tidak pernah isi foto: daftar
+ * personil tidak berhalaman, dan mengirim ratusan foto penuh untuk satu tabel
+ * akan berukuran puluhan MB. Cerminan `list_personnel_photo_ids` di `turso.rs`.
+ */
+export async function listPersonnelPhotoIds(ids: string[]) {
+  await ensureDbInitialized();
+  const bersih = ids
+    .map((id) => String(id).trim())
+    .filter(Boolean)
+    .slice(0, 500);
+  if (bersih.length === 0) return [];
+  const result = await db.execute({
+    sql: "SELECT id_unik FROM personil_foto WHERE id_unik IN (SELECT value FROM json_each(?)) AND TRIM(COALESCE(foto_base64, '')) <> '' ORDER BY id_unik LIMIT 500;",
+    args: [JSON.stringify(bersih)],
+  });
+  return result.rows.map((row) => String(row.id_unik));
+}
+
+/**
  * Hapus foto profil satu personil.
  *
  * Baris yang memang tidak ada BUKAN error — sama seperti sisi Rust-nya, supaya

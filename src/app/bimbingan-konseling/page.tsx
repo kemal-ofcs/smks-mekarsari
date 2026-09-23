@@ -7,6 +7,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarTahunAjaran } from "@/lib/gateways/academic";
@@ -84,7 +85,7 @@ export default function BimbinganKonselingPage() {
     catatan_konseling: string;
     tindak_lanjut: string;
   }>({
-    tanggal: new Date().toISOString().split("T")[0],
+    tanggal: formatTanggalOperasional(Date.now()),
     catatan_konseling: "",
     tindak_lanjut: "",
   });
@@ -387,7 +388,7 @@ export default function BimbinganKonselingPage() {
       });
       setSessionModalOpen(false);
       setNewSessionDraft({
-        tanggal: new Date().toISOString().split("T")[0],
+        tanggal: formatTanggalOperasional(Date.now()),
         catatan_konseling: "",
         tindak_lanjut: "",
       });

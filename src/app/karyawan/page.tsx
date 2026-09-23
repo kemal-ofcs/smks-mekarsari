@@ -7,6 +7,8 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { PersonnelPhotoField } from "@/components/PersonnelPhotoField";
+import { PersonnelAvatar } from "@/components/personnel/PersonnelAvatar";
+import { PersonnelPortrait } from "@/components/personnel/PersonnelPortrait";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
@@ -31,9 +33,11 @@ import {
   updateKaryawan,
 } from "@/lib/gateways/employee";
 import { getDaftarIdCard } from "@/lib/gateways/id-card";
+import { simpanFotoPersonilBaru } from "@/lib/gateways/personnel-photo";
 import { getDaftarShift } from "@/lib/gateways/shift";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
+import { useStatusFotoPersonil } from "@/lib/hooks/useStatusFotoPersonil";
 import { formatDisplayDate } from "@/lib/utils/date-display";
 import { opsiFilterUnit, TANPA_UNIT } from "@/lib/validations/personnel";
 import {
@@ -168,6 +172,16 @@ export default function KaryawanPage() {
     });
   }, [karyawanList, filterBackup, filterUnit]);
 
+  // Kolom Foto hanya butuh status "punya foto"; fotonya dimuat saat dibuka.
+  const idKaryawanTampil = useMemo(
+    () => karyawanTampil.map((row) => String(row.id_unik)),
+    [karyawanTampil],
+  );
+  const { punyaFoto, muatUlang: muatUlangStatusFoto } =
+    useStatusFotoPersonil(idKaryawanTampil);
+  // Foto yang dipilih di form Tambah, disimpan setelah karyawannya tercipta.
+  const [fotoBaru, setFotoBaru] = useState<string | null>(null);
+
   const unitOptions = useMemo(
     () => opsiFilterUnit(unitList, karyawanList),
     [unitList, karyawanList],
@@ -209,6 +223,7 @@ export default function KaryawanPage() {
     });
     setFormErrors({});
     setErrorMsg(null);
+    setFotoBaru(null);
     setShowModal(true);
   };
 
@@ -255,10 +270,17 @@ export default function KaryawanPage() {
         setAlertMsg(`Data karyawan ${formData.nama} berhasil diperbarui.`);
       } else {
         await tambahKaryawan(formData);
+        const peringatanFoto = await simpanFotoPersonilBaru(
+          formData.id_unik,
+          fotoBaru,
+        );
+        setFotoBaru(null);
         setAlertMsg(`Karyawan baru ${formData.nama} berhasil ditambahkan.`);
+        if (peringatanFoto) setErrorMsg(peringatanFoto);
       }
       setShowModal(false);
       await loadData();
+      void muatUlangStatusFoto();
       setFormErrors({});
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Gagal menyimpan data.";
@@ -612,6 +634,7 @@ export default function KaryawanPage() {
             <table className="w-full min-w-[1950px] text-left text-xs font-mono border-collapse">
               <thead className="bg-slate-950 text-slate-400 sticky top-0 z-20 border-b border-slate-800 shadow-md">
                 <tr>
+                  <th className="p-3.5 bg-slate-950">Foto</th>
                   <th className="p-3.5 bg-slate-950">ID Unik / NIK</th>
                   <th className="p-3.5 bg-slate-950">Kode</th>
                   <th className="p-3.5 bg-slate-950">Nama Karyawan</th>
@@ -637,7 +660,7 @@ export default function KaryawanPage() {
                 {karyawanTampil.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={17}
+                      colSpan={18}
                       className="p-12 text-center text-slate-500"
                     >
                       Tidak ada data karyawan yang sesuai dengan filter.
@@ -649,6 +672,13 @@ export default function KaryawanPage() {
                       key={String(row.id_unik)}
                       className="hover:bg-slate-800/40 transition"
                     >
+                      <td className="p-3.5">
+                        <PersonnelAvatar
+                          idUnik={String(row.id_unik)}
+                          nama={String(row.nama || "")}
+                          punyaFoto={punyaFoto.has(String(row.id_unik))}
+                        />
+                      </td>
                       {/* 1. ID Unik */}
                       <td className="p-3.5 text-sky-400 font-bold whitespace-nowrap">
                         {String(row.id_unik)}
@@ -659,12 +689,7 @@ export default function KaryawanPage() {
                       </td>
                       {/* 3. Nama */}
                       <td className="p-3.5 text-white font-bold whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-5 h-5 bg-slate-800 text-slate-300 rounded-full flex items-center justify-center text-[10px]">
-                            {String(row.lp) === "P" ? "👩" : "👨"}
-                          </span>
-                          <span>{String(row.nama)}</span>
-                        </div>
+                        {String(row.nama)}
                       </td>
                       {/* 4. Divisi */}
                       <td className="p-3.5 text-slate-300 whitespace-nowrap">
@@ -836,9 +861,10 @@ export default function KaryawanPage() {
             {/* Profile Header Box */}
             <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-sky-950 border border-sky-800 text-sky-300 text-xl font-bold flex items-center justify-center">
-                  {String(detailKaryawan.lp) === "P" ? "👩" : "👨"}
-                </div>
+                <PersonnelPortrait
+                  idUnik={String(detailKaryawan.id_unik || "")}
+                  nama={String(detailKaryawan.nama || "")}
+                />
                 <div>
                   <h3 className="text-sm font-bold text-white">
                     {String(detailKaryawan.nama || "-")}
@@ -1386,6 +1412,8 @@ export default function KaryawanPage() {
               <PersonnelPhotoField
                 idUnik={isEditing && editId ? editId : ""}
                 nama={formData.nama || "karyawan ini"}
+                onChanged={() => void muatUlangStatusFoto()}
+                onPendingChange={isEditing ? undefined : setFotoBaru}
               />
             </div>
 

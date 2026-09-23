@@ -1,5 +1,6 @@
 import "server-only";
 
+import { rebuildAttendanceFromLogs } from "@/lib/attendance/rebuild-from-logs";
 import {
   aturanShiftDariBaris,
   hitungUlangAbsensiDariJam,
@@ -228,29 +229,30 @@ export async function hapusAbsensiHarian(
   }
 
   const current = existRes.rows[0] as Record<string, unknown>;
-  const idKaryawan = String(current.id_karyawan);
-  const tanggal = String(current.tanggal);
-  const nama = String(current.nama);
-  const nowStr = new Date().toISOString();
 
-  await db.execute({
-    sql: "DELETE FROM absensi_harian WHERE id_sesi = ?;",
-    args: [idSesi],
-  });
-
-  await db.execute({
-    sql: `INSERT INTO audit_absensi (
-          waktu, jenis, tanggal, id_karyawan, nama, baris_referensi, detail, status
-        ) VALUES (?, 'Hapus Absensi', ?, ?, ?, ?, ?, 'Berhasil');`,
-    args: [
-      nowStr,
-      tanggal,
-      idKaryawan,
-      nama,
-      idSesi,
-      `Dihapus oleh Operator ${kodeOperator}.`,
+  // Satu batch: penghapusan tanpa jejak audit tidak boleh terjadi. Waktu dari
+  // jam database dalam WIB, format yang sama dengan jalur Rust.
+  await db.batch(
+    [
+      {
+        sql: "DELETE FROM absensi_harian WHERE id_sesi = ?;",
+        args: [idSesi],
+      },
+      {
+        sql: `INSERT INTO audit_absensi (
+              waktu, jenis, tanggal, id_karyawan, nama, baris_referensi, detail, status
+            ) VALUES (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'), 'Hapus Absensi', ?, ?, ?, ?, ?, 'Berhasil');`,
+        args: [
+          String(current.tanggal),
+          String(current.id_karyawan),
+          String(current.nama),
+          idSesi,
+          `Dihapus oleh Operator ${kodeOperator}.`,
+        ],
+      },
     ],
-  });
+    "write",
+  );
 
   return {
     sukses: true,
@@ -277,188 +279,85 @@ export async function hapusLogScan(
   const idKaryawan = String(log.id_karyawan);
   const tanggalKerja = String(log.tanggal_kerja);
   const jenisScanDeleted = String(log.jenis_scan || "");
-  const nowStr = new Date().toISOString();
-
-  await db.execute({
-    sql: "DELETE FROM log_scan WHERE id_log = ?;",
-    args: [idLog],
-  });
-
-  const remainRes = await db.execute({
-    sql: "SELECT * FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? ORDER BY jam_scan ASC;",
-    args: [idKaryawan, tanggalKerja],
-  });
-
-  const absRes = await db.execute({
-    sql: "SELECT * FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day')) ORDER BY (CASE WHEN tanggal = ? THEN 0 ELSE 1 END) ASC LIMIT 1;",
-    args: [idKaryawan, tanggalKerja, tanggalKerja, tanggalKerja],
-  });
-
-  let deletedAbsensiIdSesi: string | null = null;
-
-  if (absRes.rows.length > 0) {
-    const abs = absRes.rows[0] as Record<string, unknown>;
-    const idSesi = String(abs.id_sesi);
-
-    if (remainRes.rows.length === 0) {
-      await db.execute({
-        sql: "DELETE FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day'));",
-        args: [idKaryawan, tanggalKerja, tanggalKerja],
-      });
-      deletedAbsensiIdSesi = idSesi;
-    } else {
-      const inLog = remainRes.rows.find(
-        (r) =>
-          String(r.jenis_scan) === "Masuk" &&
-          String(r.status_proses || "Berhasil") === "Berhasil",
-      );
-      const outLog = remainRes.rows.find(
-        (r) =>
-          String(r.jenis_scan) === "Pulang" &&
-          String(r.status_proses || "Berhasil") === "Berhasil",
-      );
-
-      const existingIn = String(abs.jam_masuk || "");
-      const existingOut = String(abs.jam_pulang || "");
-      const existingLate = Number(abs.menit_terlambat || 0);
-      const existingEarly = Number(abs.menit_datang_awal || 0);
-
-      const inVal =
-        jenisScanDeleted === "Masuk"
-          ? inLog
-            ? formatDateTime(tanggalKerja, String(inLog.jam_scan))
-            : ""
-          : inLog
-            ? formatDateTime(tanggalKerja, String(inLog.jam_scan))
-            : existingIn;
-
-      const outVal =
-        jenisScanDeleted === "Pulang"
-          ? outLog
-            ? formatDateTime(tanggalKerja, String(outLog.jam_scan))
-            : ""
-          : outLog
-            ? formatDateTime(tanggalKerja, String(outLog.jam_scan))
-            : existingOut;
-
-      if (!inVal && !outVal) {
-        await db.execute({
-          sql: "DELETE FROM absensi_harian WHERE id_sesi = ?;",
-          args: [idSesi],
-        });
-        deletedAbsensiIdSesi = idSesi;
-      } else {
-        const statusAbsen =
-          inVal && outVal
-            ? "Lengkap"
-            : inVal
-              ? "Belum Pulang"
-              : "Perlu Verifikasi";
-
-        const idShift = Number(abs.id_shift || 1);
-        const shiftRes = await db.execute({
-          sql: "SELECT jam_masuk, jam_pulang, jam_kerja_normal_menit, istirahat_menit, offset_istirahat_mulai FROM tbl_shift WHERE id_shift = ? LIMIT 1;",
-          args: [idShift],
-        });
-        const aturanShift = aturanShiftDariBaris(
-          shiftRes.rows[0] as Record<string, unknown> | undefined,
-        );
-
-        const inMin = inVal ? parseTimeToMinutes(inVal) : null;
-        const outMin = outVal ? parseTimeToMinutes(outVal) : null;
-        let duration: number | null = null;
-        if (inMin !== null && outMin !== null) {
-          duration = outMin - inMin;
-          if (duration < 0) {
-            duration += 1440;
-          }
-        }
-
-        const hasil = hitungUlangAbsensiDariJam({
-          masukMenit: inMin,
-          durasiMenit: duration,
-          shift: aturanShift,
-        });
-        // Log Pulang yang dihapus tidak mengubah kapan karyawannya masuk, jadi
-        // terlambat/datang awal yang sudah tercatat dipertahankan.
-        const pertahankanMasuk =
-          jenisScanDeleted === "Pulang" && Boolean(inVal);
-        const calculatedLate = pertahankanMasuk
-          ? existingLate
-          : hasil.menitTerlambat;
-        const calculatedEarly = pertahankanMasuk
-          ? existingEarly
-          : hasil.menitDatangAwal;
-        const calculatedWork = hasil.jamKerja;
-        const calculatedOvertime = hasil.lembur;
-        const calculatedShortage = hasil.jamKerjaKurang;
-
-        await db.execute({
-          sql: `UPDATE absensi_harian SET
-                jam_masuk = ?, jam_pulang = ?, status_absen = ?, update_terakhir = ?,
-                menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ?
-                WHERE id_sesi = ?;`,
-          args: [
-            inVal,
-            outVal,
-            statusAbsen,
-            nowStr,
-            calculatedLate,
-            calculatedEarly,
-            calculatedWork,
-            calculatedOvertime,
-            calculatedShortage,
-            idSesi,
-          ],
-        });
-      }
-    }
-  }
-
-  // Riwayat asal ikut terhapus begitu tidak ada lagi log yang merujuknya.
-  // Selama masih ada log lain dengan referensi sama — misalnya satu import yang
-  // membuat baris Masuk DAN Pulang — riwayatnya dipertahankan supaya log yang
-  // tersisa tidak menggantung tanpa asal-usul.
-  //
-  // Prefiks id_referensi membedakan sumbernya: `KOR-` koreksi admin, `IMP-`
-  // import manual. ID penugasan backup tidak berawalan keduanya, jadi penugasan
-  // backup tidak pernah ikut terhapus.
   const referensi = String(log.id_referensi ?? "");
-  if (referensi) {
-    const sisaRes = await db.execute({
-      sql: "SELECT COUNT(*) AS total FROM log_scan WHERE COALESCE(id_referensi, '') = ?;",
-      args: [referensi],
-    });
-    const masihDirujuk = Number(sisaRes.rows[0]?.total ?? 0) > 0;
+  let deletedAbsensiIdSesi: string[] = [];
 
-    if (!masihDirujuk) {
-      if (referensi.startsWith("KOR-")) {
-        await db.execute({
-          sql: "DELETE FROM koreksi_admin WHERE id_referensi = ?;",
-          args: [referensi],
-        });
-      } else if (referensi.startsWith("IMP-")) {
-        await db.execute({
-          sql: "DELETE FROM import_offline WHERE event_key = ?;",
-          args: [referensi],
-        });
+  const tx = await db.transaction("write");
+  try {
+    await tx.execute({
+      sql: "DELETE FROM log_scan WHERE id_log = ?;",
+      args: [idLog],
+    });
+
+    // Log yang ditolak tidak pernah membentuk absensi, jadi menghapusnya
+    // tidak boleh menyentuh absensi_harian sama sekali.
+    if (
+      (jenisScanDeleted === "Masuk" || jenisScanDeleted === "Pulang") &&
+      String(log.status_proses ?? "") !== "Ditolak"
+    ) {
+      const rebuilt = await rebuildAttendanceFromLogs(
+        tx,
+        idKaryawan,
+        tanggalKerja,
+        {
+          kind: "scan-log",
+          jenisScan: jenisScanDeleted,
+          ofCorrection: referensi.startsWith("KOR-"),
+        },
+      );
+      deletedAbsensiIdSesi = rebuilt.deletedIdSesi;
+    }
+
+    // Riwayat asal ikut terhapus begitu tidak ada lagi log yang merujuknya.
+    // Selama masih ada log lain dengan referensi sama — misalnya satu import
+    // yang membuat baris Masuk DAN Pulang — riwayatnya dipertahankan supaya
+    // log yang tersisa tidak menggantung tanpa asal-usul.
+    //
+    // Prefiks id_referensi membedakan sumbernya: `KOR-` koreksi admin, `IMP-`
+    // import manual. ID penugasan backup tidak berawalan keduanya, jadi
+    // penugasan backup tidak pernah ikut terhapus.
+    if (referensi) {
+      const sisaRes = await tx.execute({
+        sql: "SELECT COUNT(*) AS total FROM log_scan WHERE COALESCE(id_referensi, '') = ?;",
+        args: [referensi],
+      });
+      const masihDirujuk = Number(sisaRes.rows[0]?.total ?? 0) > 0;
+
+      if (!masihDirujuk) {
+        if (referensi.startsWith("KOR-")) {
+          await tx.execute({
+            sql: "DELETE FROM koreksi_admin WHERE id_referensi = ?;",
+            args: [referensi],
+          });
+        } else if (referensi.startsWith("IMP-")) {
+          await tx.execute({
+            sql: "DELETE FROM import_offline WHERE event_key = ?;",
+            args: [referensi],
+          });
+        }
       }
     }
-  }
 
-  await db.execute({
-    sql: `INSERT INTO audit_absensi (
-          waktu, jenis, tanggal, id_karyawan, nama, baris_referensi, detail, status
-        ) VALUES (?, 'Hapus Log Scan', ?, ?, ?, ?, ?, 'Berhasil');`,
-    args: [
-      nowStr,
-      tanggalKerja,
-      idKaryawan,
-      String(log.nama),
-      String(idLog),
-      `Log scan ${log.jenis_scan} (${log.jam_scan}) dihapus oleh Operator ${kodeOperator}.`,
-    ],
-  });
+    await tx.execute({
+      sql: `INSERT INTO audit_absensi (
+            waktu, jenis, tanggal, id_karyawan, nama, baris_referensi, detail, status
+          ) VALUES (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'), 'Hapus Log Scan', ?, ?, ?, ?, ?, 'Berhasil');`,
+      args: [
+        tanggalKerja,
+        idKaryawan,
+        String(log.nama),
+        String(idLog),
+        `Log scan ${log.jenis_scan} (${log.jam_scan}) dihapus oleh Operator ${kodeOperator}.`,
+      ],
+    });
+
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
+  }
 
   return {
     sukses: true,
@@ -485,119 +384,40 @@ export async function hapusImportOffline(
   const imp = importRes.rows[0] as Record<string, unknown>;
   const idUnik = String(imp.id_unik);
   const tanggal = String(imp.tanggal);
-  const nowStr = new Date().toISOString();
 
-  // Delete import_offline row
-  await db.execute({
-    sql: "DELETE FROM import_offline WHERE event_key = ?;",
-    args: [eventKey],
-  });
+  const tx = await db.transaction("write");
+  try {
+    await tx.execute({
+      sql: "DELETE FROM import_offline WHERE event_key = ?;",
+      args: [eventKey],
+    });
+    await tx.execute({
+      sql: "DELETE FROM log_scan WHERE id_referensi = ? OR (id_karyawan = ? AND tanggal_kerja = ? AND (sumber_data = 'Import Offline' OR sumber_data = 'Import Manual'));",
+      args: [eventKey, idUnik, tanggal],
+    });
 
-  // Delete related log_scan
-  await db.execute({
-    sql: "DELETE FROM log_scan WHERE id_referensi = ? OR (id_karyawan = ? AND tanggal_kerja = ? AND (sumber_data = 'Import Offline' OR sumber_data = 'Import Manual'));",
-    args: [eventKey, idUnik, tanggal],
-  });
+    await rebuildAttendanceFromLogs(tx, idUnik, tanggal, { kind: "import" });
 
-  // Check remaining scan logs
-  const remRes = await db.execute({
-    sql: "SELECT * FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? ORDER BY jam_scan ASC;",
-    args: [idUnik, tanggal],
-  });
+    await tx.execute({
+      sql: `INSERT INTO audit_absensi (
+            waktu, jenis, tanggal, id_karyawan, nama, baris_referensi, detail, status
+          ) VALUES (strftime('%Y-%m-%d %H:%M:%S', 'now', '+7 hours'), 'Hapus Import Offline', ?, ?, ?, ?, ?, 'Berhasil');`,
+      args: [
+        tanggal,
+        idUnik,
+        String(imp.nama || "-"),
+        eventKey,
+        `Baris import offline dihapus oleh Operator ${kodeOperator}.`,
+      ],
+    });
 
-  const absRes = await db.execute({
-    sql: "SELECT * FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day')) ORDER BY (CASE WHEN tanggal = ? THEN 0 ELSE 1 END) ASC LIMIT 1;",
-    args: [idUnik, tanggal, tanggal, tanggal],
-  });
-
-  if (absRes.rows.length > 0) {
-    const abs = absRes.rows[0] as Record<string, unknown>;
-    const idSesi = String(abs.id_sesi);
-
-    if (remRes.rows.length === 0) {
-      await db.execute({
-        sql: "DELETE FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day'));",
-        args: [idUnik, tanggal, tanggal],
-      });
-    } else {
-      const inLog = remRes.rows.find((r) => String(r.jenis_scan) === "Masuk");
-      const outLog = remRes.rows.find((r) => String(r.jenis_scan) === "Pulang");
-
-      const inVal = inLog
-        ? formatDateTime(tanggal, String(inLog.jam_scan))
-        : "";
-      const outVal = outLog
-        ? formatDateTime(tanggal, String(outLog.jam_scan))
-        : "";
-      const statusAbsen =
-        inVal && outVal
-          ? "Lengkap"
-          : inVal
-            ? "Belum Pulang"
-            : "Perlu Verifikasi";
-
-      const idShift = Number(abs.id_shift || 1);
-      const shiftRes = await db.execute({
-        sql: "SELECT jam_masuk, jam_pulang, jam_kerja_normal_menit, istirahat_menit, offset_istirahat_mulai FROM tbl_shift WHERE id_shift = ? LIMIT 1;",
-        args: [idShift],
-      });
-      const aturanShift = aturanShiftDariBaris(
-        shiftRes.rows[0] as Record<string, unknown> | undefined,
-      );
-
-      const inMin = parseTimeToMinutes(inVal);
-      const outMin = parseTimeToMinutes(outVal);
-      let duration: number | null = null;
-      if (inMin !== null && outMin !== null) {
-        duration = outMin - inMin;
-        if (duration < 0) duration += 1440;
-      }
-
-      const hasil = hitungUlangAbsensiDariJam({
-        masukMenit: inMin,
-        durasiMenit: duration,
-        shift: aturanShift,
-      });
-      const calculatedLate = hasil.menitTerlambat;
-      const calculatedEarly = hasil.menitDatangAwal;
-      const calculatedWork = hasil.jamKerja;
-      const calculatedOvertime = hasil.lembur;
-      const calculatedShortage = hasil.jamKerjaKurang;
-
-      await db.execute({
-        sql: `UPDATE absensi_harian SET
-              jam_masuk = ?, jam_pulang = ?, status_absen = ?, update_terakhir = ?,
-              menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ?
-              WHERE id_sesi = ?;`,
-        args: [
-          inVal,
-          outVal,
-          statusAbsen,
-          nowStr,
-          calculatedLate,
-          calculatedEarly,
-          calculatedWork,
-          calculatedOvertime,
-          calculatedShortage,
-          idSesi,
-        ],
-      });
-    }
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    tx.close();
   }
-
-  await db.execute({
-    sql: `INSERT INTO audit_absensi (
-          waktu, jenis, tanggal, id_karyawan, nama, baris_referensi, detail, status
-        ) VALUES (?, 'Hapus Import Offline', ?, ?, ?, ?, ?, 'Berhasil');`,
-    args: [
-      nowStr,
-      tanggal,
-      idUnik,
-      String(imp.nama || "-"),
-      eventKey,
-      `Baris import offline dihapus oleh Operator ${kodeOperator}.`,
-    ],
-  });
 
   return { sukses: true, pesan: "Data import offline berhasil dihapus." };
 }

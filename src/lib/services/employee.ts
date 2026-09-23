@@ -1,5 +1,6 @@
 import "server-only";
 
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { db, ensureDbInitialized } from "@/lib/db";
 
 export interface KaryawanInput {
@@ -76,8 +77,7 @@ export async function importKaryawanMassal(drafts: KaryawanInput[]) {
   for (let offset = 0; offset < accepted.length; offset += 100) {
     const statements = accepted.slice(offset, offset + 100).flatMap((data) => {
       const token = generateRandomToken(10);
-      const today =
-        data.tanggal_daftar || new Date().toISOString().split("T")[0];
+      const today = data.tanggal_daftar || formatTanggalOperasional(Date.now());
       return [
         {
           sql: `INSERT INTO master_data (
@@ -193,12 +193,46 @@ export async function getKaryawanById(id_unik: string) {
     : null;
 }
 
+/**
+ * ID Unik dan Kode Karyawan masing-masing hanya boleh dimiliki satu orang.
+ *
+ * Tanpa pemeriksaan ini UNIQUE SQLite yang menolaknya, dan penolakan itu
+ * sampai ke layar sebagai galat server tanpa keterangan. Teksnya WAJIB sama
+ * dengan `assert_employee_identity_free` di `operational.rs`. `kecuali` diisi
+ * pada penyuntingan: baris karyawan itu sendiri bukan bentrokan.
+ */
+export async function pesanBentrokIdentitasKaryawan(
+  idUnik: string,
+  kode: string,
+  kecuali?: string,
+): Promise<string | null> {
+  await ensureDbInitialized();
+  if (kecuali === undefined) {
+    const pemilik = await db.execute({
+      sql: "SELECT nama FROM master_data WHERE id_unik = ? LIMIT 1;",
+      args: [idUnik],
+    });
+    const nama = pemilik.rows[0]?.nama;
+    if (nama !== undefined) {
+      return `ID Unik '${idUnik}' sudah dipakai ${String(nama)}. ID Unik harus unik.`;
+    }
+  }
+  if (!kode) return null;
+  const pemilikKode = await db.execute({
+    sql: "SELECT id_unik, nama FROM master_data WHERE kode_karyawan = ? AND id_unik <> ? LIMIT 1;",
+    args: [kode, kecuali ?? idUnik],
+  });
+  const row = pemilikKode.rows[0];
+  if (!row) return null;
+  return `Kode Karyawan '${kode}' sudah dipakai ${String(row.nama)} (${String(row.id_unik)}). Kode Karyawan harus unik.`;
+}
+
 export async function tambahKaryawan(data: KaryawanInput) {
   await ensureDbInitialized();
 
   const tokenAbsensi = generateRandomToken(10);
   const qrCodePayload = `${data.id_unik}|${tokenAbsensi}`;
-  const today = data.tanggal_daftar || new Date().toISOString().split("T")[0];
+  const today = data.tanggal_daftar || formatTanggalOperasional(Date.now());
 
   // 1. Insert ke master_data
   await db.execute({

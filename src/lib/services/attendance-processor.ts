@@ -57,7 +57,6 @@ export interface ScanSecurityPolicy {
 
 export interface WebScanContext {
   waktuScan: ExplicitInstant;
-  actorOperatorId?: number;
   policy?: ScanSecurityPolicy;
 }
 
@@ -123,16 +122,8 @@ export async function processWebAttendanceScan(
       waktuScan,
       context.policy ?? {},
     );
-    const revision = context.actorOperatorId
-      ? await recordScanChange(
-          transaction,
-          result,
-          context.actorOperatorId,
-          waktuScan,
-        )
-      : undefined;
     await transaction.commit();
-    return revision === undefined ? result : { ...result, revision };
+    return result;
   } catch (error) {
     await transaction.rollback();
     throw error;
@@ -1134,30 +1125,6 @@ async function insertLog(
       input.kodeOperator,
     ],
   });
-}
-
-async function recordScanChange(
-  transaction: Transaction,
-  result: ScanResult,
-  actorOperatorId: number,
-  waktuScan: Date,
-): Promise<number> {
-  const entityKey =
-    result.idSesi ??
-    `scan:${waktuScan.getTime()}:${result.idKaryawan || "tidak-dikenal"}`;
-  const changeResult = await transaction.execute({
-    sql: `INSERT INTO sync_change_log (
-            domain, entity_key, operation, payload_json, changed_at,
-            actor_operator_id
-          ) VALUES ('attendance', ?, 'scan', ?, ?, ?);`,
-    args: [
-      entityKey,
-      JSON.stringify(result),
-      waktuScan.toISOString(),
-      actorOperatorId,
-    ],
-  });
-  return Number(changeResult.lastInsertRowid);
 }
 
 async function getSettings(

@@ -9,6 +9,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -149,7 +150,7 @@ export default function HolidaysPage() {
 
   const handleOpenAdd = () => {
     setEditingId(null);
-    const today = new Date().toISOString().split("T")[0];
+    const today = formatTanggalOperasional(Date.now());
     setDraft({
       tanggal: today,
       nama_libur: "",

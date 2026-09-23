@@ -3,7 +3,9 @@
 import type { ReactNode } from "react";
 import { AutoAlfaRunner } from "./AutoAlfaRunner";
 import { AutoSyncRunner } from "./AutoSyncRunner";
+import { AutoWaSenderRunner } from "./AutoWaSenderRunner";
 import { HeaderBar } from "./HeaderBar";
+import { LicenseNotice } from "./license/LicenseNotice";
 import { AuroraBackground } from "./visual/AuroraBackground";
 import { VisualProvider } from "./visual/VisualProvider";
 
@@ -22,6 +24,7 @@ export function AppShell({
       <AuroraBackground />
       <AutoAlfaRunner />
       <AutoSyncRunner />
+      <AutoWaSenderRunner />
       <a
         href="#main-content"
         className="fixed left-4 top-3 z-[100] -translate-y-20 rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-950 shadow-xl transition-transform focus:translate-y-0"
@@ -29,6 +32,7 @@ export function AppShell({
         Lewati ke konten utama
       </a>
       <HeaderBar />
+      <LicenseNotice />
       <main
         id="main-content"
         className={`visual-page-enter relative z-10 flex min-h-0 flex-1 flex-col pb-24 lg:pb-0 ${contentClassName}`}

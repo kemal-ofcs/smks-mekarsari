@@ -1,16 +1,12 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   noStoreJson,
   readJsonBody,
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   getAppDisplayName,
   updateAppDisplayName,
@@ -39,17 +35,10 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const body = (await readJsonBody(request)) as { appDisplayName?: string };
     const data = await updateAppDisplayName(body.appDisplayName ?? "");
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "setting",
-      entityKey: "app_display_name",
-      operation: "update",
-      payload: { key: "app_display_name", value: data },
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ data, revision });
+    return noStoreJson({ data });
   } catch (error) {
     return toApiErrorResponse(error);
   }

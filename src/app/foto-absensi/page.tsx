@@ -9,6 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { AttendancePhotoEntry } from "@/lib/attendance/photo-history";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -23,13 +24,11 @@ import { useHydrated } from "@/lib/hooks/useHydrated";
 const PURGE_DAYS = 90;
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return formatTanggalOperasional(Date.now());
 }
 
 function daysAgoIso(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().slice(0, 10);
+  return formatTanggalOperasional(Date.now() - days * 86_400_000);
 }
 
 function formatTimestamp(value: string) {

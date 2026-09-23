@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use super::{
     config::DesktopState,
     models::{CommandError, DesktopSyncStatus},
-    payroll_seed, remote, storage,
+    payroll_seed, storage,
     turso::TursoClient,
 };
 
@@ -19,7 +19,7 @@ use super::{
 /// `CURRENT_SCHEMA_VERSION` di `web-desktop/src/lib/db-schema.ts` setiap kali
 /// migrasi baru ditambahkan, karena keduanya membaca tabel `schema_migration`
 /// yang sama di Turso.
-pub const CLIENT_SCHEMA_VERSION: i64 = 32;
+pub const CLIENT_SCHEMA_VERSION: i64 = 34;
 
 /// Hanya `cloud > client` yang berbahaya; `cloud <= client` adalah kondisi normal.
 fn is_client_schema_outdated(cloud_version: i64) -> bool {
@@ -1435,9 +1435,46 @@ fn apply_table(
                 .iter()
                 .map(|column| sql_value(row.get(*column)))
                 .collect::<Vec<_>>();
-            upsert_row
-                .execute(rusqlite::params_from_iter(values))
-                .map_err(|err| sync_table_error(definition.table, err))?;
+            let mut applied = upsert_row.execute(rusqlite::params_from_iter(values.clone()));
+            let code_collision = definition.domain == "employee"
+                && matches!(
+                    &applied,
+                    Err(err) if err.to_string().contains(super::turso::EMPLOYEE_CODE_UNIQUE_ERROR)
+                );
+            if code_collision {
+                // Kode Karyawan baris cloud masih dipegang orang lain di
+                // perangkat ini. Dulu satu bentrokan ini menggagalkan SELURUH
+                // pull, sehingga perangkat berhenti menerima semua data cloud.
+                let kode = entity_key(row, "kode_karyawan");
+                let holder: Option<String> = transaction
+                    .query_row(
+                        "SELECT id_unik FROM master_data WHERE kode_karyawan = ? AND id_unik <> ? LIMIT 1;",
+                        params![kode, key],
+                        |found| found.get(0),
+                    )
+                    .optional()
+                    .map_err(|_| CommandError::internal())?;
+                match holder {
+                    // Pemegangnya belum pernah terkirim: kodenya dobel sungguhan.
+                    // Baris cloud dilewati; konflik push-nya memberi tahu operator
+                    // cara menyelesaikannya (`employee_code_conflict_message`).
+                    Some(holder) if guard.has("employee", &holder) => continue,
+                    // Pemegangnya sudah tersinkron, jadi cloud yang benar — misalnya
+                    // dua orang bertukar kode. Kodenya dilepas; baris pemegang
+                    // sendiri memasang kode barunya pada pull yang sama.
+                    Some(holder) => {
+                        transaction
+                            .execute(
+                                "UPDATE master_data SET kode_karyawan = NULL WHERE id_unik = ?;",
+                                params![holder],
+                            )
+                            .map_err(|_| CommandError::internal())?;
+                        applied = upsert_row.execute(rusqlite::params_from_iter(values));
+                    }
+                    None => {}
+                }
+            }
+            applied.map_err(|err| sync_table_error(definition.table, err))?;
             upsert_revision
                 .execute(params![
                     definition.domain,
@@ -1753,6 +1790,9 @@ fn load_revision_hashes(
     Ok(hashes)
 }
 
+/// Snapshot tanpa catatan `sync_pulse`. Pemanggil produksinya (pull lewat
+/// server aplikasi) sudah dihapus; yang tersisa hanya tes.
+#[cfg(test)]
 pub fn apply_snapshot(state: &DesktopState, payload: &Value) -> Result<usize, CommandError> {
     apply_snapshot_with_pulse(state, payload, None)
 }
@@ -2026,85 +2066,65 @@ fn load_tombstone_cursor(state: &DesktopState) -> Result<i64, CommandError> {
         .unwrap_or(0))
 }
 
-pub async fn pull_snapshot(
-    state: &DesktopState,
-    token: &str,
-) -> Result<DesktopSyncStatus, CommandError> {
-    if let Ok(turso) = state.get_turso_client() {
-        let (last_rev, _) = {
-            let connection = storage::database(&state.data_dir)?;
-            connection
-                .query_row(
-                    "SELECT last_revision, updated_at FROM desktop_sync_cursor WHERE domain = 'operational';",
-                    [],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
-                )
-                .unwrap_or((0, None))
-        };
+/// Tarik perubahan dari database yang dikonfigurasi (Turso, server sendiri,
+/// atau berkas lokal). Jalur HTTP ke server aplikasi (`/api/sync/snapshot`)
+/// sudah dipensiunkan; tanpa konfigurasi database, pull gagal dengan pesan
+/// yang menyuruh mengatur koneksi, bukan diam-diam kembali tanpa data.
+pub async fn pull_snapshot(state: &DesktopState) -> Result<DesktopSyncStatus, CommandError> {
+    let turso = state.get_turso_client()?;
+    let (last_rev, _) = {
+        let connection = storage::database(&state.data_dir)?;
+        connection
+            .query_row(
+                "SELECT last_revision, updated_at FROM desktop_sync_cursor WHERE domain = 'operational';",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .unwrap_or((0, None))
+    };
 
-        // Probe murah sebelum menarik apa pun: satu query kecil ke `sync_pulse`
-        // memberi tahu tabel mana saja yang berubah sejak pull terakhir. Trigger
-        // pulse di cloud ikut naik untuk penulisan dari perangkat lain MAUPUN
-        // dari route handler Web yang menulis langsung ke Turso, jadi probe ini
-        // tidak bisa melewatkan perubahan. Bila tidak ada yang berubah, siklus
-        // sync selesai tanpa menarik satu baris pun.
-        let pulse = turso.fetch_sync_pulse().await?;
-        let wanted = match pulse.as_ref() {
-            Some(pulse) => {
-                let local = load_table_cursors(state)?;
-                let stale = pulse
-                    .iter()
-                    .filter(|(table, remote)| local.get(table.as_str()) != Some(remote))
-                    .map(|(table, _)| table.clone())
-                    .collect::<HashSet<String>>();
-                if stale.is_empty() {
-                    return status(state);
-                }
-                Some(stale)
-            }
-            // Database cloud lama tanpa tabel pulse: jatuh ke pull penuh.
-            None => None,
-        };
-
-        let tombstone_cursor = load_tombstone_cursor(state)?;
-        let payload = turso
-            .pull_snapshot_tables(last_rev, wanted.as_ref(), tombstone_cursor)
-            .await?;
-        let applied_pulse = pulse.as_ref().map(|pulse| {
-            pulse
+    // Probe murah sebelum menarik apa pun: satu query kecil ke `sync_pulse`
+    // memberi tahu tabel mana saja yang berubah sejak pull terakhir. Trigger
+    // pulse di cloud ikut naik untuk penulisan dari perangkat lain MAUPUN
+    // dari route handler Web yang menulis langsung ke Turso, jadi probe ini
+    // tidak bisa melewatkan perubahan. Bila tidak ada yang berubah, siklus
+    // sync selesai tanpa menarik satu baris pun.
+    let pulse = turso.fetch_sync_pulse().await?;
+    let wanted = match pulse.as_ref() {
+        Some(pulse) => {
+            let local = load_table_cursors(state)?;
+            let stale = pulse
                 .iter()
-                .filter(|(table, _)| match wanted.as_ref() {
-                    None => true,
-                    Some(stale) => stale.contains(table.as_str()),
-                })
-                .map(|(table, revision)| (table.clone(), *revision))
-                .collect::<HashMap<String, i64>>()
-        });
-        let written = apply_snapshot_with_pulse(state, &payload, applied_pulse.as_ref())?;
-        let mut result = status(state)?;
-        result.changed_rows = i64::try_from(written).unwrap_or(i64::MAX);
-        return Ok(result);
-    }
+                .filter(|(table, remote)| local.get(table.as_str()) != Some(remote))
+                .map(|(table, _)| table.clone())
+                .collect::<HashSet<String>>();
+            if stale.is_empty() {
+                return status(state);
+            }
+            Some(stale)
+        }
+        // Database cloud lama tanpa tabel pulse: jatuh ke pull penuh.
+        None => None,
+    };
 
-    if !token.is_empty() {
-        // Kursor tombstone ikut dikirim supaya jalur server aplikasi menerima
-        // penghapusan yang sama dengan jalur Turso langsung. Server versi lama
-        // mengabaikan kunci ini dan tidak mengembalikan tombstone apa pun —
-        // perilakunya persis seperti sebelum fitur ini ada, bukan error.
-        let payload = remote::authorized_json(
-            state,
-            reqwest::Method::POST,
-            "/api/sync/snapshot",
-            Some(json!({ "tombstoneSince": load_tombstone_cursor(state)? })),
-            token,
-        )
+    let tombstone_cursor = load_tombstone_cursor(state)?;
+    let payload = turso
+        .pull_snapshot_tables(last_rev, wanted.as_ref(), tombstone_cursor)
         .await?;
-        let written = apply_snapshot(state, &payload)?;
-        let mut result = status(state)?;
-        result.changed_rows = i64::try_from(written).unwrap_or(i64::MAX);
-        return Ok(result);
-    }
-    status(state)
+    let applied_pulse = pulse.as_ref().map(|pulse| {
+        pulse
+            .iter()
+            .filter(|(table, _)| match wanted.as_ref() {
+                None => true,
+                Some(stale) => stale.contains(table.as_str()),
+            })
+            .map(|(table, revision)| (table.clone(), *revision))
+            .collect::<HashMap<String, i64>>()
+    });
+    let written = apply_snapshot_with_pulse(state, &payload, applied_pulse.as_ref())?;
+    let mut result = status(state)?;
+    result.changed_rows = i64::try_from(written).unwrap_or(i64::MAX);
+    Ok(result)
 }
 
 fn mark_batch_failed(state: &DesktopState, event_ids: &[String], message: &str) {
@@ -2939,100 +2959,54 @@ fn ensure_unsynced_payroll_data_enqueued(state: &DesktopState) -> Result<(), Com
 /// siklus selalu selesai; sisa antrean ikut siklus berikutnya.
 const MAX_PUSH_BATCHES_PER_CYCLE: usize = 40;
 
-pub async fn push_outbox(state: &DesktopState, token: &str) -> Result<(), CommandError> {
+/// Kirim antrean outbox ke database yang dikonfigurasi. Jalur HTTP ke server
+/// aplikasi (`/api/sync/push`) sudah dipensiunkan: dispatcher TypeScript-nya
+/// hanya mengenal 15 dari 33 domain, jadi event akademik yang lewat sana macet
+/// permanen. Tanpa konfigurasi database event tetap `pending` dan terkirim
+/// begitu koneksi diatur.
+pub async fn push_outbox(state: &DesktopState) -> Result<(), CommandError> {
     let _ = ensure_unsynced_payroll_data_enqueued(state);
-    if let Ok(turso) = state.get_turso_client() {
-        // Diperiksa sekali per siklus push, dan hanya bila benar-benar ada yang
-        // dikirim, supaya sync idle tidak menambah round-trip ke Turso.
-        let mut schema_checked = false;
-        for _ in 0..MAX_PUSH_BATCHES_PER_CYCLE {
-            let (_client_id, events) = pending_events(state)?;
-            if events.is_empty() {
-                return Ok(());
-            }
-            if !schema_checked {
-                // Sengaja sebelum mark_batch_failed mana pun: event tetap
-                // `pending` dan akan terkirim lagi setelah aplikasi diperbarui.
-                assert_cloud_schema_compatible(&turso).await?;
-                schema_checked = true;
-            }
-            let event_ids = events
-                .iter()
-                .filter_map(|event| event.get("eventId").and_then(Value::as_str))
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
+    let turso = state.get_turso_client()?;
+    // Diperiksa sekali per siklus push, dan hanya bila benar-benar ada yang
+    // dikirim, supaya sync idle tidak menambah round-trip ke Turso.
+    let mut schema_checked = false;
+    for _ in 0..MAX_PUSH_BATCHES_PER_CYCLE {
+        let (_client_id, events) = pending_events(state)?;
+        if events.is_empty() {
+            return Ok(());
+        }
+        if !schema_checked {
+            // Sengaja sebelum mark_batch_failed mana pun: event tetap
+            // `pending` dan akan terkirim lagi setelah aplikasi diperbarui.
+            assert_cloud_schema_compatible(&turso).await?;
+            schema_checked = true;
+        }
+        let event_ids = events
+            .iter()
+            .filter_map(|event| event.get("eventId").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
 
-            let results = match turso.push_events(&events).await {
-                Ok(res) => res,
-                Err(error) => {
-                    mark_batch_failed(state, &event_ids, &error.message);
-                    return Err(error);
-                }
-            };
-
-            if let Err(error) = apply_push_results(state, &event_ids, &results) {
-                mark_batch_failed(
-                    state,
-                    &event_ids,
-                    "Respons database Turso tidak lengkap atau tidak valid.",
-                );
+        let results = match turso.push_events(&events).await {
+            Ok(res) => res,
+            Err(error) => {
+                mark_batch_failed(state, &event_ids, &error.message);
                 return Err(error);
             }
-            if event_ids.len() < 50 {
-                return Ok(());
-            }
-        }
-        return Ok(());
-    }
+        };
 
-    if !token.is_empty() {
-        for _ in 0..MAX_PUSH_BATCHES_PER_CYCLE {
-            let (client_id, events) = pending_events(state)?;
-            if events.is_empty() {
-                return Ok(());
-            }
-            let event_ids = events
-                .iter()
-                .filter_map(|event| event.get("eventId").and_then(Value::as_str))
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
-            let response = remote::authorized_json(
+        if let Err(error) = apply_push_results(state, &event_ids, &results) {
+            mark_batch_failed(
                 state,
-                reqwest::Method::POST,
-                "/api/sync/push",
-                Some(json!({
-                    "clientId": client_id,
-                    "schemaVersion": CLIENT_SCHEMA_VERSION,
-                    "events": events,
-                })),
-                token,
-            )
-            .await;
-            let response = match response {
-                Ok(response) => response,
-                Err(error) => {
-                    mark_batch_failed(state, &event_ids, &error.message);
-                    return Err(error);
-                }
-            };
-            let results = response
-                .get("results")
-                .and_then(Value::as_array)
-                .ok_or_else(CommandError::internal)?;
-            if let Err(error) = apply_push_results(state, &event_ids, results) {
-                mark_batch_failed(
-                    state,
-                    &event_ids,
-                    "Respons server tidak lengkap atau tidak valid.",
-                );
-                return Err(error);
-            }
-            if event_ids.len() < 50 {
-                return Ok(());
-            }
+                &event_ids,
+                "Respons database Turso tidak lengkap atau tidak valid.",
+            );
+            return Err(error);
+        }
+        if event_ids.len() < 50 {
+            return Ok(());
         }
     }
-
     Ok(())
 }
 
@@ -3058,10 +3032,7 @@ impl Drop for SyncInFlightGuard {
     }
 }
 
-pub async fn synchronize(
-    state: &DesktopState,
-    token: &str,
-) -> Result<DesktopSyncStatus, CommandError> {
+pub async fn synchronize(state: &DesktopState) -> Result<DesktopSyncStatus, CommandError> {
     if SYNC_IN_FLIGHT
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
@@ -3071,8 +3042,8 @@ pub async fn synchronize(
     }
     let _in_flight = SyncInFlightGuard;
 
-    let push_error = push_outbox(state, token).await.err();
-    let pulled = pull_snapshot(state, token).await;
+    let push_error = push_outbox(state).await.err();
+    let pulled = pull_snapshot(state).await;
 
     // Penegakan RBAC dinamis untuk jalur 2-tier. Sesi Desktop/Mobile hidup di
     // memori sampai aplikasi ditutup, jadi tanpa langkah ini operator yang baru
@@ -3338,6 +3309,7 @@ pub fn resolve_conflicts(state: &DesktopState, event_id: Option<&str>) -> Result
 pub fn resolve_conflicts_local(
     state: &DesktopState,
     event_id: Option<&str>,
+    operator: &str,
 ) -> Result<(), CommandError> {
     let mut connection = storage::database(&state.data_dir)?;
     let transaction = connection
@@ -3354,11 +3326,12 @@ pub fn resolve_conflicts_local(
         transaction
             .execute(
                 // Payload ikut ditandai supaya server tahu ini keputusan sadar
-                // operator, bukan push biasa. Tanpa tanda ini konfliknya abadi:
+                // operator, bukan push biasa. Untuk karyawan, nama operatornya
+                // ikut dibawa: penimpaan ID Unik dicatat di riwayat cloud. Tanpa tanda ini konfliknya abadi:
                 // basis optimistis di payload tidak pernah berubah, jadi setiap
                 // percobaan ulang ditolak dengan pesan yang sama.
-                "UPDATE desktop_sync_outbox SET status = 'pending', base_revision = NULL, attempt_count = 0, last_error = NULL, payload_json = json_set(payload_json, '$.forceLocalOverride', json('true')), updated_at = ? WHERE event_id = ? AND status = 'conflict';",
-                params![now, event_id],
+                "UPDATE desktop_sync_outbox SET status = 'pending', base_revision = NULL, attempt_count = 0, last_error = NULL, payload_json = CASE WHEN domain = 'employee' THEN json_set(payload_json, '$.forceLocalOverride', json('true'), '$.forceLocalOverrideBy', ?) ELSE json_set(payload_json, '$.forceLocalOverride', json('true')) END, updated_at = ? WHERE event_id = ? AND status = 'conflict';",
+                params![operator, now, event_id],
             )
             .map_err(|_| CommandError::internal())?;
     } else {
@@ -3367,8 +3340,8 @@ pub fn resolve_conflicts_local(
             .map_err(|_| CommandError::internal())?;
         transaction
             .execute(
-                "UPDATE desktop_sync_outbox SET status = 'pending', base_revision = NULL, attempt_count = 0, last_error = NULL, payload_json = json_set(payload_json, '$.forceLocalOverride', json('true')), updated_at = ? WHERE status = 'conflict';",
-                [now],
+                "UPDATE desktop_sync_outbox SET status = 'pending', base_revision = NULL, attempt_count = 0, last_error = NULL, payload_json = CASE WHEN domain = 'employee' THEN json_set(payload_json, '$.forceLocalOverride', json('true'), '$.forceLocalOverrideBy', ?) ELSE json_set(payload_json, '$.forceLocalOverride', json('true')) END, updated_at = ? WHERE status = 'conflict';",
+                params![operator, now],
             )
             .map_err(|_| CommandError::internal())?;
     }
@@ -3406,7 +3379,7 @@ mod tests {
 
     use super::{
         apply_push_results, apply_snapshot, enqueue, ensure_client_id, is_client_schema_outdated,
-        pending_events, prune_settled_outbox, storage, DesktopState, SnapshotTable,
+        pending_events, prune_settled_outbox, storage, synchronize, DesktopState, SnapshotTable,
         CLIENT_SCHEMA_VERSION, SNAPSHOT_TABLES, SYNC_OUTBOX_RETENTION_DAYS,
     };
 
@@ -4114,6 +4087,131 @@ mod tests {
         assert_eq!(cards, 2);
         assert_eq!(user_shift, 1);
         assert_eq!(shift_name, "Shift Server");
+    }
+
+    /// Jalur HTTP ke server aplikasi sudah dipensiunkan. Tanpa konfigurasi
+    /// database, sinkronisasi gagal dengan pesan yang menyuruh mengatur koneksi,
+    /// dan antrean perangkat tetap utuh untuk dikirim begitu koneksi diatur.
+    #[test]
+    fn tanpa_database_sinkronisasi_ditolak_dan_outbox_tetap_pending() {
+        let (_directory, state) = fixture();
+        let client_id = ensure_client_id(&state).expect("client identity");
+        let mut connection = storage::database(&state.data_dir).expect("local database");
+        let transaction = connection.transaction().expect("transaction");
+        enqueue(
+            &transaction,
+            &client_id,
+            "employee",
+            "create",
+            "K-01",
+            &json!({"id_unik": "K-01", "kode_karyawan": "001", "nama": "Ani", "divisi": "Dapur"}),
+            None,
+        )
+        .expect("event");
+        transaction.commit().expect("commit");
+        drop(connection);
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime uji");
+        let error = runtime
+            .block_on(synchronize(&state))
+            .expect_err("tanpa database sinkronisasi ditolak");
+        assert_eq!(error.code, "TURSO_NOT_CONFIGURED");
+
+        let status: String = storage::database(&state.data_dir)
+            .expect("local database")
+            .query_row(
+                "SELECT status FROM desktop_sync_outbox WHERE entity_key = 'K-01';",
+                [],
+                |row| row.get(0),
+            )
+            .expect("event outbox");
+        assert_eq!(status, "pending");
+    }
+
+    fn employee_ids(state: &DesktopState) -> Vec<(String, Option<String>)> {
+        let connection = storage::database(&state.data_dir).expect("local database");
+        let mut statement = connection
+            .prepare("SELECT id_unik, kode_karyawan FROM master_data ORDER BY id_unik;")
+            .expect("employee query");
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("employee rows");
+        rows.collect::<Result<_, _>>().expect("employees")
+    }
+
+    /// Dua perangkat offline memberi Kode Karyawan yang sama kepada dua orang.
+    /// Dulu baris cloud yang bentrok menggagalkan SELURUH pull, sehingga
+    /// perangkat ini berhenti menerima semua data cloud.
+    #[test]
+    fn pull_melewati_karyawan_cloud_yang_kodenya_dipegang_karyawan_belum_terkirim() {
+        let (_directory, state) = fixture();
+        let client_id = ensure_client_id(&state).expect("client identity");
+        let mut connection = storage::database(&state.data_dir).expect("local database");
+        let transaction = connection.transaction().expect("transaction");
+        transaction
+            .execute(
+                "INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift) VALUES ('K-02', '001', 'Budi', 'Dapur', 1);",
+                [],
+            )
+            .expect("local employee");
+        enqueue(
+            &transaction,
+            &client_id,
+            "employee",
+            "create",
+            "K-02",
+            &json!({"id_unik": "K-02", "kode_karyawan": "001", "nama": "Budi", "divisi": "Dapur"}),
+            None,
+        )
+        .expect("pending create");
+        transaction.commit().expect("commit");
+        drop(connection);
+
+        let snapshot = json!({"snapshot": {"revision": 30, "employees": [
+            {"id_unik": "K-01", "kode_karyawan": "001", "nama": "Ani", "divisi": "Dapur", "id_shift": 1},
+            {"id_unik": "K-03", "kode_karyawan": "003", "nama": "Citra", "divisi": "Dapur", "id_shift": 1}
+        ]}});
+        apply_snapshot(&state, &snapshot).expect("satu bentrokan tidak menggagalkan pull");
+
+        assert_eq!(
+            employee_ids(&state),
+            vec![
+                ("K-02".to_owned(), Some("001".to_owned())),
+                ("K-03".to_owned(), Some("003".to_owned())),
+            ]
+        );
+    }
+
+    /// Dua karyawan yang sudah tersinkron bertukar kode di cloud. Cloud yang
+    /// benar, jadi pertukarannya diterapkan tanpa bentrok di tengah jalan.
+    #[test]
+    fn pull_menerapkan_pertukaran_kode_karyawan_yang_sudah_tersinkron() {
+        let (_directory, state) = fixture();
+        storage::database(&state.data_dir)
+            .expect("local database")
+            .execute_batch(
+                "INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift) VALUES
+                    ('K-01', '001', 'Ani', 'Dapur', 1),
+                    ('K-02', '002', 'Budi', 'Dapur', 1);",
+            )
+            .expect("synced employees");
+
+        let snapshot = json!({"snapshot": {"revision": 31, "employees": [
+            {"id_unik": "K-01", "kode_karyawan": "002", "nama": "Ani", "divisi": "Dapur", "id_shift": 1},
+            {"id_unik": "K-02", "kode_karyawan": "001", "nama": "Budi", "divisi": "Dapur", "id_shift": 1}
+        ]}});
+        apply_snapshot(&state, &snapshot).expect("pertukaran kode diterapkan");
+
+        assert_eq!(
+            employee_ids(&state),
+            vec![
+                ("K-01".to_owned(), Some("002".to_owned())),
+                ("K-02".to_owned(), Some("001".to_owned())),
+            ]
+        );
     }
 
     #[test]

@@ -16,31 +16,10 @@ use crate::desktop::models::CommandError;
 use crate::desktop::storage;
 use crate::desktop::sync;
 
-fn require_permission(
-    state: &DesktopState,
-    permission: &str,
-) -> Result<crate::desktop::models::OperatorUser, CommandError> {
-    let session = state.session.lock().map_err(|_| CommandError::internal())?;
-    let session = session.as_ref().ok_or_else(|| {
-        CommandError::new(
-            "DESKTOP_SESSION_MISSING",
-            "Session Desktop tidak tersedia. Silakan login kembali.",
-        )
-    })?;
-    if !session.operator.is_superadmin
-        && !session
-            .operator
-            .permissions
-            .iter()
-            .any(|key| key == permission)
-    {
-        return Err(CommandError::new(
-            "DESKTOP_ACCESS_DENIED",
-            "Akses ditolak untuk tindakan ini.",
-        ));
-    }
-    Ok(session.operator.clone())
-}
+// Gerbang izin yang SAMA dengan seluruh command lain. Dulu modul ini memegang
+// salinannya sendiri, sehingga aturan apa pun yang ditambahkan ke gerbang utama
+// — mode baca-saja lisensi misalnya — tidak pernah sampai ke command payroll.
+use crate::desktop::commands::require_permission;
 
 fn iso_now_tx(tx: &rusqlite::Transaction<'_>) -> String {
     tx.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ', 'now');", [], |r| {

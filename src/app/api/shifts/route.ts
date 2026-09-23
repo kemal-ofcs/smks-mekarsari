@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -12,7 +9,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   hapusShift,
   kalkulasiJamKerjaNormalMenit,
@@ -86,19 +82,12 @@ async function prepare(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const body = await readJsonBody<ShiftMutationBody>(request);
 
     const draft = parseDraft(body.draft);
     const result = await tambahShift(draft);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "shift",
-      entityKey: String(result.id_shift),
-      operation: "create",
-      payload: draft,
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ ...result, revision }, 201);
+    return noStoreJson(result, 201);
   } catch (error) {
     return toApiErrorResponse(error);
   }
@@ -106,19 +95,12 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const body = await readJsonBody<ShiftMutationBody>(request);
     const shiftId = parsePositiveId(body.shiftId, "ID shift");
     const draft = parseDraft(body.draft);
     await updateShift(shiftId, draft);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "shift",
-      entityKey: String(shiftId),
-      operation: "update",
-      payload: draft,
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ sukses: true, revision });
+    return noStoreJson({ sukses: true });
   } catch (error) {
     return toApiErrorResponse(error);
   }
@@ -126,7 +108,7 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const body = await readJsonBody<ShiftMutationBody>(request);
     const shiftId = parsePositiveId(body.shiftId, "ID shift");
     const result = await hapusShift(shiftId);
@@ -136,14 +118,7 @@ export async function DELETE(request: NextRequest) {
         409,
       );
     }
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "shift",
-      entityKey: String(shiftId),
-      operation: "delete",
-      payload: { id_shift: shiftId },
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ sukses: true, revision });
+    return noStoreJson({ sukses: true });
   } catch (error) {
     return toApiErrorResponse(error);
   }

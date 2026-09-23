@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -11,7 +8,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import { hapusKoreksiAdmin } from "@/lib/services/correction";
 import { hapusImportOffline } from "@/lib/services/history-mutation";
 
@@ -42,30 +38,14 @@ export async function DELETE(request: NextRequest) {
       const result = await hapusKoreksiAdmin(idReferensi, actor.kode_operator);
       if (!result.sukses) throw new ApiRequestError(result.pesan, 400);
 
-      const revision = await recordOperationalChange(getServerDatabase(), {
-        domain: "correction",
-        entityKey: idReferensi,
-        operation: "delete",
-        payload: { id_referensi: idReferensi },
-        actorOperatorId: actor.id,
-      });
-
-      return noStoreJson({ ...result, revision });
+      return noStoreJson(result);
     }
 
     if (eventKey) {
       const result = await hapusImportOffline(eventKey, actor.kode_operator);
       if (!result.sukses) throw new ApiRequestError(result.pesan, 400);
 
-      const revision = await recordOperationalChange(getServerDatabase(), {
-        domain: "offline-import",
-        entityKey: eventKey,
-        operation: "delete",
-        payload: { event_key: eventKey },
-        actorOperatorId: actor.id,
-      });
-
-      return noStoreJson({ ...result, revision });
+      return noStoreJson(result);
     }
 
     throw new ApiRequestError("Permintaan tidak valid.", 400);

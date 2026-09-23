@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -11,7 +8,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   type KoreksiInput,
   prosesKoreksiAdmin,
@@ -62,14 +58,7 @@ export async function POST(request: NextRequest) {
     await ensureServerDatabaseInitialized();
     const result = await prosesKoreksiAdmin(draft);
     if (!result.sukses) throw new ApiRequestError(result.pesan, 409);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "correction",
-      entityKey: result.id_referensi ?? `${draft.tanggal}:${draft.id_karyawan}`,
-      operation: "create",
-      payload: draft,
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ ...result, revision }, 201);
+    return noStoreJson(result, 201);
   } catch (error) {
     return toApiErrorResponse(error);
   }

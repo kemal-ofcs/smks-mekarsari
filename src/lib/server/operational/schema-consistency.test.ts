@@ -48,7 +48,7 @@ describe("Schema Consistency & Zero-Drift Guard", () => {
         'pmb_gelombang', 'pmb_pendaftar', 'pmb_berkas',
         'wali_otp', 'wali_session', 'wali_kredensial',
         'nilai_penilaian', 'nilai_siswa',
-        'berita', 'konten_publik'
+        'berita', 'konten_publik', 'riwayat_identitas_karyawan'
       );
     `);
     const tableCount = Number(tablesRes.rows[0]?.count ?? 0);
@@ -63,32 +63,5 @@ describe("Schema Consistency & Zero-Drift Guard", () => {
     // Assert: versi dan table count tidak boleh drift
     expect(CURRENT_SCHEMA_VERSION).toBe(maxMigrationVersion);
     expect(await isDatabaseSchemaReady(client)).toBe(true);
-  });
-
-  test("readOperationalSnapshot dapat membaca seluruh tabel snapshot tanpa error", async () => {
-    const { readOperationalSnapshot } = await import(
-      "@/lib/server/operational/snapshot"
-    );
-    const snapshot = await readOperationalSnapshot(client);
-    expect(snapshot).toHaveProperty("revision");
-    expect(snapshot).toHaveProperty("employees");
-    expect(snapshot).toHaveProperty("idCards");
-    expect(snapshot).toHaveProperty("shifts");
-    expect(snapshot).toHaveProperty("holidays");
-    expect(snapshot).toHaveProperty("settings");
-    expect(snapshot).toHaveProperty("companyProfiles");
-    expect(snapshot).toHaveProperty("idCardTemplates");
-    expect(snapshot).toHaveProperty("backups");
-    expect(snapshot).toHaveProperty("corrections");
-    expect(snapshot).toHaveProperty("imports");
-    expect(snapshot).toHaveProperty("attendance");
-    expect(snapshot).toHaveProperty("scanLogs");
-    expect(snapshot).toHaveProperty("akademikTahunAjaran");
-    expect(snapshot).toHaveProperty("akademikJurusan");
-    expect(snapshot).toHaveProperty("akademikRombel");
-    expect(snapshot).toHaveProperty("akademikMapel");
-    expect(snapshot).toHaveProperty("akademikGuruMapel");
-    expect(snapshot).toHaveProperty("guruData");
-    expect(snapshot).toHaveProperty("siswaData");
   });
 });

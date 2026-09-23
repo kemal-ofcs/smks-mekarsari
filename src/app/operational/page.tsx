@@ -6,6 +6,7 @@ import { AppShell } from "@/components/AppShell";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -114,7 +115,7 @@ export default function OperationalPage() {
 
   // Form State: Koreksi Admin
   const [correction, setCorrection] = useState({
-    tanggal: new Date().toISOString().slice(0, 10),
+    tanggal: formatTanggalOperasional(Date.now()),
     id_karyawan: "",
     nama: "",
     divisi: "",
@@ -126,7 +127,7 @@ export default function OperationalPage() {
 
   // Form State: Backup Karyawan
   const [backup, setBackup] = useState({
-    tanggal_tugas: new Date().toISOString().slice(0, 10),
+    tanggal_tugas: formatTanggalOperasional(Date.now()),
     id_karyawan_asal: "",
     nama_karyawan_asal: "",
     divisi_asal: "",
@@ -140,7 +141,7 @@ export default function OperationalPage() {
 
   // Form State: Import Manual (Per-Kolom)
   const [manualEntry, setManualEntry] = useState({
-    tanggal: new Date().toISOString().slice(0, 10),
+    tanggal: formatTanggalOperasional(Date.now()),
     id_unik: "",
     nama: "",
     divisi: "",
@@ -449,7 +450,7 @@ export default function OperationalPage() {
           rowObj[header] = parts[idx] ?? "";
         });
         rows.push({
-          tanggal: rowObj.tanggal || new Date().toISOString().slice(0, 10),
+          tanggal: rowObj.tanggal || formatTanggalOperasional(Date.now()),
           id_unik: rowObj.id_unik || "",
           nama: rowObj.nama || undefined,
           divisi: rowObj.divisi || undefined,
@@ -1297,7 +1298,7 @@ export default function OperationalPage() {
                             Batalkan
                           </button>
                         ) : null}
-                        {hasPermission(user, "backups.manage") ? (
+                        {hasPermission(user, "operational.delete") ? (
                           <button
                             type="button"
                             onClick={() =>
@@ -1315,8 +1316,11 @@ export default function OperationalPage() {
                             <span>Hapus</span>
                           </button>
                         ) : null}
-                        {!hasPermission(user, "backups.manage") &&
-                        item.status_tugas !== "Aktif" ? (
+                        {!hasPermission(user, "operational.delete") &&
+                        !(
+                          item.status_tugas === "Aktif" &&
+                          hasPermission(user, "backups.manage")
+                        ) ? (
                           <span>-</span>
                         ) : null}
                       </div>

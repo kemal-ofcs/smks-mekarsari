@@ -43,6 +43,29 @@ export async function simpanFotoPersonil(
   );
 }
 
+/**
+ * Langkah kedua "Tambah": simpan foto yang dipilih di form setelah personilnya
+ * berhasil dibuat. `null` berarti selesai (atau memang tidak ada foto);
+ * selain itu pesan peringatan yang siap ditampilkan.
+ *
+ * Sengaja dua langkah, bukan satu transaksi: jalur create ketiga jenis personil
+ * tidak perlu diubah. Konsekuensinya data bisa tersimpan tanpa foto — dan itu
+ * harus dikatakan terang, bukan dianggap berhasil.
+ */
+export async function simpanFotoPersonilBaru(
+  idUnik: string,
+  fotoBase64: string | null,
+): Promise<string | null> {
+  if (!idUnik || !fotoBase64) return null;
+  try {
+    await simpanFotoPersonil(idUnik, fotoBase64, "image/jpeg");
+    return null;
+  } catch (error) {
+    const alasan = error instanceof Error ? ` (${error.message})` : "";
+    return `Data tersimpan, tetapi foto gagal diunggah${alasan}. Unggah ulang dari tombol Edit.`;
+  }
+}
+
 export async function ambilFotoPersonil(idUnik: string) {
   if (isDesktopRuntime()) {
     return invokeDesktop<PersonnelPhoto | null>("desktop_get_personnel_photo", {
@@ -54,6 +77,27 @@ export async function ambilFotoPersonil(idUnik: string) {
     "POST",
     { id_unik: idUnik },
   );
+}
+
+/**
+ * Dari `ids`, mana yang punya foto — untuk tombol "Lihat Foto" di daftar
+ * personil. Hanya ID, tidak pernah isi foto: daftar personil tidak berhalaman,
+ * dan ratusan foto penuh untuk satu tabel akan berukuran puluhan MB.
+ */
+export async function statusFotoPersonil(ids: string[]): Promise<string[]> {
+  const unik = [...new Set(ids.filter(Boolean))].slice(0, 500);
+  if (unik.length === 0) return [];
+  const result = isDesktopRuntime()
+    ? await invokeDesktop<{ ids: string[] }>(
+        "desktop_list_personnel_photo_status",
+        { ids: unik },
+      )
+    : await requestWebApi<{ ids: string[] }>(
+        "/api/personnel/photo/status",
+        "POST",
+        { ids: unik },
+      );
+  return Array.isArray(result?.ids) ? result.ids : [];
 }
 
 export async function hapusFotoPersonil(idUnik: string) {

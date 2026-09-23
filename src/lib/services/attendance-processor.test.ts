@@ -35,7 +35,6 @@ beforeEach(async () => {
   await client.execute("DROP TRIGGER IF EXISTS test_fail_attendance;");
   await client.batch(
     [
-      "DELETE FROM sync_change_log;",
       "DELETE FROM log_scan;",
       "DELETE FROM absensi_harian;",
       "DELETE FROM backup_karyawan;",
@@ -136,13 +135,11 @@ async function scanAt(waktuScan: string, payload: Partial<ScanPayload> = {}) {
       kodeOperator: "OP_WEB",
       ...payload,
     },
-    { waktuScan, actorOperatorId: 1 },
+    { waktuScan },
   );
 }
 
-async function tableCount(
-  table: "log_scan" | "absensi_harian" | "sync_change_log",
-) {
+async function tableCount(table: "log_scan" | "absensi_harian") {
   const result = await client.execute(
     `SELECT COUNT(*) AS count FROM ${table};`,
   );
@@ -163,7 +160,6 @@ describe("integrasi Web mesin aturan scan", () => {
       jenisScan: "Masuk",
       keterangan: "Datang Lebih Awal",
       menitDatangAwal: 30,
-      revision: 1,
     });
     expect(attendance.rows[0]).toMatchObject({
       tanggal: "2026-08-12",
@@ -472,7 +468,7 @@ describe("guard dan konsistensi integrasi Web", () => {
     });
   });
 
-  test("kegagalan ABSENSI_HARIAN menggulung balik LOG_SCAN dan revision", async () => {
+  test("kegagalan ABSENSI_HARIAN menggulung balik LOG_SCAN", async () => {
     await client.execute(`
       CREATE TRIGGER test_fail_attendance
       BEFORE INSERT ON absensi_harian
@@ -486,7 +482,6 @@ describe("guard dan konsistensi integrasi Web", () => {
     );
     expect(await tableCount("absensi_harian")).toBe(0);
     expect(await tableCount("log_scan")).toBe(0);
-    expect(await tableCount("sync_change_log")).toBe(0);
   });
 
   test("auto multi-sesi aktif ketika shift target memiliki izinkan_multi_sesi = 1", async () => {

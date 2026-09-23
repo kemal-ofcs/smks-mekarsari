@@ -17,7 +17,9 @@ const testDirectory = mkdtempSync(join(tmpdir(), "sppg-ops-workflow-"));
 process.env.TURSO_DATABASE_URL = `file:${join(testDirectory, "test.db")}`;
 
 const { db, ensureDbInitialized } = await import("@/lib/db");
-const { buatPenugasanBackup } = await import("@/lib/services/backup");
+const { buatPenugasanBackup, hapusPenugasanBackup } = await import(
+  "@/lib/services/backup"
+);
 const { prosesKoreksiAdmin, hapusKoreksiAdmin } = await import(
   "@/lib/services/correction"
 );
@@ -788,5 +790,187 @@ describe("workflow operasional: hapus log scan merapikan riwayat asal", () => {
       args: [referensi],
     });
     expect(Number(akhir.rows[0]?.total)).toBe(0);
+  });
+});
+
+describe("workflow operasional: hapus log scan hanya menyentuh tanggalnya sendiri", () => {
+  async function seedAbsensi(
+    idSesi: string,
+    tanggal: string,
+    idShift: number,
+    jamMasuk: string,
+    jamPulang: string,
+    sumber = "Scanner",
+  ) {
+    await db.execute({
+      sql: `INSERT INTO absensi_harian (
+              id_sesi, id_karyawan, tanggal, nama, kelas_divisi, id_shift,
+              jam_masuk, jam_pulang, status_kehadiran, status_absen,
+              sumber, update_terakhir, bulan, tahun
+            ) VALUES (?, ?, ?, ?, 'Produksi', ?, ?, ?, 'Hadir', 'Lengkap', ?, ?, 'Agustus', 2026);`,
+      args: [
+        idSesi,
+        EMP_A.id,
+        tanggal,
+        EMP_A.name,
+        idShift,
+        jamMasuk,
+        jamPulang,
+        sumber,
+        jamPulang || jamMasuk,
+      ],
+    });
+  }
+
+  async function seedLog(
+    tanggalKerja: string,
+    timestamp: string,
+    jenis: string,
+    status = "Berhasil",
+  ) {
+    const res = await db.execute({
+      sql: `INSERT INTO log_scan (
+              timestamp_scan, tanggal_kerja, jam_scan, id_karyawan, nama,
+              divisi, jenis_scan, status_proses, sumber_data, kode_operator
+            ) VALUES (?, ?, ?, ?, ?, 'Produksi', ?, ?, 'Scanner', 'OP001');`,
+      args: [
+        timestamp,
+        tanggalKerja,
+        timestamp.slice(11),
+        EMP_A.id,
+        EMP_A.name,
+        jenis,
+        status,
+      ],
+    });
+    return Number(res.lastInsertRowid);
+  }
+
+  test("menghapus log Scan Ditolak tidak menghapus absensi kemarin", async () => {
+    await seedAbsensi(
+      "SESI_KEMARIN",
+      "2026-09-01",
+      1,
+      "2026-09-01 07:00:00",
+      "2026-09-01 15:00:00",
+    );
+    const idLog = await seedLog(
+      "2026-09-02",
+      "2026-09-02 07:05:00",
+      "Scan Ditolak",
+      "Ditolak",
+    );
+
+    const hasil = await hapusLogScan(idLog, "OP001");
+
+    expect(hasil.sukses).toBe(true);
+    expect(hasil.deletedAbsensiIdSesi).toEqual([]);
+    const cek = await db.execute(
+      "SELECT COUNT(*) AS total FROM absensi_harian WHERE id_sesi = 'SESI_KEMARIN';",
+    );
+    expect(Number(cek.rows[0]?.total)).toBe(1);
+  });
+
+  test("pulang shift malam yang dibangun ulang jatuh pada hari berikutnya", async () => {
+    await seedAbsensi(
+      "SESI_MALAM",
+      "2026-09-03",
+      3,
+      "2026-09-03 23:00:00",
+      "2026-09-04 07:00:00",
+    );
+    await seedLog("2026-09-03", "2026-09-03 23:00:00", "Masuk");
+    await seedLog("2026-09-03", "2026-09-04 06:50:00", "Pulang");
+    const terakhir = await seedLog(
+      "2026-09-03",
+      "2026-09-04 07:00:00",
+      "Pulang",
+    );
+
+    await hapusLogScan(terakhir, "OP001");
+
+    const cek = await db.execute(
+      "SELECT jam_masuk, jam_pulang FROM absensi_harian WHERE id_sesi = 'SESI_MALAM';",
+    );
+    expect(String(cek.rows[0]?.jam_masuk)).toBe("2026-09-03 23:00:00");
+    expect(String(cek.rows[0]?.jam_pulang)).toBe("2026-09-04 06:50:00");
+  });
+
+  test("menghapus log scanner tidak menimpa baris Koreksi Admin", async () => {
+    await seedAbsensi(
+      "SESI_KOREKSI",
+      "2026-09-05",
+      1,
+      "2026-09-05 07:30:00",
+      "",
+      "Koreksi Admin",
+    );
+    const idLog = await seedLog("2026-09-05", "2026-09-05 07:00:00", "Masuk");
+
+    await hapusLogScan(idLog, "OP001");
+
+    const cek = await db.execute(
+      "SELECT jam_masuk, sumber FROM absensi_harian WHERE id_sesi = 'SESI_KOREKSI';",
+    );
+    expect(String(cek.rows[0]?.jam_masuk)).toBe("2026-09-05 07:30:00");
+    expect(String(cek.rows[0]?.sumber)).toBe("Koreksi Admin");
+  });
+});
+
+describe("workflow operasional: hapus penugasan backup", () => {
+  test("penugasan yang sudah dipakai absensi ditolak, yang belum boleh dihapus", async () => {
+    const res = await buatPenugasanBackup({
+      tanggal_tugas: "2026-09-10",
+      id_karyawan_asal: EMP_A.id,
+      id_karyawan_pengganti: EMP_B.id,
+      id_shift_backup: 2,
+      kode_operator: "SPD001",
+    });
+    const idBackup = String(res.id_backup);
+    await db.execute({
+      sql: `INSERT INTO absensi_harian (
+              id_sesi, id_karyawan, tanggal, nama, kelas_divisi, id_shift,
+              status_kehadiran, status_absen, sumber, update_terakhir, bulan,
+              tahun, mode_tugas, id_backup
+            ) VALUES ('SESI_BACKUP', ?, '2026-09-10', ?, 'Produksi', 2, 'Hadir',
+              'Belum Pulang', 'Scanner', '2026-09-10 15:00:00', 'September',
+              2026, 'PENGGANTI', ?);`,
+      args: [EMP_B.id, EMP_B.name, idBackup],
+    });
+
+    const ditolak = await hapusPenugasanBackup(idBackup);
+    expect(ditolak.sukses).toBe(false);
+
+    await db.execute(
+      "DELETE FROM absensi_harian WHERE id_sesi = 'SESI_BACKUP';",
+    );
+    const dihapus = await hapusPenugasanBackup(idBackup);
+    expect(dihapus.sukses).toBe(true);
+    const status = await db.execute({
+      sql: "SELECT status_backup FROM master_data WHERE id_unik = ?;",
+      args: [EMP_B.id],
+    });
+    expect(String(status.rows[0]?.status_backup)).toBe("NORMAL");
+  });
+});
+
+describe("workflow operasional: identitas karyawan wajib unik", () => {
+  test("ID Unik dan Kode Karyawan ganda ditolak dengan pesan jelas", async () => {
+    const { pesanBentrokIdentitasKaryawan } = await import(
+      "@/lib/services/employee"
+    );
+    expect(await pesanBentrokIdentitasKaryawan(EMP_A.id, "KODE-BARU")).toBe(
+      `ID Unik '${EMP_A.id}' sudah dipakai ${EMP_A.name}. ID Unik harus unik.`,
+    );
+    expect(await pesanBentrokIdentitasKaryawan("EMP_BARU", EMP_A.code)).toBe(
+      `Kode Karyawan '${EMP_A.code}' sudah dipakai ${EMP_A.name} (${EMP_A.id}). Kode Karyawan harus unik.`,
+    );
+    // Menyimpan ulang kode miliknya sendiri bukan bentrokan.
+    expect(
+      await pesanBentrokIdentitasKaryawan(EMP_A.id, EMP_A.code, EMP_A.id),
+    ).toBeNull();
+    expect(
+      await pesanBentrokIdentitasKaryawan(EMP_B.id, EMP_A.code, EMP_B.id),
+    ).toContain(`sudah dipakai ${EMP_A.name}`);
   });
 });

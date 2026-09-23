@@ -65,7 +65,6 @@ export async function POST(request: NextRequest) {
         fotoMime: photoMime(body.fotoMime),
       },
       {
-        actorOperatorId: actor.id,
         // Alamat IP dan kebijakan role dibaca di server. Keduanya TIDAK boleh
         // datang dari body: terminal yang dikuasai penyerang tidak boleh bisa
         // mematikan kewajiban fotonya sendiri atau mengaku beralamat lain.

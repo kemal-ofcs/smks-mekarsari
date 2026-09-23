@@ -10,6 +10,8 @@ import {
   isValidWaNotificationStatus,
   parseAmbangAlfaDays,
   parseAmbangAlfaLimit,
+  settingEnabled,
+  WA_AUTO_SEND_KEY,
   WA_NOTIFICATION_STATUSES,
   WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
   WA_NOTIFY_AMBANG_ALFA_KEY,
@@ -213,8 +215,12 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
   const row = result.rows[0];
   if (!row) {
     const settingsRes = await client.execute({
-      sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
-      args: [WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY, WA_NOTIFY_AMBANG_ALFA_DAYS_KEY],
+      sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?, ?);",
+      args: [
+        WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
+        WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
+        WA_AUTO_SEND_KEY,
+      ],
     });
     const settingsMap = new Map<string, string>();
     for (const r of settingsRes.rows) {
@@ -248,6 +254,7 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
       importManualEnabled: false,
       ambangAlfaLimit,
       ambangAlfaDays,
+      autoSendEnabled: settingEnabled(settingsMap.get(WA_AUTO_SEND_KEY)),
       createdAt: "",
       updatedAt: "",
     };
@@ -255,8 +262,12 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
 
   const rawKey = row.api_key == null ? "" : String(row.api_key).trim();
   const settingsRes = await client.execute({
-    sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
-    args: [WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY, WA_NOTIFY_AMBANG_ALFA_DAYS_KEY],
+    sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?, ?);",
+    args: [
+      WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
+      WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
+      WA_AUTO_SEND_KEY,
+    ],
   });
   const settingsMap = new Map<string, string>();
   for (const r of settingsRes.rows) {
@@ -287,6 +298,7 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
     importManualEnabled: Number(row.import_manual_enabled ?? 0) === 1,
     ambangAlfaLimit,
     ambangAlfaDays,
+    autoSendEnabled: settingEnabled(settingsMap.get(WA_AUTO_SEND_KEY)),
     createdAt: row.created_at != null ? String(row.created_at) : "",
     updatedAt: row.updated_at != null ? String(row.updated_at) : "",
   };
@@ -378,6 +390,7 @@ export async function saveWaConfig(
         WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
         String(parseAmbangAlfaDays(draft.ambangAlfaDays)),
       ],
+      [WA_AUTO_SEND_KEY, draft.autoSendEnabled ? "true" : "false"],
     ] as const
   ).map(([key, val]) => ({
     sql: `

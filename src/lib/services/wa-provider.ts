@@ -68,6 +68,63 @@ export async function readFullWaConfig(
   };
 }
 
+/** Satu permintaan HTTP ke gateway, tanpa efek samping. */
+export interface PermintaanProvider {
+  url: string;
+  authorization: string;
+  body: Record<string, unknown>;
+  label: "Fonnte" | "Wablas" | "Custom Gateway";
+}
+
+/**
+ * Bentuk permintaan per provider. Cerminan `provider_request` di
+ * `wa_sender.rs` dan diuji dengan vektor yang sama: provider yang tidak
+ * dikenal diperlakukan sebagai custom.
+ */
+export function buatPermintaanProvider(
+  config: Pick<
+    StoredWaConfig,
+    "provider" | "apiKey" | "apiUrl" | "senderNumber"
+  >,
+  targetPhone: string,
+  message: string,
+): PermintaanProvider {
+  // Format nomor kanonik: buang tanda '+' untuk kompatibilitas sebagian API lokal
+  const barePhone = targetPhone.replace(/[^\d]/g, "");
+  const customUrl = config.apiUrl?.trim() || null;
+
+  if (config.provider === "fonnte") {
+    return {
+      url: customUrl ?? "https://api.fonnte.com/send",
+      authorization: config.apiKey,
+      body: { target: barePhone, message, countryCode: "62" },
+      label: "Fonnte",
+    };
+  }
+  if (config.provider === "wablas") {
+    return {
+      url: customUrl ?? "https://tegal.wablas.com/api/send-message",
+      authorization: config.apiKey,
+      body: { phone: barePhone, message },
+      label: "Wablas",
+    };
+  }
+  if (!customUrl) {
+    throw new Error("URL custom endpoint belum diisi.");
+  }
+  return {
+    url: customUrl,
+    authorization: `Bearer ${config.apiKey}`,
+    body: {
+      target: barePhone,
+      phone: barePhone,
+      message,
+      device: config.senderNumber,
+    },
+    label: "Custom Gateway",
+  };
+}
+
 /**
  * Kirim satu pesan lewat provider yang terkonfigurasi.
  *
@@ -82,29 +139,25 @@ export async function sendViaProvider(
   targetPhone: string,
   message: string,
 ): Promise<void> {
-  // Format nomor kanonik: buang tanda '+' untuk kompatibilitas sebagian API lokal
-  const barePhone = targetPhone.replace(/[^\d]/g, "");
+  const permintaan = buatPermintaanProvider(config, targetPhone, message);
+  const res = await fetch(permintaan.url, {
+    method: "POST",
+    headers: {
+      Authorization: permintaan.authorization,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(permintaan.body),
+  });
 
-  if (config.provider === "fonnte") {
-    const url = config.apiUrl?.trim() || "https://api.fonnte.com/send";
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: config.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        target: barePhone,
-        message: message,
-        countryCode: "62",
-      }),
-    });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `${permintaan.label} HTTP ${res.status}: ${body.slice(0, 200)}`,
+    );
+  }
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Fonnte HTTP ${res.status}: ${body.slice(0, 200)}`);
-    }
-
+  // Fonnte menjawab HTTP 200 dengan `status: false` saat menolak pesan.
+  if (permintaan.label === "Fonnte") {
     const data = (await res.json().catch(() => ({}))) as Record<
       string,
       unknown
@@ -112,51 +165,6 @@ export async function sendViaProvider(
     if (data.status === false) {
       throw new Error(
         String(data.reason || data.detail || "Penolakan dari server Fonnte"),
-      );
-    }
-  } else if (config.provider === "wablas") {
-    const url =
-      config.apiUrl?.trim() || "https://tegal.wablas.com/api/send-message";
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: config.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        phone: barePhone,
-        message: message,
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Wablas HTTP ${res.status}: ${body.slice(0, 200)}`);
-    }
-  } else {
-    // Custom HTTP API
-    const url = config.apiUrl?.trim();
-    if (!url) {
-      throw new Error("URL custom endpoint belum diisi.");
-    }
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        target: barePhone,
-        phone: barePhone,
-        message: message,
-        device: config.senderNumber,
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(
-        `Custom Gateway HTTP ${res.status}: ${body.slice(0, 200)}`,
       );
     }
   }

@@ -154,19 +154,20 @@ export async function saveWaConfigGateway(
 /**
  * Kuras antrean: kirim pesan yang masih `Menunggu` lewat gateway WhatsApp.
  *
- * Pengirimannya berjalan di SERVER, bukan di perangkat. `sendViaProvider` hanya
- * ada di TypeScript sisi server; Rust tidak punya pengirim sama sekali. Di Web
- * permintaannya langsung ke route handler-nya, sedangkan Desktop/Mobile
- * meneruskannya lewat command yang memanggil server aplikasi dengan sesi web
- * yang sama.
- *
- * Konsekuensinya jujur dan disengaja: pemasangan Mode Database Lokal tidak punya
- * server aplikasi, sehingga aksi ini menolak dengan pesan yang menjelaskan
- * sebabnya alih-alih diam-diam tidak melakukan apa pun.
+ * Web mengirim dari route handler-nya (`drainWaQueue`); Desktop/Mobile
+ * mengirim langsung dari perangkat ke database yang dikonfigurasi
+ * (`wa_sender.rs`). Keduanya boleh berjalan bersamaan: setiap baris diklaim
+ * atomik sebelum dikirim, jadi satu pesan tidak pernah terkirim dua kali.
  */
-export async function drainWaQueueGateway(): Promise<WaDrainResult> {
+export async function drainWaQueueGateway(
+  otomatis = false,
+): Promise<WaDrainResult> {
   if (isDesktopRuntime()) {
-    return invokeDesktop<WaDrainResult>("desktop_drain_wa_queue");
+    return invokeDesktop<WaDrainResult>("desktop_drain_wa_queue", {
+      otomatis,
+    });
   }
-  return requestWebApi<WaDrainResult>("/api/notifications/wa/drain", "POST");
+  return requestWebApi<WaDrainResult>("/api/notifications/wa/drain", "POST", {
+    otomatis,
+  });
 }

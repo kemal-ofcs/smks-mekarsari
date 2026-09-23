@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarKaryawan } from "@/lib/gateways/employee";
@@ -66,7 +67,7 @@ export default function PayrollConfigPage() {
     rate_per_hour: 25000,
     rate_per_jp: 0,
     ptkp_status: "TK/0",
-    effective_date: new Date().toISOString().slice(0, 10),
+    effective_date: formatTanggalOperasional(Date.now()),
   });
 
   // Components state
@@ -463,7 +464,7 @@ export default function PayrollConfigPage() {
                       : "",
                     rate_per_hour: 25000,
                     ptkp_status: "TK/0",
-                    effective_date: new Date().toISOString().slice(0, 10),
+                    effective_date: formatTanggalOperasional(Date.now()),
                   });
                   setModalSalaryOpen(true);
                 }}

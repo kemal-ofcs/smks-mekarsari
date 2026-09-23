@@ -38,10 +38,10 @@ if (tests.length === 0) {
   throw new Error("Tidak ada file test aplikasi utama yang ditemukan.");
 }
 
-// Berkas terbesar dijadwalkan lebih dulu. Suite ini punya satu berkas yang
-// jauh lebih lama daripada sisanya — `sync-push.test.ts` membangun skema
-// database lengkap enam belas kali — dan bila ia baru dimulai di akhir, seluruh
-// worker lain sudah selesai dan menunggu berkas itu seorang diri. Ukuran berkas
+// Berkas terbesar dijadwalkan lebih dulu. Beberapa berkas jauh lebih lama
+// daripada sisanya — yang membangun skema database lengkap berkali-kali — dan
+// bila baru dimulai di akhir, seluruh worker lain sudah selesai dan menunggu
+// berkas itu seorang diri. Ukuran berkas
 // hanya perkiraan kasar durasi, tetapi perkiraan yang gratis dan tidak pernah
 // membuat urutannya lebih buruk daripada urutan direktori.
 tests.sort((a, b) => statSync(b).size - statSync(a).size);

@@ -67,6 +67,8 @@ export interface WaConfig {
   importManualEnabled: boolean;
   ambangAlfaLimit?: number;
   ambangAlfaDays?: number;
+  /** Runner di aplikasi menguras antrean sendiri. Bawaannya mati. */
+  autoSendEnabled: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -86,6 +88,7 @@ export interface WaConfigDraft {
   importManualEnabled: boolean;
   ambangAlfaLimit?: number;
   ambangAlfaDays?: number;
+  autoSendEnabled: boolean;
 }
 
 /**

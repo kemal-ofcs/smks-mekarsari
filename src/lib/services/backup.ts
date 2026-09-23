@@ -137,37 +137,55 @@ export async function hapusPenugasanBackup(id_backup: string) {
   await ensureDbInitialized();
 
   const existing = await db.execute({
-    sql: "SELECT id_karyawan_pengganti FROM backup_karyawan WHERE id_backup = ? LIMIT 1;",
+    sql: `SELECT id_karyawan_pengganti,
+            EXISTS(SELECT 1 FROM absensi_harian WHERE id_backup = ?1) AS dipakai
+          FROM backup_karyawan WHERE id_backup = ?1 LIMIT 1;`,
     args: [id_backup],
   });
-  const pengganti = existing.rows[0]?.id_karyawan_pengganti
-    ? String(existing.rows[0].id_karyawan_pengganti)
-    : null;
-
-  const res = await db.execute({
-    sql: "DELETE FROM backup_karyawan WHERE id_backup = ?;",
-    args: [id_backup],
-  });
-
-  if (res.rowsAffected === 0) {
+  const row = existing.rows[0];
+  if (!row) {
     return {
       sukses: false,
       pesan: `Penugasan backup '${id_backup}' tidak ditemukan.`,
     };
   }
-
-  if (pengganti) {
-    await db.execute({
-      sql: `UPDATE master_data
-            SET status_backup = CASE
-              WHEN EXISTS(
-                SELECT 1 FROM backup_karyawan
-                WHERE id_karyawan_pengganti = ?1 AND status_tugas = 'Aktif'
-              ) THEN 'BACKUP' ELSE 'NORMAL' END
-            WHERE id_unik = ?1;`,
-      args: [pengganti],
-    });
+  // Pembatalan menyimpan jejak; hapus permanen hanya untuk penugasan yang
+  // belum pernah dipakai, supaya `absensi_harian.id_backup` tidak menggantung.
+  // Cerminan `delete_backup` di administration.rs.
+  if (Number(row.dipakai) === 1) {
+    return {
+      sukses: false,
+      pesan:
+        "Penugasan backup sudah dipakai absensi. Batalkan penugasannya, jangan dihapus.",
+    };
   }
+  const pengganti = row.id_karyawan_pengganti
+    ? String(row.id_karyawan_pengganti)
+    : null;
+
+  await db.batch(
+    [
+      {
+        sql: "DELETE FROM backup_karyawan WHERE id_backup = ?;",
+        args: [id_backup],
+      },
+      ...(pengganti
+        ? [
+            {
+              sql: `UPDATE master_data
+                  SET status_backup = CASE
+                    WHEN EXISTS(
+                      SELECT 1 FROM backup_karyawan
+                      WHERE id_karyawan_pengganti = ?1 AND status_tugas = 'Aktif'
+                    ) THEN 'BACKUP' ELSE 'NORMAL' END
+                  WHERE id_unik = ?1;`,
+              args: [pengganti],
+            },
+          ]
+        : []),
+    ],
+    "write",
+  );
 
   return {
     sukses: true,

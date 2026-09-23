@@ -6,7 +6,11 @@ import {
   type StoredWaConfig,
   sendViaProvider,
 } from "@/lib/services/wa-provider";
-import { WA_QUEUE_RETENTION_DAYS } from "@/lib/validations/wa-notification";
+import {
+  settingEnabled,
+  WA_AUTO_SEND_KEY,
+  WA_QUEUE_RETENTION_DAYS,
+} from "@/lib/validations/wa-notification";
 
 // Dipakai ulang oleh pemanggil lama yang mengimpornya dari modul ini.
 export { readFullWaConfig };
@@ -36,6 +40,49 @@ export async function purgeExpiredNotifications(
   return Number(result.rowsAffected ?? 0);
 }
 
+/** Percobaan kirim sebelum baris menjadi `Gagal`. Sama dengan
+ * `WA_SEND_ATTEMPTS_MAX` di `wa_sender.rs`. */
+export const WA_BATAS_PERCOBAAN = 3;
+
+/** Syarat "tidak sedang diklaim pengirim lain" (schema v34). */
+const KLAIM_BEBAS = "(klaim_sampai IS NULL OR klaim_sampai < datetime('now'))";
+
+export type AksiBarisAntrean = "kirim" | "batal_nonaktif" | "batal_duplikat";
+
+/**
+ * Keputusan untuk satu baris antrean. Cerminan `row_action` di `wa_sender.rs`,
+ * diuji dengan vektor yang sama.
+ *
+ * Jenis yang dimatikan DIBATALKAN, bukan dilewati: baris yang dilewati tetap
+ * `Menunggu` selamanya, terambil lagi setiap siklus, memakan jatah `LIMIT`
+ * sehingga pesan yang sah ikut tertunda, dan tidak pernah memenuhi syarat
+ * pemangkasan retensi. Sakelarnya peta, bukan rantai OR — jenis baru yang
+ * tidak ada di peta jatuh ke batal, tidak pernah ke kirim.
+ */
+export function aksiBarisAntrean(
+  jenis: string,
+  sakelar: Record<string, boolean>,
+  sudahDilihat: Set<string>,
+  dedupeKey: string,
+): AksiBarisAntrean {
+  if (sakelar[jenis] !== true) return "batal_nonaktif";
+  if (sudahDilihat.has(dedupeKey)) return "batal_duplikat";
+  sudahDilihat.add(dedupeKey);
+  return "kirim";
+}
+
+/** Status dan jumlah percobaan setelah gagal. Cerminan `status_after_failure`. */
+export function statusSetelahGagal(percobaanSebelumnya: number): {
+  status: "Menunggu" | "Gagal";
+  percobaan: number;
+} {
+  const percobaan = percobaanSebelumnya + 1;
+  return {
+    status: percobaan >= WA_BATAS_PERCOBAAN ? "Gagal" : "Menunggu",
+    percobaan,
+  };
+}
+
 export interface DrainResult {
   sukses: boolean;
   processed: number;
@@ -49,13 +96,46 @@ export interface DrainResult {
 }
 
 /**
- * Menguras antrean notifikasi WhatsApp di LibSQL Cloud dengan deduplikasi di titik kirim.
- * (Rule 32, Rule 1, dan Fase 4 Architecture).
+ * Menguras antrean notifikasi WhatsApp di LibSQL Cloud dengan deduplikasi di
+ * titik kirim. Cerminan `drain` di `wa_sender.rs`.
+ *
+ * Web dan Desktop/Mobile kini sama-sama bisa menguras antrean yang sama, jadi
+ * setiap baris DIKLAIM atomik sebelum dikirim (`klaim_oleh`/`klaim_sampai`).
+ * Tanpa klaim, dua pengirim yang membaca baris `Menunggu` yang sama sama-sama
+ * mengirim pesan ke nomor wali — dan pesan itu tidak bisa ditarik.
  */
 export async function drainWaQueue(
   client: Client,
   batchSize: number = 20,
+  {
+    pengirim = "web",
+    otomatis = false,
+  }: {
+    pengirim?: string;
+    /** Dipanggil runner: hanya mengirim bila sakelar "Kirim otomatis" menyala. */
+    otomatis?: boolean;
+  } = {},
 ): Promise<DrainResult> {
+  if (otomatis) {
+    const sakelar = await client.execute({
+      sql: "SELECT value FROM setting_gex_system WHERE key = ? LIMIT 1;",
+      args: [WA_AUTO_SEND_KEY],
+    });
+    if (!settingEnabled(String(sakelar.rows[0]?.value ?? ""))) {
+      return {
+        sukses: true,
+        processed: 0,
+        sent: 0,
+        cancelled_dedupe: 0,
+        cancelled_disabled: 0,
+        failed: 0,
+        purged: 0,
+        skipped_quota: false,
+        message: "Kirim otomatis dimatikan.",
+      };
+    }
+  }
+
   // Pemangkasan retensi dijalankan LEBIH DULU, sebelum setiap cabang keluar
   // awal di bawah. Menaruhnya di akhir berarti ia tidak pernah berjalan pada
   // pemasangan yang gateway-nya belum aktif — justru pemasangan yang antreannya
@@ -124,7 +204,7 @@ export async function drainWaQueue(
     sql: `
       SELECT id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor, isi_pesan, attempt_count
       FROM notifikasi_wa
-      WHERE status = 'Menunggu'
+      WHERE status = 'Menunggu' AND ${KLAIM_BEBAS}
       ORDER BY created_at ASC
       LIMIT ?;
     `,
@@ -154,70 +234,68 @@ export async function drainWaQueue(
 
   for (const row of queueRes.rows) {
     const id = String(row.id_notifikasi);
-    const dedupeKey = String(row.dedupe_key);
     const jenis = String(row.jenis);
-    const phone = String(row.tujuan_nomor);
-    const message = String(row.isi_pesan);
-    const attempts = Number(row.attempt_count ?? 0);
+    const aksi = aksiBarisAntrean(
+      jenis,
+      {
+        scan_masuk: config.scanMasukEnabled,
+        scan_pulang: config.scanPulangEnabled,
+        bolos: config.bolosEnabled,
+        ambang_alfa: config.ambangAlfaEnabled,
+        koreksi_admin: config.koreksiAdminEnabled,
+        import_manual: config.importManualEnabled,
+      },
+      seenDedupeKeys,
+      String(row.dedupe_key),
+    );
 
-    // Periksa sakelar per jenis.
-    //
-    // Barisnya DIBATALKAN, bukan dilewati. Melewatinya membiarkan statusnya
-    // tetap `Menunggu` selamanya: ia akan terambil lagi di setiap siklus, tidak
-    // pernah terkirim, dan tidak pernah memenuhi syarat pemangkasan retensi
-    // yang hanya menyentuh baris berstatus akhir. Sebuah jenis yang dimatikan
-    // lalu akan menyumbat antrean secara permanen — dan lebih buruk, memakan
-    // jatah `LIMIT` setiap siklus sehingga pesan yang sah ikut tertunda.
-    // Peta, bukan rantai OR. Bentuk lamanya mengeja keempat jenis satu per
-    // satu, sehingga jenis KELIMA yang ditambahkan kemudian jatuh ke `false`
-    // dan dibatalkan di titik kirim — meski sakelar antreannya menyala. Pesan
-    // yang tidak pernah terkirim tanpa ada yang salah di kodenya.
-    const SAKELAR_JENIS: Record<string, boolean> = {
-      scan_masuk: config.scanMasukEnabled,
-      scan_pulang: config.scanPulangEnabled,
-      bolos: config.bolosEnabled,
-      ambang_alfa: config.ambangAlfaEnabled,
-      koreksi_admin: config.koreksiAdminEnabled,
-      import_manual: config.importManualEnabled,
-    };
-    const jenisAktif = SAKELAR_JENIS[jenis] === true;
-    if (!jenisAktif) {
-      await client.execute({
-        sql: "UPDATE notifikasi_wa SET status = 'Dibatalkan', last_error = ?, updated_at = datetime('now') WHERE id_notifikasi = ?;",
-        args: [`Jenis notifikasi '${jenis}' sedang dimatikan`, id],
+    if (aksi !== "kirim") {
+      // Baris yang sedang diklaim pengirim lain tidak disentuh: pengirim itu
+      // yang menutupnya.
+      const batal = await client.execute({
+        sql: `UPDATE notifikasi_wa SET status = 'Dibatalkan', last_error = ?, updated_at = datetime('now') WHERE id_notifikasi = ? AND status = 'Menunggu' AND ${KLAIM_BEBAS};`,
+        args: [
+          aksi === "batal_nonaktif"
+            ? `Jenis notifikasi '${jenis}' sedang dimatikan`
+            : "Deduplikasi di titik kirim",
+          id,
+        ],
       });
-      cancelledDisabledCount++;
+      if (Number(batal.rowsAffected ?? 0) > 0) {
+        if (aksi === "batal_nonaktif") cancelledDisabledCount++;
+        else cancelledDedupeCount++;
+      }
       continue;
     }
 
-    // Deduplikasi di titik kirim (Web adalah single writer)
-    if (seenDedupeKeys.has(dedupeKey)) {
-      await client.execute({
-        sql: "UPDATE notifikasi_wa SET status = 'Dibatalkan', last_error = 'Deduplikasi di titik kirim', updated_at = datetime('now') WHERE id_notifikasi = ?;",
-        args: [id],
-      });
-      cancelledDedupeCount++;
-      continue;
-    }
-    seenDedupeKeys.add(dedupeKey);
+    // Klaim atomik: hanya pengirim yang berhasil mengubah baris ini yang boleh
+    // mengirimnya. Klaim kedaluwarsa sendiri setelah 5 menit, jadi pengirim
+    // yang mati di tengah jalan tidak menyumbat antrean.
+    const klaim = await client.execute({
+      sql: `UPDATE notifikasi_wa SET klaim_oleh = ?, klaim_sampai = datetime('now', '+5 minutes') WHERE id_notifikasi = ? AND status = 'Menunggu' AND ${KLAIM_BEBAS};`,
+      args: [pengirim, id],
+    });
+    if (Number(klaim.rowsAffected ?? 0) === 0) continue;
 
-    // Kirim pesan ke provider pihak ketiga
     try {
-      await sendViaProvider(config, phone, message);
-
+      await sendViaProvider(
+        config,
+        String(row.tujuan_nomor),
+        String(row.isi_pesan),
+      );
       await client.execute({
-        sql: "UPDATE notifikasi_wa SET status = 'Terkirim', sent_at = datetime('now','+7 hours'), updated_at = datetime('now') WHERE id_notifikasi = ?;",
-        args: [id],
+        sql: "UPDATE notifikasi_wa SET status = 'Terkirim', sent_at = datetime('now','+7 hours'), updated_at = datetime('now'), klaim_oleh = NULL, klaim_sampai = NULL WHERE id_notifikasi = ? AND klaim_oleh = ?;",
+        args: [id, pengirim],
       });
       sentCount++;
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const nextAttempts = attempts + 1;
-      const finalStatus = nextAttempts >= 3 ? "Gagal" : "Menunggu";
-
+      const { status, percobaan } = statusSetelahGagal(
+        Number(row.attempt_count ?? 0),
+      );
       await client.execute({
-        sql: "UPDATE notifikasi_wa SET status = ?, attempt_count = ?, last_error = ?, updated_at = datetime('now') WHERE id_notifikasi = ?;",
-        args: [finalStatus, nextAttempts, errMsg.slice(0, 500), id],
+        sql: "UPDATE notifikasi_wa SET status = ?, attempt_count = ?, last_error = ?, updated_at = datetime('now'), klaim_oleh = NULL, klaim_sampai = NULL WHERE id_notifikasi = ? AND klaim_oleh = ?;",
+        args: [status, percobaan, errMsg.slice(0, 500), id, pengirim],
       });
       failedCount++;
     }

@@ -1163,7 +1163,9 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         last_error TEXT,
         sent_at TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        klaim_oleh TEXT,
+        klaim_sampai TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_local_notifikasi_wa_status ON notifikasi_wa(status, created_at);
       CREATE INDEX IF NOT EXISTS idx_local_notifikasi_wa_dedupe ON notifikasi_wa(dedupe_key);
@@ -1264,6 +1266,16 @@ pub fn initialize(path: &Path) -> Result<(), String> {
     // v25: memperluas CHECK `calc_type` untuk tunjangan per JP dan per hadir.
     ensure_payroll_calc_type_values(&connection)?;
     ensure_wa_notification_kind_values(&connection)?;
+    // v34: klaim pengiriman WhatsApp. SETELAH rebuild di atas — daftar kolom
+    // rebuild itu eksplisit, sehingga kolom yang ditambahkan sebelumnya akan
+    // ikut terbuang. Barisnya hanya diklaim di cloud; kolom lokal ada supaya
+    // bentuk tabelnya sama di setiap lapis.
+    for (column, sql) in [
+        ("klaim_oleh", "ALTER TABLE notifikasi_wa ADD COLUMN klaim_oleh TEXT;"),
+        ("klaim_sampai", "ALTER TABLE notifikasi_wa ADD COLUMN klaim_sampai TEXT;"),
+    ] {
+        ensure_column(&connection, "notifikasi_wa", column, sql)?;
+    }
 
     // v17: melepas UNIQUE dari tabel akademik yang ikut sinkronisasi. Cerminan
     // `TursoClient::rebuild_without_unique` — lihat alasan lengkapnya di sana.

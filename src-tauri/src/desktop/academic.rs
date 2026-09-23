@@ -2523,6 +2523,196 @@ pub fn delete_personnel_photo(state: &DesktopState, id_unik: &str) -> Result<Val
     Ok(json!({ "sukses": true, "id_unik": clean_id }))
 }
 
+/// Jenis personil sebuah foto, penentu izin yang berlaku atasnya.
+///
+/// Dulu setiap command foto menerima `employees.*` ATAU `students.*` ATAU
+/// `teachers.*` untuk personil mana pun, sehingga admin siswa bisa mengganti
+/// foto karyawan. Kini izinnya mengikuti jenis personil pemilik foto.
+/// Cerminan `jenisDariLabel`/`izinKelolaFoto`/`izinLihatFoto` di
+/// `src/lib/validations/personnel-photo.ts`, diuji dengan vektor yang sama.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersonnelKind {
+    Karyawan,
+    Guru,
+    Siswa,
+}
+
+impl PersonnelKind {
+    /// `jenis_personil` tersimpan dengan ejaan berbeda-beda (`'SISWA'`,
+    /// `'Siswa'`, `'Pegawai'`), jadi WAJIB dibandingkan setelah dinormalkan.
+    pub fn from_label(label: &str) -> Self {
+        match label.trim().to_lowercase().as_str() {
+            "siswa" => Self::Siswa,
+            "guru" => Self::Guru,
+            _ => Self::Karyawan,
+        }
+    }
+
+    /// Izin untuk menyimpan atau menghapus foto.
+    pub fn manage_permission(self) -> &'static str {
+        match self {
+            Self::Karyawan => "employees.manage",
+            Self::Guru => "teachers.manage",
+            Self::Siswa => "students.manage",
+        }
+    }
+
+    /// Salah satu izin ini cukup untuk MELIHAT foto. `employees.manage` ikut
+    /// karena halaman kartu identitas mencetak kartu seluruh personil.
+    pub fn view_permissions(self) -> [&'static str; 3] {
+        match self {
+            Self::Karyawan => ["employees.view", "employees.manage", "employees.manage"],
+            Self::Guru => ["teachers.view", "teachers.manage", "employees.manage"],
+            Self::Siswa => ["students.view", "students.manage", "employees.manage"],
+        }
+    }
+}
+
+/// Izin yang cukup untuk membaca STATUS "punya foto" pada daftar personil.
+pub const PHOTO_STATUS_PERMISSIONS: [&str; 6] = [
+    "employees.view",
+    "teachers.view",
+    "students.view",
+    "employees.manage",
+    "teachers.manage",
+    "students.manage",
+];
+
+/// Jenis personil pemilik `id_unik` menurut data lokal. Baris `siswa_data` /
+/// `guru_data` menjadi cadangan untuk personil lama yang `jenis_personil`-nya
+/// kosong. ID yang tidak dikenal diperlakukan sebagai karyawan.
+pub fn personnel_kind(state: &DesktopState, id_unik: &str) -> Result<PersonnelKind, CommandError> {
+    let conn = storage::database(&state.data_dir)?;
+    let label: String = conn
+        .query_row(
+            "SELECT CASE
+                WHEN LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'siswa'
+                  OR EXISTS(SELECT 1 FROM siswa_data s WHERE s.id_siswa = ?1) THEN 'siswa'
+                WHEN LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'guru'
+                  OR EXISTS(SELECT 1 FROM guru_data g WHERE g.id_guru = ?1) THEN 'guru'
+                ELSE 'karyawan' END
+             FROM (SELECT ?1 AS id) x LEFT JOIN master_data m ON m.id_unik = x.id;",
+            params![id_unik.trim()],
+            |row| row.get(0),
+        )
+        .map_err(|_| CommandError::internal())?;
+    Ok(PersonnelKind::from_label(&label))
+}
+
+/// Sumber foto yang dipakai `desktop_get_personnel_photo`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PhotoSource {
+    /// Salinan lokal masih sama dengan cloud, atau cloud tak terjangkau.
+    Local,
+    /// Cloud punya versi yang berbeda atau lokal belum punya: ambil ulang.
+    Cloud,
+    /// Tidak ada foto di mana pun.
+    Missing,
+    /// Cloud sudah tidak punya foto ini: buang salinan lokal yang basi.
+    DropLocal,
+}
+
+/// Menentukan sumber foto personil.
+///
+/// `personil_foto` sengaja tidak ikut snapshot, jadi salinan lokal hasil cache
+/// dulu tidak pernah diperiksa ulang: foto yang dihapus atau diganti dari
+/// perangkat lain tetap tampil di sini selamanya. `cloud`: `None` berarti cloud
+/// tak terjangkau, `Some(None)` berarti cloud tidak punya fotonya, dan
+/// `Some(Some(stamp))` adalah `updated_at` foto di cloud.
+///
+/// Perubahan lokal yang belum terkirim selalu menang — ia yang terbaru, dan
+/// membuangnya berarti menghapus kerja operator sebelum sempat didorong.
+pub fn decide_photo_source(
+    local_updated_at: Option<&str>,
+    pending_local_change: bool,
+    cloud: Option<Option<&str>>,
+) -> PhotoSource {
+    if pending_local_change {
+        return if local_updated_at.is_some() {
+            PhotoSource::Local
+        } else {
+            PhotoSource::Missing
+        };
+    }
+    match cloud {
+        None if local_updated_at.is_some() => PhotoSource::Local,
+        None => PhotoSource::Missing,
+        Some(None) if local_updated_at.is_some() => PhotoSource::DropLocal,
+        Some(None) => PhotoSource::Missing,
+        Some(Some(remote)) if local_updated_at == Some(remote) => PhotoSource::Local,
+        Some(Some(_)) => PhotoSource::Cloud,
+    }
+}
+
+/// Apakah perangkat ini punya perubahan foto yang belum terkirim untuk `id_unik`.
+pub fn has_pending_photo_change(state: &DesktopState, id_unik: &str) -> Result<bool, CommandError> {
+    let conn = storage::database(&state.data_dir)?;
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM desktop_sync_outbox WHERE domain = 'personnel-photo' AND entity_key = ?1 AND status IN ('pending', 'failed', 'conflict'));",
+        params![id_unik.trim()],
+        |row| row.get(0),
+    )
+    .map_err(|_| CommandError::internal())
+}
+
+/// Buang salinan foto hasil cache yang sudah tidak ada di cloud. Tanpa outbox:
+/// cloud memang sudah tidak punya fotonya, tidak ada yang perlu didorong.
+pub fn drop_personnel_photo_cache(state: &DesktopState, id_unik: &str) -> Result<(), CommandError> {
+    let conn = storage::database(&state.data_dir)?;
+    conn.execute(
+        "DELETE FROM personil_foto WHERE id_unik = ?1;",
+        params![id_unik.trim()],
+    )
+    .map_err(|_| CommandError::internal())?;
+    Ok(())
+}
+
+/// Dari `ids`, mana yang punya foto lokal, dan mana yang punya perubahan foto
+/// belum terkirim. Dibatasi `ids` yang dikirim pemanggil (maksimal 500).
+pub fn local_photo_status(
+    state: &DesktopState,
+    ids: &[String],
+) -> Result<(Vec<String>, std::collections::HashSet<String>), CommandError> {
+    let conn = storage::database(&state.data_dir)?;
+    let ids_json = json!(ids).to_string();
+    let collect = |sql: &str| -> Result<Vec<String>, CommandError> {
+        let mut statement = conn.prepare(sql).map_err(|_| CommandError::internal())?;
+        let rows = statement
+            .query_map(params![ids_json], |row| row.get::<_, String>(0))
+            .map_err(|_| CommandError::internal())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| CommandError::internal())
+    };
+    let local = collect(
+        "SELECT id_unik FROM personil_foto WHERE id_unik IN (SELECT value FROM json_each(?1)) AND TRIM(foto_base64) <> '' ORDER BY id_unik LIMIT 500;",
+    )?;
+    let pending = collect(
+        "SELECT DISTINCT entity_key FROM desktop_sync_outbox WHERE domain = 'personnel-photo' AND status IN ('pending', 'failed', 'conflict') AND entity_key IN (SELECT value FROM json_each(?1)) ORDER BY entity_key LIMIT 500;",
+    )?;
+    Ok((local, pending.into_iter().collect()))
+}
+
+/// Gabungkan status foto cloud dan lokal. Untuk ID yang punya perubahan belum
+/// terkirim, lokal yang benar; selebihnya cloud, kecuali cloud tak terjangkau.
+pub fn merge_photo_status(
+    local: &[String],
+    pending: &std::collections::HashSet<String>,
+    cloud: Option<&[String]>,
+) -> Vec<String> {
+    let Some(cloud) = cloud else {
+        return local.to_vec();
+    };
+    let mut merged: Vec<String> = cloud
+        .iter()
+        .filter(|id| !pending.contains(*id))
+        .cloned()
+        .collect();
+    merged.extend(local.iter().filter(|id| pending.contains(*id)).cloned());
+    merged.sort();
+    merged.dedup();
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2675,5 +2865,94 @@ mod tests {
             MAX_PERSONNEL_PHOTO_BASE64, 512_000,
             "ubah bersamaan dengan MAX_PERSONNEL_PHOTO_SIZE di sync-schema.ts"
         );
+    }
+
+    /// Vektor yang sama diuji di `personnel-photo.test.ts`.
+    #[test]
+    fn izin_foto_mengikuti_jenis_personil() {
+        assert_eq!(PersonnelKind::from_label(" SISWA "), PersonnelKind::Siswa);
+        assert_eq!(PersonnelKind::from_label("Guru"), PersonnelKind::Guru);
+        assert_eq!(PersonnelKind::from_label("Pegawai"), PersonnelKind::Karyawan);
+        assert_eq!(PersonnelKind::from_label(""), PersonnelKind::Karyawan);
+        assert_eq!(PersonnelKind::Siswa.manage_permission(), "students.manage");
+        assert_eq!(PersonnelKind::Guru.manage_permission(), "teachers.manage");
+        assert_eq!(PersonnelKind::Karyawan.manage_permission(), "employees.manage");
+        assert!(PersonnelKind::Siswa.view_permissions().contains(&"students.view"));
+        assert!(!PersonnelKind::Siswa.view_permissions().contains(&"teachers.view"));
+        assert!(PersonnelKind::Guru.view_permissions().contains(&"employees.manage"));
+    }
+
+    #[test]
+    fn jenis_personil_dibaca_dari_data_lokal_dengan_cadangan_siswa_data() {
+        let (_directory, state) = fixture();
+        storage::database(&state.data_dir)
+            .expect("database lokal")
+            .execute_batch(
+                "INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift, jenis_personil) VALUES
+                    ('S-1', 'S-1', 'Siswa Satu', 'X-A', 1, 'SISWA'),
+                    ('G-1', 'G-1', 'Guru Satu', 'Guru', 1, 'GURU'),
+                    ('K-1', 'K-1', 'Karyawan Satu', 'Dapur', 1, 'Pegawai'),
+                    ('S-2', 'S-2', 'Siswa Lama', 'X-A', 1, NULL);
+                 INSERT INTO siswa_data (id_siswa, nama_lengkap, id_rombel, angkatan, created_at, updated_at)
+                    VALUES ('S-2', 'Siswa Lama', 'rom-1', 2026, '2026-01-01', '2026-01-01');",
+            )
+            .expect("seed personil");
+
+        assert_eq!(personnel_kind(&state, "S-1").expect("jenis"), PersonnelKind::Siswa);
+        assert_eq!(personnel_kind(&state, "G-1").expect("jenis"), PersonnelKind::Guru);
+        assert_eq!(personnel_kind(&state, "K-1").expect("jenis"), PersonnelKind::Karyawan);
+        assert_eq!(personnel_kind(&state, "S-2").expect("jenis"), PersonnelKind::Siswa);
+        assert_eq!(personnel_kind(&state, "TIDAK-ADA").expect("jenis"), PersonnelKind::Karyawan);
+    }
+
+    /// Salinan lokal hasil cache dulu tidak pernah diperiksa ulang: foto yang
+    /// dihapus atau diganti dari perangkat lain tetap tampil selamanya.
+    #[test]
+    fn sumber_foto_mengikuti_cloud_kecuali_ada_perubahan_lokal() {
+        let t = "2026-09-23 10:00:00";
+        // Dihapus di perangkat lain: salinan lokal dibuang.
+        assert_eq!(decide_photo_source(Some(t), false, Some(None)), PhotoSource::DropLocal);
+        // Diganti di perangkat lain: ambil ulang.
+        assert_eq!(
+            decide_photo_source(Some(t), false, Some(Some("2026-09-23 11:00:00"))),
+            PhotoSource::Cloud
+        );
+        assert_eq!(decide_photo_source(Some(t), false, Some(Some(t))), PhotoSource::Local);
+        // Diunggah di perangkat lain dan belum ada di sini.
+        assert_eq!(decide_photo_source(None, false, Some(Some(t))), PhotoSource::Cloud);
+        assert_eq!(decide_photo_source(None, false, Some(None)), PhotoSource::Missing);
+        // Offline: salinan lokal tetap dipakai.
+        assert_eq!(decide_photo_source(Some(t), false, None), PhotoSource::Local);
+        assert_eq!(decide_photo_source(None, false, None), PhotoSource::Missing);
+        // Perubahan lokal yang belum terkirim selalu menang.
+        assert_eq!(decide_photo_source(Some(t), true, Some(None)), PhotoSource::Local);
+        assert_eq!(decide_photo_source(None, true, Some(Some(t))), PhotoSource::Missing);
+    }
+
+    #[test]
+    fn status_foto_menggabungkan_cloud_dengan_perubahan_lokal_yang_belum_terkirim() {
+        let (_directory, state) = fixture();
+        save_personnel_photo(&state, "K-1", "AAAA", Some("image/jpeg")).expect("foto lokal");
+        storage::database(&state.data_dir)
+            .expect("database lokal")
+            .execute(
+                "INSERT INTO personil_foto (id_unik, foto_mime, foto_base64, updated_at) VALUES ('K-9', 'image/jpeg', 'BBBB', '2026-01-01');",
+                [],
+            )
+            .expect("cache lama");
+        let ids = vec!["K-1".to_owned(), "K-2".to_owned(), "K-9".to_owned()];
+
+        let (local, pending) = local_photo_status(&state, &ids).expect("status lokal");
+        assert_eq!(local, vec!["K-1".to_owned(), "K-9".to_owned()]);
+        assert!(pending.contains("K-1") && !pending.contains("K-9"));
+
+        // Cloud: K-2 punya foto, K-9 sudah dihapus di perangkat lain, K-1 belum terkirim.
+        let cloud = vec!["K-2".to_owned()];
+        assert_eq!(
+            merge_photo_status(&local, &pending, Some(&cloud)),
+            vec!["K-1".to_owned(), "K-2".to_owned()]
+        );
+        // Offline: salinan lokal apa adanya.
+        assert_eq!(merge_photo_status(&local, &pending, None), local);
     }
 }

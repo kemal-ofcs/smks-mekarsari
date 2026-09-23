@@ -190,6 +190,233 @@ fn revision(transaction: &Transaction<'_>, domain: &str, key: &str) -> Option<i6
         .flatten()
 }
 
+/// Asal log scan yang baru saja dihapus.
+#[derive(Clone, Copy)]
+enum LogRemoval<'a> {
+    /// Koreksi admin dihapus: barisnya kembali `Hadir` bersumber `Scanner`
+    /// dari log yang tersisa.
+    Correction,
+    /// Import offline/manual dihapus.
+    Import,
+    /// Satu log scan dihapus. Jam jenis lain yang tidak ikut dihapus
+    /// dipertahankan meskipun lognya tidak ada di perangkat ini.
+    ScanLog {
+        kind: &'a str,
+        of_correction: bool,
+    },
+}
+
+/// Bangun ulang absensi `(id_karyawan, tanggal)` dari log scan yang tersisa.
+///
+/// Hanya baris bertanggal PERSIS `tanggal`: pulang shift malam sudah dicatat
+/// pada tanggal kerja mulai shift (`decision.work_date`). Dulu query-nya ikut
+/// mencocokkan `date(?, '-1 day')`, sehingga menghapus log hari ini yang tidak
+/// punya baris absensi — misalnya "Scan Ditolak" — menghapus absensi KEMARIN,
+/// lalu mendorong penghapusan itu ke cloud.
+///
+/// Setiap baris yang dihapus atau diubah didaftarkan ke outbox dengan `?`:
+/// commit tanpa event membuat lokal dan cloud menyimpang tanpa pesan apa pun.
+fn rebuild_attendance_from_logs(
+    transaction: &Transaction<'_>,
+    client_id: &str,
+    id_karyawan: &str,
+    tanggal: &str,
+    now: &str,
+    removal: LogRemoval<'_>,
+) -> Result<(), CommandError> {
+    type SessionRow = (String, i64, Option<String>, Option<String>, i64, i64, String);
+    let sessions: Vec<SessionRow> = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT id_sesi, id_shift, jam_masuk, jam_pulang, COALESCE(menit_terlambat, 0), COALESCE(menit_datang_awal, 0), COALESCE(sumber, '') FROM absensi_harian WHERE id_karyawan = ? AND tanggal = ? ORDER BY id_sesi LIMIT 20;",
+            )
+            .map_err(|_| CommandError::internal())?;
+        let rows = statement
+            .query_map(params![id_karyawan, tanggal], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            })
+            .map_err(|_| CommandError::internal())?;
+        let collected: Vec<SessionRow> = rows
+            .collect::<Result<_, _>>()
+            .map_err(|_| CommandError::internal())?;
+        collected
+    };
+    if sessions.is_empty() {
+        return Ok(());
+    }
+
+    // Menghapus log scan atau import tidak boleh membatalkan keputusan admin;
+    // admin menyunting baris itu sendiri lewat riwayat. Menghapus koreksinya
+    // sendiri (atau log milik koreksi itu) tetap membangun ulang barisnya.
+    let protect_admin = match removal {
+        LogRemoval::Correction => false,
+        LogRemoval::Import => true,
+        LogRemoval::ScanLog { of_correction, .. } => !of_correction,
+    };
+    if protect_admin && sessions.iter().any(|session| session.6 == "Koreksi Admin") {
+        return Ok(());
+    }
+
+    let in_log: Option<String> = transaction
+        .query_row(
+            "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Masuk' AND status_proses <> 'Ditolak' ORDER BY timestamp_scan ASC, jam_scan ASC LIMIT 1;",
+            params![id_karyawan, tanggal],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+    let out_log: Option<String> = transaction
+        .query_row(
+            "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Pulang' AND status_proses <> 'Ditolak' ORDER BY timestamp_scan DESC, jam_scan DESC LIMIT 1;",
+            params![id_karyawan, tanggal],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+
+    let delete_session = |id_sesi: &str| -> Result<(), CommandError> {
+        transaction
+            .execute(
+                "DELETE FROM absensi_harian WHERE id_sesi = ?;",
+                params![id_sesi],
+            )
+            .map_err(|_| CommandError::internal())?;
+        sync::enqueue(
+            transaction,
+            client_id,
+            "attendance",
+            "delete",
+            id_sesi,
+            &json!({ "id_sesi": id_sesi }),
+            revision(transaction, "attendance", id_sesi),
+        )?;
+        Ok(())
+    };
+
+    let scan_log_kind = match removal {
+        LogRemoval::ScanLog { kind, .. } => Some(kind),
+        _ => None,
+    };
+
+    if sessions.len() > 1 {
+        // ponytail: log_scan tidak menyimpan id_sesi, jadi log tidak bisa
+        // dipetakan ke sesinya. Hanya bila tak satu pun scan tersisa seluruh
+        // sesi tanggal itu ikut dihapus; selebihnya admin menyuntingnya lewat
+        // riwayat. Tambahkan id_sesi ke log_scan bila ini perlu otomatis.
+        if in_log.is_none() && out_log.is_none() && scan_log_kind.is_none() {
+            for session in &sessions {
+                delete_session(session.0.as_str())?;
+            }
+        }
+        return Ok(());
+    }
+
+    let (id_sesi, id_shift, existing_in, existing_out, existing_late, existing_early, _) =
+        &sessions[0];
+    // Jenis yang TIDAK dihapus dipertahankan dari barisnya bila lognya tidak
+    // ada di sini — misalnya pulang yang discan terminal lain.
+    let keeps = |kind: &str| scan_log_kind.is_some_and(|deleted| deleted != kind);
+
+    let in_val = match in_log {
+        Some(time) => format_date_time_str(tanggal, &time),
+        None if keeps("Masuk") => existing_in.clone().unwrap_or_default(),
+        None => String::new(),
+    };
+    let rules = load_shift_clock_rules(transaction, *id_shift);
+    let out_val = match out_log {
+        Some(time) => {
+            let in_minute = parse_time_min(&in_val);
+            let out_minute = parse_time_min(&time);
+            let overnight_shift = matches!(
+                (parse_time_min(&rules.0), parse_time_min(&rules.1)),
+                (Some(start), Some(end)) if end < start
+            );
+            let crosses_midnight =
+                matches!((in_minute, out_minute), (Some(check_in), Some(check_out)) if check_out < check_in);
+            let out_date: String = if overnight_shift || crosses_midnight {
+                transaction
+                    .query_row("SELECT date(?, '+1 day');", [tanggal], |r| r.get(0))
+                    .map_err(|_| CommandError::internal())?
+            } else {
+                tanggal.to_owned()
+            };
+            format_date_time_str(&out_date, &time)
+        }
+        None if keeps("Pulang") => existing_out.clone().unwrap_or_default(),
+        None => String::new(),
+    };
+
+    if in_val.is_empty() && out_val.is_empty() {
+        return delete_session(id_sesi.as_str());
+    }
+
+    let in_m = parse_time_min(&in_val);
+    let recalc = recalc_with_shift_rules(
+        &rules,
+        in_m,
+        clock_duration(in_m, parse_time_min(&out_val)),
+    );
+    // Log Pulang yang dihapus tidak mengubah kapan karyawannya masuk, jadi
+    // terlambat/datang awal yang sudah tercatat dipertahankan.
+    let keep_entry = scan_log_kind == Some("Pulang") && !in_val.is_empty();
+    let (late, early) = if keep_entry {
+        (*existing_late, *existing_early)
+    } else {
+        (recalc.late_minutes, recalc.early_minutes)
+    };
+    let status_absen = if !in_val.is_empty() && !out_val.is_empty() {
+        "Lengkap"
+    } else if !in_val.is_empty() {
+        "Belum Pulang"
+    } else {
+        "Perlu Verifikasi"
+    };
+    let sql = if matches!(removal, LogRemoval::Correction) {
+        // Koreksinya sudah tidak ada, jadi barisnya tidak boleh terus
+        // dilindungi sebagai `Koreksi Admin`. Cerminan `lib/attendance/rebuild-from-logs.ts`.
+        "UPDATE absensi_harian SET jam_masuk = ?, jam_pulang = ?, status_kehadiran = 'Hadir', sumber = 'Scanner', status_absen = ?, update_terakhir = ?, menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ? WHERE id_sesi = ?;"
+    } else {
+        "UPDATE absensi_harian SET jam_masuk = ?, jam_pulang = ?, status_absen = ?, update_terakhir = ?, menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ? WHERE id_sesi = ?;"
+    };
+    transaction
+        .execute(
+            sql,
+            params![
+                in_val,
+                out_val,
+                status_absen,
+                now,
+                late,
+                early,
+                recalc.work_minutes,
+                recalc.overtime_minutes,
+                recalc.shortage_minutes,
+                id_sesi
+            ],
+        )
+        .map_err(|_| CommandError::internal())?;
+
+    let att_val = attendance_json(transaction, id_sesi)?;
+    sync::enqueue(
+        transaction,
+        client_id,
+        "attendance",
+        "update",
+        id_sesi,
+        &att_val,
+        revision(transaction, "attendance", id_sesi),
+    )?;
+    Ok(())
+}
+
 fn rows_as_json(connection: &rusqlite::Connection, sql: &str) -> Result<Value, CommandError> {
     let mut statement = connection
         .prepare(sql)
@@ -1209,6 +1436,22 @@ pub fn delete_backup(
         .map_err(|_| CommandError::internal())?;
     let current_revision = revision(&transaction, "backup", id);
 
+    // Pembatalan menyimpan jejak; hapus permanen hanya untuk penugasan yang
+    // belum pernah dipakai, supaya `absensi_harian.id_backup` tidak menggantung.
+    let dipakai: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM absensi_harian WHERE id_backup = ?);",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| CommandError::internal())?;
+    if dipakai {
+        return Err(CommandError::new(
+            "OPERATIONAL_BACKUP_IN_USE",
+            "Penugasan backup sudah dipakai absensi. Batalkan penugasannya, jangan dihapus.",
+        ));
+    }
+
     let pengganti: Option<String> = transaction
         .query_row(
             "SELECT id_karyawan_pengganti FROM backup_karyawan WHERE id_backup = ? LIMIT 1;",
@@ -2100,118 +2343,14 @@ pub fn delete_correction(
         )
         .map_err(|_| CommandError::internal())?;
 
-    let remaining_count: i64 = transaction
-        .query_row(
-            "SELECT COUNT(*) FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ?;",
-            params![id_karyawan, tanggal],
-            |r| r.get(0),
-        )
-        .map_err(|_| CommandError::internal())?;
-
-    let abs_row: Option<(String, i64)> = transaction
-        .query_row(
-            "SELECT id_sesi, id_shift FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day')) ORDER BY (CASE WHEN tanggal = ? THEN 0 ELSE 1 END) ASC LIMIT 1;",
-            params![id_karyawan, tanggal, tanggal, tanggal],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(|_| CommandError::internal())?;
-
-    if let Some((id_sesi, id_shift)) = abs_row {
-        if remaining_count == 0 {
-            transaction
-                .execute(
-                    "DELETE FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day'));",
-                    params![id_karyawan, tanggal, tanggal],
-                )
-                .map_err(|_| CommandError::internal())?;
-            let att_rev = revision(&transaction, "attendance", &id_sesi);
-            let _ = sync::enqueue(
-                &transaction,
-                &client_id,
-                "attendance",
-                "delete",
-                &id_sesi,
-                &json!({ "id_sesi": id_sesi }),
-                att_rev,
-            );
-        } else {
-            let in_log: Option<String> = transaction
-                .query_row(
-                    "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Masuk' ORDER BY jam_scan ASC LIMIT 1;",
-                    params![id_karyawan, tanggal],
-                    |r| r.get(0),
-                )
-                .optional()
-                .unwrap_or(None);
-            let out_log: Option<String> = transaction
-                .query_row(
-                    "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Pulang' ORDER BY jam_scan DESC LIMIT 1;",
-                    params![id_karyawan, tanggal],
-                    |r| r.get(0),
-                )
-                .optional()
-                .unwrap_or(None);
-
-            let in_val = in_log
-                .map(|t| format_date_time_str(&tanggal, &t))
-                .unwrap_or_default();
-            let out_val = out_log
-                .map(|t| format_date_time_str(&tanggal, &t))
-                .unwrap_or_default();
-
-            let in_m = parse_time_min(&in_val);
-            let recalc = recalc_with_shift_rules(
-                &load_shift_clock_rules(&transaction, id_shift),
-                in_m,
-                clock_duration(in_m, parse_time_min(&out_val)),
-            );
-            let calculated_late = recalc.late_minutes;
-            let calculated_early = recalc.early_minutes;
-            let calculated_work = recalc.work_minutes;
-            let calculated_overtime = recalc.overtime_minutes;
-            let calculated_shortage = recalc.shortage_minutes;
-
-            let status_absen = if !in_val.is_empty() && !out_val.is_empty() {
-                "Lengkap"
-            } else if !in_val.is_empty() {
-                "Belum Pulang"
-            } else {
-                "Perlu Verifikasi"
-            };
-
-            transaction
-                .execute(
-                    "UPDATE absensi_harian SET jam_masuk = ?, jam_pulang = ?, status_kehadiran = 'Hadir', status_absen = ?, update_terakhir = ?, menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ? WHERE id_sesi = ?;",
-                    params![
-                        in_val,
-                        out_val,
-                        status_absen,
-                        now,
-                        calculated_late,
-                        calculated_early,
-                        calculated_work,
-                        calculated_overtime,
-                        calculated_shortage,
-                        id_sesi
-                    ],
-                )
-                .map_err(|_| CommandError::internal())?;
-
-            if let Ok(att_val) = attendance_json(&transaction, &id_sesi) {
-                let att_rev = revision(&transaction, "attendance", &id_sesi);
-                let _ = sync::enqueue(
-                    &transaction,
-                    &client_id,
-                    "attendance",
-                    "update",
-                    &id_sesi,
-                    &att_val,
-                    att_rev,
-                );
-            }
-        }
-    }
+    rebuild_attendance_from_logs(
+        &transaction,
+        &client_id,
+        &id_karyawan,
+        &tanggal,
+        &now,
+        LogRemoval::Correction,
+    )?;
 
     transaction
         .execute(
@@ -2548,16 +2687,16 @@ pub fn delete_log_scan(
         .transaction()
         .map_err(|_| CommandError::internal())?;
 
-    let current: Option<(String, String, String, String, String)> = transaction
+    let current: Option<(String, String, String, String, String, String)> = transaction
         .query_row(
-            "SELECT id_karyawan, tanggal_kerja, nama, jenis_scan, COALESCE(id_referensi, '') FROM log_scan WHERE id_log = ? LIMIT 1;",
+            "SELECT id_karyawan, tanggal_kerja, nama, jenis_scan, COALESCE(id_referensi, ''), COALESCE(status_proses, '') FROM log_scan WHERE id_log = ? LIMIT 1;",
             params![id_log],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )
         .optional()
         .map_err(|_| CommandError::internal())?;
 
-    let Some((id_karyawan, tanggal, nama, jenis_scan_deleted, referensi)) = current else {
+    let Some((id_karyawan, tanggal, nama, jenis_scan_deleted, referensi, status_proses)) = current else {
         return Err(CommandError::new(
             "OPERATIONAL_NOT_FOUND",
             "Log scan tidak ditemukan.",
@@ -2576,160 +2715,20 @@ pub fn delete_log_scan(
         .execute("DELETE FROM log_scan WHERE id_log = ?;", params![id_log])
         .map_err(|_| CommandError::internal())?;
 
-    let remaining_count: i64 = transaction
-        .query_row(
-            "SELECT COUNT(*) FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ?;",
-            params![id_karyawan, tanggal],
-            |r| r.get(0),
-        )
-        .map_err(|_| CommandError::internal())?;
-
-    let abs_row: Option<(String, i64, Option<String>, Option<String>, i64, i64)> = transaction
-        .query_row(
-            "SELECT id_sesi, id_shift, jam_masuk, jam_pulang, menit_terlambat, menit_datang_awal FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day')) ORDER BY (CASE WHEN tanggal = ? THEN 0 ELSE 1 END) ASC LIMIT 1;",
-            params![id_karyawan, tanggal, tanggal, tanggal],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
-        )
-        .optional()
-        .map_err(|_| CommandError::internal())?;
-
-    if let Some((id_sesi, id_shift, existing_in, existing_out, existing_late, existing_early)) =
-        abs_row
-    {
-        if remaining_count == 0 {
-            transaction
-                .execute(
-                    "DELETE FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day'));",
-                    params![id_karyawan, tanggal, tanggal],
-                )
-                .map_err(|_| CommandError::internal())?;
-            let att_rev = revision(&transaction, "attendance", &id_sesi);
-            let _ = sync::enqueue(
-                &transaction,
-                &client_id,
-                "attendance",
-                "delete",
-                &id_sesi,
-                &json!({ "id_sesi": id_sesi }),
-                att_rev,
-            );
-        } else {
-            let in_log: Option<String> = transaction
-                .query_row(
-                    "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Masuk' ORDER BY jam_scan ASC LIMIT 1;",
-                    params![id_karyawan, tanggal],
-                    |r| r.get(0),
-                )
-                .optional()
-                .unwrap_or(None);
-            let out_log: Option<String> = transaction
-                .query_row(
-                    "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Pulang' ORDER BY jam_scan DESC LIMIT 1;",
-                    params![id_karyawan, tanggal],
-                    |r| r.get(0),
-                )
-                .optional()
-                .unwrap_or(None);
-
-            let in_val = if jenis_scan_deleted == "Masuk" {
-                in_log
-                    .map(|t| format_date_time_str(&tanggal, &t))
-                    .unwrap_or_default()
-            } else {
-                in_log
-                    .map(|t| format_date_time_str(&tanggal, &t))
-                    .unwrap_or_else(|| existing_in.unwrap_or_default())
-            };
-
-            let out_val = if jenis_scan_deleted == "Pulang" {
-                out_log
-                    .map(|t| format_date_time_str(&tanggal, &t))
-                    .unwrap_or_default()
-            } else {
-                out_log
-                    .map(|t| format_date_time_str(&tanggal, &t))
-                    .unwrap_or_else(|| existing_out.unwrap_or_default())
-            };
-
-            if in_val.is_empty() && out_val.is_empty() {
-                transaction
-                    .execute(
-                        "DELETE FROM absensi_harian WHERE id_sesi = ?;",
-                        params![id_sesi],
-                    )
-                    .map_err(|_| CommandError::internal())?;
-                let att_rev = revision(&transaction, "attendance", &id_sesi);
-                let _ = sync::enqueue(
-                    &transaction,
-                    &client_id,
-                    "attendance",
-                    "delete",
-                    &id_sesi,
-                    &json!({ "id_sesi": id_sesi }),
-                    att_rev,
-                );
-            } else {
-                let in_m = parse_time_min(&in_val);
-                let recalc = recalc_with_shift_rules(
-                    &load_shift_clock_rules(&transaction, id_shift),
-                    in_m,
-                    clock_duration(in_m, parse_time_min(&out_val)),
-                );
-                // Log Pulang yang dihapus tidak mengubah kapan karyawannya masuk,
-                // jadi terlambat/datang awal yang sudah tercatat dipertahankan.
-                let keep_entry = jenis_scan_deleted == "Pulang" && !in_val.is_empty();
-                let calculated_late = if keep_entry {
-                    existing_late
-                } else {
-                    recalc.late_minutes
-                };
-                let calculated_early = if keep_entry {
-                    existing_early
-                } else {
-                    recalc.early_minutes
-                };
-                let calculated_work = recalc.work_minutes;
-                let calculated_overtime = recalc.overtime_minutes;
-                let calculated_shortage = recalc.shortage_minutes;
-
-                let status_absen = if !in_val.is_empty() && !out_val.is_empty() {
-                    "Lengkap"
-                } else if !in_val.is_empty() {
-                    "Belum Pulang"
-                } else {
-                    "Perlu Verifikasi"
-                };
-
-                let _ = transaction.execute(
-                    "UPDATE absensi_harian SET jam_masuk = ?, jam_pulang = ?, status_absen = ?, update_terakhir = ?, menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ? WHERE id_sesi = ?;",
-                    params![
-                        in_val,
-                        out_val,
-                        status_absen,
-                        now,
-                        calculated_late,
-                        calculated_early,
-                        calculated_work,
-                        calculated_overtime,
-                        calculated_shortage,
-                        id_sesi
-                    ],
-                );
-
-                if let Ok(att_val) = attendance_json(&transaction, &id_sesi) {
-                    let att_rev = revision(&transaction, "attendance", &id_sesi);
-                    let _ = sync::enqueue(
-                        &transaction,
-                        &client_id,
-                        "attendance",
-                        "update",
-                        &id_sesi,
-                        &att_val,
-                        att_rev,
-                    );
-                }
-            }
-        }
+    // Log yang ditolak tidak pernah membentuk absensi, jadi menghapusnya tidak
+    // boleh menyentuh absensi_harian sama sekali.
+    if matches!(jenis_scan_deleted.as_str(), "Masuk" | "Pulang") && status_proses != "Ditolak" {
+        rebuild_attendance_from_logs(
+            &transaction,
+            &client_id,
+            &id_karyawan,
+            &tanggal,
+            &now,
+            LogRemoval::ScanLog {
+                kind: &jenis_scan_deleted,
+                of_correction: referensi.starts_with("KOR-"),
+            },
+        )?;
     }
 
     // Riwayat asal ikut terhapus begitu tidak ada lagi log yang merujuknya.
@@ -2875,116 +2874,14 @@ pub fn delete_import_offline(
         )
         .map_err(|_| CommandError::internal())?;
 
-    let remaining_count: i64 = transaction
-        .query_row(
-            "SELECT COUNT(*) FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ?;",
-            params![id_unik, tanggal],
-            |r| r.get(0),
-        )
-        .map_err(|_| CommandError::internal())?;
-
-    let abs_row: Option<(String, i64)> = transaction
-        .query_row(
-            "SELECT id_sesi, id_shift FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day')) ORDER BY (CASE WHEN tanggal = ? THEN 0 ELSE 1 END) ASC LIMIT 1;",
-            params![id_unik, tanggal, tanggal, tanggal],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(|_| CommandError::internal())?;
-
-    if let Some((id_sesi, id_shift)) = abs_row {
-        if remaining_count == 0 {
-            transaction
-                .execute(
-                    "DELETE FROM absensi_harian WHERE id_karyawan = ? AND (tanggal = ? OR tanggal = date(?, '-1 day'));",
-                    params![id_unik, tanggal, tanggal],
-                )
-                .map_err(|_| CommandError::internal())?;
-            let att_rev = revision(&transaction, "attendance", &id_sesi);
-            let _ = sync::enqueue(
-                &transaction,
-                &client_id,
-                "attendance",
-                "delete",
-                &id_sesi,
-                &json!({ "id_sesi": id_sesi }),
-                att_rev,
-            );
-        } else {
-            let in_log: Option<String> = transaction
-                .query_row(
-                    "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Masuk' ORDER BY jam_scan ASC LIMIT 1;",
-                    params![id_unik, tanggal],
-                    |r| r.get(0),
-                )
-                .optional()
-                .unwrap_or(None);
-            let out_log: Option<String> = transaction
-                .query_row(
-                    "SELECT jam_scan FROM log_scan WHERE id_karyawan = ? AND tanggal_kerja = ? AND jenis_scan = 'Pulang' ORDER BY jam_scan DESC LIMIT 1;",
-                    params![id_unik, tanggal],
-                    |r| r.get(0),
-                )
-                .optional()
-                .unwrap_or(None);
-
-            let in_val = in_log
-                .map(|t| format_date_time_str(&tanggal, &t))
-                .unwrap_or_default();
-            let out_val = out_log
-                .map(|t| format_date_time_str(&tanggal, &t))
-                .unwrap_or_default();
-
-            let in_m = parse_time_min(&in_val);
-            let recalc = recalc_with_shift_rules(
-                &load_shift_clock_rules(&transaction, id_shift),
-                in_m,
-                clock_duration(in_m, parse_time_min(&out_val)),
-            );
-            let calculated_late = recalc.late_minutes;
-            let calculated_early = recalc.early_minutes;
-            let calculated_work = recalc.work_minutes;
-            let calculated_overtime = recalc.overtime_minutes;
-            let calculated_shortage = recalc.shortage_minutes;
-
-            let status_absen = if !in_val.is_empty() && !out_val.is_empty() {
-                "Lengkap"
-            } else if !in_val.is_empty() {
-                "Belum Pulang"
-            } else {
-                "Perlu Verifikasi"
-            };
-
-            let _ = transaction.execute(
-                "UPDATE absensi_harian SET jam_masuk = ?, jam_pulang = ?, status_absen = ?, update_terakhir = ?, menit_terlambat = ?, menit_datang_awal = ?, jam_kerja = ?, lembur = ?, jam_kerja_kurang = ? WHERE id_sesi = ?;",
-                params![
-                    in_val,
-                    out_val,
-                    status_absen,
-                    now,
-                    calculated_late,
-                    calculated_early,
-                    calculated_work,
-                    calculated_overtime,
-                    calculated_shortage,
-                    id_sesi
-                ],
-            );
-
-            if let Ok(att_val) = attendance_json(&transaction, &id_sesi) {
-                let att_rev = revision(&transaction, "attendance", &id_sesi);
-                let _ = sync::enqueue(
-                    &transaction,
-                    &client_id,
-                    "attendance",
-                    "update",
-                    &id_sesi,
-                    &att_val,
-                    att_rev,
-                );
-            }
-        }
-    }
+    rebuild_attendance_from_logs(
+        &transaction,
+        &client_id,
+        &id_unik,
+        &tanggal,
+        &now,
+        LogRemoval::Import,
+    )?;
 
     transaction
         .execute(
@@ -3017,7 +2914,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        create_backup, create_correction, dashboard_data, import_offline, storage, DesktopState,
+        create_backup, create_correction, dashboard_data, delete_backup, delete_log_scan,
+        import_offline, storage, DesktopState,
     };
 
     fn fixture() -> (tempfile::TempDir, DesktopState) {
@@ -3494,5 +3392,233 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Hari Libur (HUT RI - Libur Nasional)"));
+    }
+
+    /// Seed satu log scan dan kembalikan `id_log`-nya.
+    fn seed_log(
+        state: &DesktopState,
+        id_karyawan: &str,
+        tanggal_kerja: &str,
+        timestamp: &str,
+        jenis: &str,
+        status: &str,
+    ) -> i64 {
+        let connection = storage::database(&state.data_dir).expect("db");
+        let jam = timestamp.chars().skip(11).collect::<String>();
+        connection
+            .execute(
+                "INSERT INTO log_scan (timestamp_scan, tanggal_kerja, jam_scan, id_karyawan, nama, divisi, jenis_scan, status_proses, sumber_data, id_referensi, kode_operator) VALUES (?, ?, ?, ?, 'Uji', 'Dapur', ?, ?, 'Scanner', '', 'SPD001');",
+                rusqlite::params![timestamp, tanggal_kerja, jam, id_karyawan, jenis, status],
+            )
+            .expect("seed log");
+        connection.last_insert_rowid()
+    }
+
+    fn attendance_events(state: &DesktopState) -> Vec<(String, String)> {
+        let connection = storage::database(&state.data_dir).expect("db");
+        let mut statement = connection
+            .prepare(
+                "SELECT operation, entity_key FROM desktop_sync_outbox WHERE domain = 'attendance' ORDER BY created_at, event_id;",
+            )
+            .expect("outbox query");
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("outbox rows");
+        rows.collect::<Result<_, _>>().expect("outbox events")
+    }
+
+    /// Log "Scan Ditolak" tidak pernah membentuk absensi. Dulu menghapusnya
+    /// ikut mencocokkan `tanggal = date(?, '-1 day')` dan menghapus absensi
+    /// KEMARIN beserta event `attendance/delete` ke cloud.
+    #[test]
+    fn hapus_log_ditolak_tidak_menyentuh_absensi_kemarin() {
+        let (_directory, state) = fixture();
+        let id_log = seed_log(
+            &state,
+            "K001",
+            "2026-08-13",
+            "2026-08-13 07:05:00",
+            "Scan Ditolak",
+            "Ditolak",
+        );
+
+        delete_log_scan(&state, id_log, "SPD001").expect("hapus log ditolak");
+
+        let connection = storage::database(&state.data_dir).expect("db");
+        let masih_ada: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM absensi_harian WHERE id_sesi = 'NORMAL-20260812-K001-1';",
+                [],
+                |row| row.get(0),
+            )
+            .expect("hitung absensi");
+        assert_eq!(masih_ada, 1, "absensi kemarin tidak boleh ikut terhapus");
+        assert!(attendance_events(&state).is_empty());
+    }
+
+    /// Menghapus log scanner biasa tidak boleh menimpa baris Koreksi Admin.
+    #[test]
+    fn hapus_log_scanner_tidak_menimpa_koreksi_admin() {
+        let (_directory, state) = fixture();
+        storage::database(&state.data_dir)
+            .expect("db")
+            .execute(
+                "UPDATE absensi_harian SET sumber = 'Koreksi Admin' WHERE id_sesi = 'NORMAL-20260812-K001-1';",
+                [],
+            )
+            .expect("tandai koreksi");
+        let id_log = seed_log(
+            &state,
+            "K001",
+            "2026-08-12",
+            "2026-08-12 07:00:00",
+            "Masuk",
+            "Berhasil",
+        );
+
+        delete_log_scan(&state, id_log, "SPD001").expect("hapus log masuk");
+
+        let jam_masuk: String = storage::database(&state.data_dir)
+            .expect("db")
+            .query_row(
+                "SELECT jam_masuk FROM absensi_harian WHERE id_sesi = 'NORMAL-20260812-K001-1';",
+                [],
+                |row| row.get(0),
+            )
+            .expect("baris koreksi");
+        assert_eq!(jam_masuk, "2026-08-12 07:00:00");
+        assert!(attendance_events(&state).is_empty());
+    }
+
+    /// Pulang shift malam jatuh pada hari berikutnya. Dulu jam pulang yang
+    /// dibangun ulang memakai tanggal mulai shift.
+    #[test]
+    fn hapus_log_pulang_shift_malam_memakai_tanggal_berikutnya() {
+        let (_directory, state) = fixture();
+        storage::database(&state.data_dir)
+            .expect("db")
+            .execute_batch(
+                r#"
+        INSERT INTO tbl_shift (
+          id_shift, kode_shift, nama_shift, jam_masuk, jam_pulang,
+          jam_kerja_normal_menit, istirahat_menit, awal_absen_menit, batas_masuk_menit, toleransi_masuk_menit, batas_pulang_menit
+        ) VALUES (3, 3, 'Shift Malam', '22:00', '06:00', 420, 60, 120, 60, 15, 240);
+        INSERT INTO absensi_harian (
+          tanggal, id_karyawan, nama, kelas_divisi, jam_masuk, jam_pulang,
+          status_kehadiran, status_absen, sumber, update_terakhir, id_shift,
+          bulan, tahun, id_sesi, mode_tugas
+        ) VALUES (
+          '2026-08-20', 'K002', 'Karyawan Pengganti', 'Dapur',
+          '2026-08-20 22:00:00', '2026-08-21 06:00:00', 'Hadir', 'Lengkap',
+          'Scanner', '2026-08-21 06:00:00', 3, 'Agustus', 2026,
+          'NORMAL-20260820-K002-1', 'NORMAL'
+        );
+        "#,
+            )
+            .expect("seed shift malam");
+        seed_log(&state, "K002", "2026-08-20", "2026-08-20 22:00:00", "Masuk", "Berhasil");
+        seed_log(&state, "K002", "2026-08-20", "2026-08-21 05:50:00", "Pulang", "Berhasil");
+        let terakhir = seed_log(
+            &state,
+            "K002",
+            "2026-08-20",
+            "2026-08-21 06:00:00",
+            "Pulang",
+            "Berhasil",
+        );
+
+        delete_log_scan(&state, terakhir, "SPD001").expect("hapus pulang terakhir");
+
+        let (masuk, pulang): (String, String) = storage::database(&state.data_dir)
+            .expect("db")
+            .query_row(
+                "SELECT jam_masuk, jam_pulang FROM absensi_harian WHERE id_sesi = 'NORMAL-20260820-K002-1';",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("baris shift malam");
+        assert_eq!(masuk, "2026-08-20 22:00:00");
+        assert_eq!(pulang, "2026-08-21 05:50:00");
+        assert_eq!(
+            attendance_events(&state),
+            vec![("update".to_owned(), "NORMAL-20260820-K002-1".to_owned())]
+        );
+    }
+
+    /// Log terakhir yang dihapus menghapus barisnya dan mendaftarkan tepat
+    /// satu event delete untuk sesi itu, tanpa menyentuh hari lain.
+    #[test]
+    fn hapus_satu_satunya_log_menghapus_baris_dengan_event_delete() {
+        let (_directory, state) = fixture();
+        storage::database(&state.data_dir)
+            .expect("db")
+            .execute_batch(
+                r#"
+        INSERT INTO absensi_harian (
+          tanggal, id_karyawan, nama, kelas_divisi, jam_masuk, jam_pulang,
+          status_kehadiran, status_absen, sumber, update_terakhir, id_shift,
+          bulan, tahun, id_sesi, mode_tugas
+        ) VALUES (
+          '2026-08-13', 'K001', 'Karyawan Test', 'Dapur',
+          '2026-08-13 07:00:00', '', 'Hadir', 'Belum Pulang',
+          'Scanner', '2026-08-13 07:00:00', 1, 'Agustus', 2026,
+          'NORMAL-20260813-K001-1', 'NORMAL'
+        );
+        "#,
+            )
+            .expect("seed absensi");
+        let id_log = seed_log(&state, "K001", "2026-08-13", "2026-08-13 07:00:00", "Masuk", "Berhasil");
+
+        delete_log_scan(&state, id_log, "SPD001").expect("hapus log masuk");
+
+        let connection = storage::database(&state.data_dir).expect("db");
+        let tersisa: Vec<String> = connection
+            .prepare("SELECT id_sesi FROM absensi_harian WHERE id_karyawan = 'K001' ORDER BY tanggal;")
+            .expect("query")
+            .query_map([], |row| row.get(0))
+            .expect("rows")
+            .collect::<Result<_, _>>()
+            .expect("ids");
+        assert_eq!(tersisa, vec!["NORMAL-20260812-K001-1".to_owned()]);
+        assert_eq!(
+            attendance_events(&state),
+            vec![("delete".to_owned(), "NORMAL-20260813-K001-1".to_owned())]
+        );
+    }
+
+    /// Penugasan backup yang sudah dipakai absensi tidak boleh dihapus permanen;
+    /// membatalkannya menyimpan jejak, menghapusnya membuat `id_backup` menggantung.
+    #[test]
+    fn hapus_backup_ditolak_bila_sudah_dipakai_absensi() {
+        let (_directory, state) = fixture();
+        let backup = create_backup(
+            &state,
+            &json!({
+                "tanggal_tugas": "2026-08-16",
+                "id_karyawan_asal": "K001",
+                "id_karyawan_pengganti": "K002",
+                "id_shift_backup": 2,
+                "kode_operator": "SPD001",
+            }),
+            "SPD001",
+        )
+        .expect("create backup");
+        let id_backup = backup["id_backup"].as_str().expect("id_backup").to_owned();
+        storage::database(&state.data_dir)
+            .expect("db")
+            .execute(
+                "INSERT INTO absensi_harian (tanggal, id_karyawan, nama, kelas_divisi, status_kehadiran, status_absen, sumber, update_terakhir, id_shift, bulan, tahun, id_sesi, mode_tugas, id_backup) VALUES ('2026-08-16', 'K002', 'Karyawan Pengganti', 'Dapur', 'Hadir', 'Belum Pulang', 'Scanner', '2026-08-16 15:00:00', 2, 'Agustus', 2026, 'PENGGANTI-20260816-K002-2', 'PENGGANTI', ?);",
+                [&id_backup],
+            )
+            .expect("absensi pengganti");
+
+        let error = delete_backup(&state, &id_backup, "SPD001").expect_err("harus ditolak");
+        assert_eq!(error.code, "OPERATIONAL_BACKUP_IN_USE");
+
+        storage::database(&state.data_dir)
+            .expect("db")
+            .execute("DELETE FROM absensi_harian WHERE id_backup = ?;", [&id_backup])
+            .expect("lepas absensi");
+        delete_backup(&state, &id_backup, "SPD001").expect("backup tanpa absensi boleh dihapus");
     }
 }

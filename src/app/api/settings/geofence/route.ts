@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -11,7 +8,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   getGeofenceSettings,
   updateGeofenceSettings,
@@ -54,17 +50,10 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const settings = parseSettings(await readJsonBody(request));
     const data = await updateGeofenceSettings(settings);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "setting",
-      entityKey: "geofence",
-      operation: "update",
-      payload: data,
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ data, revision });
+    return noStoreJson({ data });
   } catch (error) {
     return toApiErrorResponse(error);
   }

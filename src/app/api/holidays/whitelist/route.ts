@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -11,9 +8,7 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
-  getHolidayWhitelist,
   type HolidayWhitelistInput,
   hapusHolidayWhitelist,
   tambahHolidayWhitelist,
@@ -52,29 +47,14 @@ function parseId(value: unknown): string {
 }
 
 /** Baris terkini, dipakai membangun payload sync yang utuh. */
-async function readEntry(id: string) {
-  const rows = await getHolidayWhitelist();
-  return rows.find((row) => row.id === id) ?? null;
-}
-
 export async function POST(request: NextRequest) {
   try {
-    const actor = await requireWebPermission(request, "holidays.manage");
+    await requireWebPermission(request, "holidays.manage");
     assertSameOriginMutation(request);
     await ensureServerDatabaseInitialized();
 
     const body = await readJsonBody<WhitelistMutationBody>(request);
     const result = await tambahHolidayWhitelist(parseDraft(body.draft));
-    const saved = await readEntry(result.id);
-
-    const client = getServerDatabase();
-    await recordOperationalChange(client, {
-      domain: "holiday-whitelist",
-      operation: "create",
-      entityKey: result.id,
-      payload: { ...(saved ?? {}), id: result.id },
-      actorOperatorId: actor.id,
-    });
 
     return noStoreJson(result, 201);
   } catch (error) {
@@ -84,23 +64,13 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const actor = await requireWebPermission(request, "holidays.manage");
+    await requireWebPermission(request, "holidays.manage");
     assertSameOriginMutation(request);
     await ensureServerDatabaseInitialized();
 
     const body = await readJsonBody<WhitelistMutationBody>(request);
     const id = parseId(body.whitelistId);
     const result = await updateHolidayWhitelist(id, parseDraft(body.draft));
-    const saved = await readEntry(id);
-
-    const client = getServerDatabase();
-    await recordOperationalChange(client, {
-      domain: "holiday-whitelist",
-      operation: "update",
-      entityKey: id,
-      payload: { ...(saved ?? {}), id },
-      actorOperatorId: actor.id,
-    });
 
     return noStoreJson(result);
   } catch (error) {
@@ -110,22 +80,13 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const actor = await requireWebPermission(request, "holidays.manage");
+    await requireWebPermission(request, "holidays.manage");
     assertSameOriginMutation(request);
     await ensureServerDatabaseInitialized();
 
     const body = await readJsonBody<WhitelistMutationBody>(request);
     const id = parseId(body.whitelistId);
     const result = await hapusHolidayWhitelist(id);
-
-    const client = getServerDatabase();
-    await recordOperationalChange(client, {
-      domain: "holiday-whitelist",
-      operation: "delete",
-      entityKey: id,
-      payload: { id },
-      actorOperatorId: actor.id,
-    });
 
     return noStoreJson(result);
   } catch (error) {

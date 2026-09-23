@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -11,7 +8,6 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   editAbsensiHarian,
   hapusAbsensiHarian,
@@ -56,15 +52,7 @@ export async function PATCH(request: NextRequest) {
     const result = await editAbsensiHarian(idSesi, patch, actor.kode_operator);
     if (!result.sukses) throw new ApiRequestError(result.pesan, 400);
 
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "attendance",
-      entityKey: idSesi,
-      operation: "update",
-      payload: { id_sesi: idSesi, ...patch },
-      actorOperatorId: actor.id,
-    });
-
-    return noStoreJson({ ...result, revision });
+    return noStoreJson(result);
   } catch (error) {
     return toApiErrorResponse(error);
   }
@@ -92,40 +80,14 @@ export async function DELETE(request: NextRequest) {
       const result = await hapusLogScan(idLog, actor.kode_operator);
       if (!result.sukses) throw new ApiRequestError(result.pesan, 400);
 
-      const revision = await recordOperationalChange(getServerDatabase(), {
-        domain: "log-scan",
-        entityKey: String(idLog),
-        operation: "delete",
-        payload: { id_log: idLog },
-        actorOperatorId: actor.id,
-      });
-
-      if (result.deletedAbsensiIdSesi) {
-        await recordOperationalChange(getServerDatabase(), {
-          domain: "attendance",
-          entityKey: result.deletedAbsensiIdSesi,
-          operation: "delete",
-          payload: { id_sesi: result.deletedAbsensiIdSesi },
-          actorOperatorId: actor.id,
-        });
-      }
-
-      return noStoreJson({ ...result, revision });
+      return noStoreJson(result);
     }
 
     if (idSesi) {
       const result = await hapusAbsensiHarian(idSesi, actor.kode_operator);
       if (!result.sukses) throw new ApiRequestError(result.pesan, 400);
 
-      const revision = await recordOperationalChange(getServerDatabase(), {
-        domain: "attendance",
-        entityKey: idSesi,
-        operation: "delete",
-        payload: { id_sesi: idSesi },
-        actorOperatorId: actor.id,
-      });
-
-      return noStoreJson({ ...result, revision });
+      return noStoreJson(result);
     }
 
     throw new ApiRequestError("Permintaan tidak valid.", 400);

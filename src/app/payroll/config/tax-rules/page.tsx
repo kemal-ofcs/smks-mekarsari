@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -121,7 +122,7 @@ export default function TaxRulesPage() {
       bracket_min: minVal,
       bracket_max: null,
       rate_percentage: 5.0,
-      effective_date: new Date().toISOString().slice(0, 10),
+      effective_date: formatTanggalOperasional(Date.now()),
     });
     setModalOpen(true);
   };
@@ -570,7 +571,7 @@ export default function TaxRulesPage() {
                     required
                     value={
                       editingRule.effective_date ??
-                      new Date().toISOString().slice(0, 10)
+                      formatTanggalOperasional(Date.now())
                     }
                     onChange={(e) =>
                       setEditingRule((p) =>

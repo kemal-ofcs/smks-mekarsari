@@ -70,6 +70,7 @@ export function NotifikasiWaCard({
       importManualEnabled: importManual,
       ambangAlfaLimit: ambangLimit,
       ambangAlfaDays: ambangDays,
+      autoSendEnabled: config.autoSendEnabled,
     };
     await onSave(draft);
     setIsDirty(false);

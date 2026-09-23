@@ -3,10 +3,7 @@ import {
   requireWebPermission,
   requireWebSession,
 } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -17,7 +14,6 @@ import {
   assertSameOriginMutation,
   getClientAddress,
 } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   getScanSecurity,
   updateScanSecurity,
@@ -26,10 +22,6 @@ import {
   MAX_IP_ALLOWLIST_ENTRIES,
   validateIpAllowlistEntries,
 } from "@/lib/validations/ip-allowlist";
-import {
-  SCAN_IP_RESTRICTION_ENABLED_KEY,
-  SCAN_PHOTO_ENABLED_KEY,
-} from "@/lib/validations/scan-security";
 
 export const runtime = "nodejs";
 
@@ -83,7 +75,7 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     assertSameOriginMutation(request);
-    const actor = await requireWebPermission(request, "settings.manage", true);
+    await requireWebPermission(request, "settings.manage", true);
     await ensureServerDatabaseInitialized();
     const body = await readJsonBody<ScanSecurityBody>(request);
     const data = await updateScanSecurity(
@@ -97,18 +89,7 @@ export async function PUT(request: NextRequest) {
     // Ketiganya hidup di `setting_gex_system` yang ikut sinkronisasi, jadi
     // perubahannya wajib tercatat sebagai perubahan operasional agar terminal
     // Desktop/Mobile menariknya pada siklus sync berikutnya.
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "setting",
-      entityKey: SCAN_PHOTO_ENABLED_KEY,
-      operation: "update",
-      payload: {
-        [SCAN_PHOTO_ENABLED_KEY]: data.photoEnabled,
-        [SCAN_IP_RESTRICTION_ENABLED_KEY]: data.ipRestrictionEnabled,
-        entries: data.entries,
-      },
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ data, revision });
+    return noStoreJson({ data });
   } catch (error) {
     return toApiErrorResponse(error);
   }

@@ -46,6 +46,56 @@ pub(super) fn token_from_event(event_id: &str) -> String {
     hex::encode_upper(hasher.finalize())[..10].to_owned()
 }
 
+/// ID Unik dan Kode Karyawan masing-masing hanya boleh dimiliki satu orang.
+///
+/// Tanpa pemeriksaan ini UNIQUE SQLite yang menolaknya, dan penolakan itu
+/// sampai ke layar sebagai galat internal tanpa keterangan. Teksnya WAJIB
+/// sama dengan `pesanBentrokIdentitasKaryawan` di `services/employee.ts`.
+/// `kecuali` diisi pada penyuntingan: baris karyawan itu sendiri bukan bentrokan.
+fn assert_employee_identity_free(
+    transaction: &Transaction<'_>,
+    id_unik: &str,
+    kode: &str,
+    kecuali: Option<&str>,
+) -> Result<(), CommandError> {
+    if kecuali.is_none() {
+        let pemilik: Option<String> = transaction
+            .query_row(
+                "SELECT nama FROM master_data WHERE id_unik = ? LIMIT 1;",
+                params![id_unik],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| CommandError::internal())?;
+        if let Some(nama) = pemilik {
+            return Err(CommandError::new(
+                "OPERATIONAL_DUPLICATE_EMPLOYEE",
+                format!("ID Unik '{id_unik}' sudah dipakai {nama}. ID Unik harus unik."),
+            ));
+        }
+    }
+    if kode.is_empty() {
+        return Ok(());
+    }
+    let pemilik: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT id_unik, nama FROM master_data WHERE kode_karyawan = ? AND id_unik <> ? LIMIT 1;",
+            params![kode, kecuali.unwrap_or(id_unik)],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?;
+    if let Some((id_lain, nama)) = pemilik {
+        return Err(CommandError::new(
+            "OPERATIONAL_DUPLICATE_EMPLOYEE",
+            format!(
+                "Kode Karyawan '{kode}' sudah dipakai {nama} ({id_lain}). Kode Karyawan harus unik."
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub fn list_employees(state: &DesktopState, filter: &Value) -> Result<Value, CommandError> {
     let connection = storage::database(&state.data_dir)?;
     let mut statement = connection
@@ -148,6 +198,7 @@ pub fn create_employee(state: &DesktopState, draft: &Value) -> Result<Value, Com
     let transaction = connection
         .transaction()
         .map_err(|_| CommandError::internal())?;
+    assert_employee_identity_free(&transaction, id, code, None)?;
     transaction
         .execute(
             r#"
@@ -395,6 +446,7 @@ pub fn update_employee(
         .transaction()
         .map_err(|_| CommandError::internal())?;
     let revision = base_revision(&transaction, "employee", id);
+    assert_employee_identity_free(&transaction, id, text(draft, "kode_karyawan"), Some(id))?;
 
     let jenis_personil = if text(draft, "jenis_personil").is_empty() {
         "Pegawai"
@@ -4251,5 +4303,65 @@ mod tests_generate_alfa_hari_libur {
             )
             .expect("count");
         assert_eq!(jumlah, 0, "daftar kosong berarti tidak ada yang dijadwalkan");
+    }
+}
+
+#[cfg(test)]
+mod tests_identitas_karyawan {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn fixture() -> (tempfile::TempDir, DesktopState) {
+        let dir = tempdir().expect("tempdir");
+        storage::initialize(dir.path()).expect("init db");
+        let state = DesktopState {
+            server_origin: std::sync::RwLock::new("http://localhost:3000".to_string()),
+            offline_max_age_hours: 24,
+            data_dir: dir.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            turso_config: std::sync::RwLock::new(None),
+            session: std::sync::Mutex::new(None),
+            vault_lock: std::sync::Mutex::new(()),
+        };
+        (dir, state)
+    }
+
+    fn karyawan(id: &str, kode: &str, nama: &str) -> Value {
+        json!({"id_unik": id, "kode_karyawan": kode, "nama": nama, "divisi": "Dapur", "id_shift": 1})
+    }
+
+    /// Dulu UNIQUE SQLite yang menolak, dan layar hanya menampilkan galat
+    /// internal tanpa keterangan siapa pemilik ID atau kodenya.
+    #[test]
+    fn id_unik_dan_kode_karyawan_ganda_ditolak_dengan_pesan_jelas() {
+        let (_dir, state) = fixture();
+        create_employee(&state, &karyawan("K-01", "001", "Ani")).expect("karyawan pertama");
+
+        let id_ganda = create_employee(&state, &karyawan("K-01", "999", "Budi"))
+            .expect_err("ID Unik ganda ditolak");
+        assert_eq!(id_ganda.code, "OPERATIONAL_DUPLICATE_EMPLOYEE");
+        assert_eq!(
+            id_ganda.message,
+            "ID Unik 'K-01' sudah dipakai Ani. ID Unik harus unik."
+        );
+
+        let kode_ganda = create_employee(&state, &karyawan("K-02", "001", "Budi"))
+            .expect_err("Kode Karyawan ganda ditolak");
+        assert_eq!(
+            kode_ganda.message,
+            "Kode Karyawan '001' sudah dipakai Ani (K-01). Kode Karyawan harus unik."
+        );
+
+        // Menyimpan ulang kode miliknya sendiri bukan bentrokan.
+        update_employee(&state, "K-01", &karyawan("K-01", "001", "Ani"))
+            .expect("kode sendiri boleh disimpan ulang");
+
+        create_employee(&state, &karyawan("K-02", "002", "Budi")).expect("karyawan kedua");
+        let edit_ganda = update_employee(&state, "K-02", &karyawan("K-02", "001", "Budi"))
+            .expect_err("mengambil kode orang lain ditolak");
+        assert_eq!(
+            edit_ganda.message,
+            "Kode Karyawan '001' sudah dipakai Ani (K-01). Kode Karyawan harus unik."
+        );
     }
 }

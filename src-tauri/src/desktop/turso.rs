@@ -2686,6 +2686,26 @@ impl TursoClient {
                 );"#,
                 vec![],
             ),
+            Statement::new(
+                // v33 — riwayat penggantian identitas karyawan. Khusus cloud:
+                // tidak pernah ada di SQLite perangkat dan tidak ikut snapshot.
+                // Satu baris lahir setiap kali operator memilih "Gunakan Versi
+                // Lokal" pada konflik ID Unik, di pipeline atomik yang SAMA
+                // dengan penimpaannya — penggantian tanpa jejak tidak mungkin.
+                // `data_lama`/`data_baru` berupa JSON tanpa token absensi.
+                r#"CREATE TABLE IF NOT EXISTS riwayat_identitas_karyawan (
+                    id_riwayat INTEGER PRIMARY KEY AUTOINCREMENT,
+                    waktu TEXT NOT NULL,
+                    id_unik TEXT NOT NULL,
+                    data_lama TEXT NOT NULL,
+                    data_baru TEXT NOT NULL,
+                    kode_operator TEXT,
+                    client_id TEXT,
+                    event_id TEXT
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_riwayat_identitas_id_unik ON riwayat_identitas_karyawan(id_unik);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_jurnal_presensi ON jurnal_mengajar(id_presensi_mapel);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_leger_scope ON leger_kehadiran(id_tahun_ajaran, semester, id_rombel, id_siswa);", vec![]),
             Statement::new(
@@ -2701,7 +2721,9 @@ impl TursoClient {
                     last_error TEXT,
                     sent_at TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    klaim_oleh TEXT,
+                    klaim_sampai TEXT
                 );"#,
                 vec![],
             ),
@@ -3028,7 +3050,9 @@ impl TursoClient {
                 (29, 'academic-unit', datetime('now')),
                 (30, 'wali-kredensial', datetime('now')),
                 (31, 'cms-landing-page', datetime('now')),
-                (32, 'personnel-photo', datetime('now'));"#,
+                (32, 'personnel-photo', datetime('now')),
+                (33, 'employee-identity-history', datetime('now')),
+                (34, 'wa-send-claim', datetime('now'));"#,
                 vec![],
             ),
         ];
@@ -3243,6 +3267,14 @@ impl TursoClient {
         // trigger pulse-nya, dan pemasangan ulangnya terjadi di sana.
         self.ensure_payroll_calc_type_values().await?;
         self.ensure_wa_notification_kind_values().await?;
+        // v34: klaim pengiriman WhatsApp (lihat `wa_sender.rs`). SETELAH
+        // rebuild di atas, yang menyalin daftar kolom eksplisit.
+        for (column, sql) in [
+            ("klaim_oleh", "ALTER TABLE notifikasi_wa ADD COLUMN klaim_oleh TEXT;"),
+            ("klaim_sampai", "ALTER TABLE notifikasi_wa ADD COLUMN klaim_sampai TEXT;"),
+        ] {
+            self.ensure_column("notifikasi_wa", column, sql).await?;
+        }
 
         self.ensure_sync_pulse().await?;
         self.purge_legacy_rate_rows().await?;
@@ -3605,7 +3637,7 @@ impl TursoClient {
         Ok(())
     }
 
-    async fn ensure_schema_current(&self) -> Result<(), CommandError> {
+    pub(crate) async fn ensure_schema_current(&self) -> Result<(), CommandError> {
         let cache_key = self.base_url.as_str().to_owned();
         if schema_verified_cache()
             .lock()
@@ -4842,6 +4874,69 @@ impl TursoClient {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or_default();
 
+            // Karyawan yang BELUM pernah diterima perangkat ini dari cloud (tanpa
+            // basis revisi), padahal ID Unik-nya sudah dipakai orang lain di
+            // cloud. Dulu upsert `ON CONFLICT(id_unik)` menimpanya diam-diam dan
+            // data salah satu orang hilang tanpa jejak. Kini ditahan sebagai
+            // konflik; hanya "Gunakan Versi Lokal" yang boleh menimpa, dan
+            // penimpaannya dicatat di `riwayat_identitas_karyawan` dalam pipeline
+            // atomik yang SAMA.
+            let mut identity_audit: Option<Statement> = None;
+            if domain == "employee"
+                && matches!(operation, "create" | "update")
+                && base_revision.is_none()
+            {
+                let incoming = parsed_payload.get("employee").unwrap_or(&parsed_payload);
+                let id_unik = incoming
+                    .get("id_unik")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(entity_key);
+                let stored = self
+                    .query_one(
+                        "SELECT id_unik, kode_karyawan, nama, divisi, jabatan_status, no_hp, lp, id_shift, status_aktif, jenis_personil, unit FROM master_data WHERE id_unik = ? LIMIT 1;",
+                        vec![json!(id_unik)],
+                    )
+                    .await?
+                    .to_objects()
+                    .into_iter()
+                    .next()
+                    .map(|row| json!(row));
+                if let Some(stored) =
+                    stored.filter(|stored| employee_identity_differs(stored, incoming))
+                {
+                    let forced = parsed_payload
+                        .get("forceLocalOverride")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if !forced {
+                        let message = employee_id_conflict_message(id_unik, &stored, incoming);
+                        push_results.push(json!({
+                            "eventId": event_id,
+                            "status": "conflict",
+                            "reason": message.clone(),
+                            "message": message,
+                            "serverRevision": 0
+                        }));
+                        continue;
+                    }
+                    identity_audit = Some(Statement::new(
+                        "INSERT INTO riwayat_identitas_karyawan (waktu, id_unik, data_lama, data_baru, kode_operator, client_id, event_id) VALUES (datetime('now', '+7 hours'), ?, ?, ?, ?, ?, ?);",
+                        vec![
+                            json!(id_unik),
+                            json!(employee_identity_snapshot(&stored)),
+                            json!(employee_identity_snapshot(incoming)),
+                            json!(parsed_payload
+                                .get("forceLocalOverrideBy")
+                                .and_then(Value::as_str)),
+                            json!(client_id),
+                            json!(event_id),
+                        ],
+                    ));
+                }
+            }
+
             // Guard absensi dijalankan SEBELUM mutasi disusun, meniru urutan yang
             // sudah dipakai jalur Web di `sync-push.ts`.
             if let Err(error) = assert_attendance_precondition(
@@ -4922,6 +5017,7 @@ impl TursoClient {
                 ],
             )];
             transaction_statements.extend(mutations);
+            transaction_statements.extend(identity_audit);
             let receipt = json!({ "eventId": event_id, "status": "applied" });
             let payload_hash = hex::encode(Sha256::digest(payload_json.as_bytes()));
             transaction_statements.push(Statement::new(
@@ -4981,8 +5077,14 @@ impl TursoClient {
                 } else {
                     None
                 };
-                let message = current_revision
-                    .map(|_| "Data server berubah setelah snapshot lokal dibuat.".to_owned())
+                // Bentrokan Kode Karyawan tidak pernah selesai sendiri, jadi
+                // pesannya harus memberi tahu operator apa yang dilakukan —
+                // didahulukan dari pesan revisi yang akan menyembunyikannya.
+                let message = employee_code_conflict(domain, &parsed_payload, &error.message)
+                    .or_else(|| {
+                        current_revision
+                            .map(|_| "Data server berubah setelah snapshot lokal dibuat.".to_owned())
+                    })
                     .unwrap_or(error.message);
                 push_results.push(json!({
                     "eventId": event_id,
@@ -5793,22 +5895,49 @@ impl TursoClient {
         if let Some(row) = res.to_objects().into_iter().next() {
             let api_key = row.get("api_key").and_then(Value::as_str).unwrap_or("");
             let has_api_key = !api_key.trim().is_empty();
-            let mut obj = json!(row);
-            obj["api_key"] = json!("");
-            obj["has_api_key"] = json!(has_api_key);
+            let number = |key: &str| {
+                row.get(key)
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str()?.trim().parse().ok()))
+            };
+            let on = |key: &str| number(key) == Some(1);
+            let text = |key: &str| row.get(key).cloned().unwrap_or(Value::Null);
+            // Bentuk camelCase yang SAMA dengan `getWaConfig` di TS (`WaConfig`).
+            // Dulu baris mentah snake_case dikembalikan apa adanya, sehingga UI
+            // Desktop/Mobile membaca `isActive`, `scanMasukEnabled`, dst. sebagai
+            // undefined dan menampilkan semuanya mati.
+            let mut obj = json!({
+                "id": "default",
+                "provider": row.get("provider").and_then(Value::as_str).unwrap_or("fonnte"),
+                "apiKey": "",
+                "hasApiKey": has_api_key,
+                "apiUrl": text("api_url"),
+                "senderNumber": text("sender_number"),
+                "isActive": on("is_active"),
+                "dailyLimit": number("daily_limit").unwrap_or(1000),
+                "scanMasukEnabled": on("scan_masuk_enabled"),
+                "scanPulangEnabled": on("scan_pulang_enabled"),
+                "bolosEnabled": on("bolos_enabled"),
+                "ambangAlfaEnabled": on("ambang_alfa_enabled"),
+                "koreksiAdminEnabled": on("koreksi_admin_enabled"),
+                "importManualEnabled": on("import_manual_enabled"),
+                "createdAt": text("created_at"),
+                "updatedAt": text("updated_at"),
+            });
 
             let settings_res = self
                 .query_one(
-                    "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
+                    "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?, ?);",
                     vec![
                         json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY),
                         json!(super::wa_notification::WA_NOTIFY_AMBANG_ALFA_DAYS_KEY),
+                        json!(super::wa_notification::WA_AUTO_SEND_KEY),
                     ],
                 )
                 .await
                 .ok();
             let mut ambang_limit = super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT;
             let mut ambang_days = super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS;
+            let mut auto_send = false;
             if let Some(s_res) = settings_res {
                 for r in s_res.to_objects() {
                     let k = r.get("key").and_then(Value::as_str).unwrap_or("");
@@ -5828,36 +5957,40 @@ impl TursoClient {
                             ambang_days =
                                 super::wa_notification::clamp_ambang_alfa_days(parsed);
                         }
+                    } else if k == super::wa_notification::WA_AUTO_SEND_KEY {
+                        auto_send = v.trim().eq_ignore_ascii_case("true");
                     }
                 }
             }
             obj["ambangAlfaLimit"] = json!(ambang_limit);
             obj["ambangAlfaDays"] = json!(ambang_days);
+            obj["autoSendEnabled"] = json!(auto_send);
             Ok(obj)
         } else {
             Ok(json!({
                 "id": "default",
                 "provider": "fonnte",
-                "api_key": "",
-                "has_api_key": false,
-                "api_url": null,
-                "sender_number": null,
-                "is_active": 0,
-                "daily_limit": 1000,
+                "apiKey": "",
+                "hasApiKey": false,
+                "apiUrl": null,
+                "senderNumber": null,
+                "isActive": false,
+                "dailyLimit": 1000,
                 // Keempatnya MATI, sama dengan yang dibaca mesin untuk kunci
                 // `wa_notify_*` yang belum ada. Dulu dua yang terakhir bernilai
                 // 1 di sini, sehingga kartu Pengaturan menampilkannya hidup
                 // padahal tidak ada notifikasi yang pernah diantrekan.
-                "scan_masuk_enabled": 0,
-                "scan_pulang_enabled": 0,
-                "bolos_enabled": 0,
-                "ambang_alfa_enabled": 0,
-                "koreksi_admin_enabled": 0,
-                "import_manual_enabled": 0,
+                "scanMasukEnabled": false,
+                "scanPulangEnabled": false,
+                "bolosEnabled": false,
+                "ambangAlfaEnabled": false,
+                "koreksiAdminEnabled": false,
+                "importManualEnabled": false,
                 "ambangAlfaLimit": super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT,
                 "ambangAlfaDays": super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS,
-                "created_at": "",
-                "updated_at": ""
+                "autoSendEnabled": false,
+                "createdAt": "",
+                "updatedAt": ""
             }))
         }
     }
@@ -5875,25 +6008,26 @@ impl TursoClient {
                 "Provider WhatsApp tidak valid. Pilih fonnte, wablas, atau custom.",
             ));
         }
+        // Kunci camelCase = `WaConfigDraft` di TS; lihat `parse_wa_switches`.
         let api_url = draft
-            .get("api_url")
+            .get("apiUrl")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
         let sender_number = draft
-            .get("sender_number")
+            .get("senderNumber")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
         let is_active = draft
-            .get("is_active")
+            .get("isActive")
             .and_then(|v| {
                 v.as_i64()
                     .or_else(|| v.as_bool().map(|b| if b { 1 } else { 0 }))
             })
             .unwrap_or(0);
         let daily_limit = draft
-            .get("daily_limit")
+            .get("dailyLimit")
             .and_then(Value::as_i64)
             .unwrap_or(1000)
             .max(1);
@@ -5908,7 +6042,7 @@ impl TursoClient {
         let import_manual_enabled = switches.import_manual;
 
         let new_key = draft
-            .get("api_key")
+            .get("apiKey")
             .and_then(Value::as_str)
             .map(str::trim)
             .unwrap_or("");
@@ -7806,6 +7940,93 @@ fn canonical_sync_route(domain: &str, operation: &str) -> Option<(&'static str, 
         _ => return None,
     };
     sync::is_canonical_sync_route(route.0, route.1).then_some(route)
+}
+
+/// Pesan SQLite ketika dua orang berbeda diberi Kode Karyawan yang sama.
+pub const EMPLOYEE_CODE_UNIQUE_ERROR: &str = "UNIQUE constraint failed: master_data.kode_karyawan";
+
+/// Pesan bentrokan Kode Karyawan yang bisa ditindaklanjuti operator.
+///
+/// `master_data.kode_karyawan` sengaja tetap UNIQUE: satu kode memang hanya
+/// milik satu orang. Tetapi dua perangkat offline bisa memberi kode yang sama
+/// kepada dua orang berbeda, dan pesan mentah SQLite tidak memberi tahu siapa
+/// yang bentrok atau apa yang harus dilakukan. Konflik ini tidak pernah selesai
+/// sendiri, jadi sengaja TIDAK masuk daftar retry otomatis di `sync.rs`.
+///
+/// Satu-satunya tempat pesan ini dieja: jalur push server aplikasi (dan
+/// cerminan TypeScript-nya) sudah dipensiunkan.
+pub fn employee_code_conflict_message(kode: &str, nama: &str, id_unik: &str) -> String {
+    format!(
+        "Kode Karyawan '{kode}' sudah dipakai karyawan lain di server, padahal Kode Karyawan harus unik. Ubah Kode Karyawan milik {nama} ({id_unik}) di perangkat ini, lalu selesaikan konflik ini dengan tombol \"Ikuti Cloud\"."
+    )
+}
+
+/// Kolom yang dibandingkan dan dicatat saat ID Unik dipakai dua orang.
+/// WAJIB sama dengan `EMPLOYEE_IDENTITY_FIELDS` di `employee-identity.ts`.
+const EMPLOYEE_IDENTITY_FIELDS: &[&str] = &[
+    "id_unik",
+    "kode_karyawan",
+    "nama",
+    "divisi",
+    "jabatan_status",
+    "no_hp",
+    "lp",
+    "id_shift",
+    "status_aktif",
+    "jenis_personil",
+    "unit",
+];
+
+fn identity_field(row: &Value, key: &str) -> String {
+    match row.get(key) {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(text)) => text.trim().to_owned(),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// Apakah dua baris dengan ID Unik yang sama sebenarnya orang yang BERBEDA.
+///
+/// Kode Karyawan atau nama yang berbeda berarti dua perangkat offline memberi
+/// ID yang sama kepada dua orang. Kiriman ulang untuk orang yang sama tetap
+/// lolos.
+fn employee_identity_differs(stored: &Value, incoming: &Value) -> bool {
+    identity_field(stored, "kode_karyawan") != identity_field(incoming, "kode_karyawan")
+        || identity_field(stored, "nama").to_lowercase()
+            != identity_field(incoming, "nama").to_lowercase()
+}
+
+/// Salinan baris untuk riwayat: kolom identitas saja, tanpa token absensi.
+fn employee_identity_snapshot(row: &Value) -> String {
+    let mut snapshot = serde_json::Map::new();
+    for key in EMPLOYEE_IDENTITY_FIELDS {
+        snapshot.insert((*key).to_owned(), Value::String(identity_field(row, key)));
+    }
+    Value::Object(snapshot).to_string()
+}
+
+/// Pesan konflik ID Unik yang ditampilkan di halaman Sinkronisasi.
+fn employee_id_conflict_message(id_unik: &str, stored: &Value, incoming: &Value) -> String {
+    let nama_baru = identity_field(incoming, "nama");
+    format!(
+        "ID Unik '{id_unik}' sudah terpakai di server oleh {} (Kode Karyawan {}). Ganti dengan {nama_baru} (Kode Karyawan {}) dari perangkat ini? Pilih \"Gunakan Versi Lokal\" untuk mengganti: data server tertimpa, absensi yang tercatat atas ID ini ikut menjadi milik {nama_baru}, dan penggantiannya dicatat di Riwayat Identitas Karyawan. Pilih \"Ikuti Cloud\" untuk membuang data perangkat ini.",
+        identity_field(stored, "nama"),
+        identity_field(stored, "kode_karyawan"),
+        identity_field(incoming, "kode_karyawan"),
+    )
+}
+
+fn employee_code_conflict(domain: &str, payload: &Value, raw: &str) -> Option<String> {
+    if domain != "employee" || !raw.contains(EMPLOYEE_CODE_UNIQUE_ERROR) {
+        return None;
+    }
+    let row = payload.get("employee").unwrap_or(payload);
+    let text = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("").trim();
+    Some(employee_code_conflict_message(
+        text("kode_karyawan"),
+        text("nama"),
+        text("id_unik"),
+    ))
 }
 
 /// Kondisi baris absensi cloud saat batch push dimulai.
@@ -10902,7 +11123,15 @@ async fn apply_event_to_turso(
                         id_siswa = excluded.id_siswa,
                         tujuan_nomor = excluded.tujuan_nomor,
                         isi_pesan = excluded.isi_pesan,
-                        status = excluded.status,
+                        -- Status akhir tidak pernah mundur. Event antrean yang
+                        -- terdorong ulang setelah pesannya Terkirim dulu
+                        -- mengembalikannya ke Menunggu, dan pesan ke wali
+                        -- terkirim DUA KALI.
+                        status = CASE
+                            WHEN notifikasi_wa.status IN ('Terkirim', 'Gagal', 'Dibatalkan')
+                            THEN notifikasi_wa.status
+                            ELSE excluded.status
+                        END,
                         updated_at = excluded.updated_at;"#,
                         vec![
                             json!(id),
@@ -11124,6 +11353,35 @@ impl TursoClient {
     /// seratus baris akan mengirim puluhan megabyte lewat IPC setiap kali
     /// halaman dibuka. Foto diambil per baris lewat `get_password_reset_photo`
     /// hanya ketika benar-benar dibuka.
+    /// Riwayat penggantian identitas karyawan, terbaru dulu. Khusus cloud: tabel
+    /// ini tidak pernah ada di SQLite perangkat, jadi Desktop/Mobile membacanya
+    /// langsung dari sini dan halaman riwayat membutuhkan jaringan.
+    pub async fn list_employee_identity_history(
+        &self,
+        search: &str,
+        limit: i64,
+    ) -> Result<Value, CommandError> {
+        self.ensure_schema_current().await?;
+        let search = search.trim().chars().take(60).collect::<String>();
+        let like = format!("%{search}%");
+        let rows = self
+            .query_one(
+                "SELECT id_riwayat, waktu, id_unik, data_lama, data_baru, kode_operator, client_id, event_id FROM riwayat_identitas_karyawan WHERE ? = '' OR id_unik LIKE ? COLLATE NOCASE OR data_lama LIKE ? COLLATE NOCASE OR data_baru LIKE ? COLLATE NOCASE OR kode_operator LIKE ? COLLATE NOCASE ORDER BY id_riwayat DESC LIMIT ?;",
+                vec![
+                    json!(search),
+                    json!(like),
+                    json!(like),
+                    json!(like),
+                    json!(like),
+                    json!(limit.clamp(1, 500)),
+                ],
+            )
+            .await?
+            .to_objects();
+        let entries: Vec<Value> = rows.into_iter().map(|row| json!(row)).collect();
+        Ok(json!({ "entries": entries }))
+    }
+
     pub async fn list_password_reset_history(
         &self,
         status: &str,
@@ -11362,6 +11620,49 @@ impl TursoClient {
     /// Mengembalikan `null` bila belum ada foto, BUKAN error: kontrak gateway
     /// (`ambilFotoPersonil`) bertipe nullable, dan personil tanpa foto adalah
     /// keadaan yang wajar, bukan kegagalan.
+    /// `updated_at` foto personil di cloud tanpa isi fotonya: pemeriksaan
+    /// kesegaran salinan lokal. `None` berarti cloud tidak punya fotonya.
+    pub async fn get_personnel_photo_stamp(
+        &self,
+        id_unik: &str,
+    ) -> Result<Option<String>, CommandError> {
+        self.ensure_schema_current().await?;
+        let stamp = self
+            .query_one(
+                "SELECT COALESCE(updated_at, '') AS updated_at FROM personil_foto WHERE id_unik = ? AND TRIM(COALESCE(foto_base64, '')) <> '' LIMIT 1;",
+                vec![json!(id_unik.trim())],
+            )
+            .await?
+            .to_objects()
+            .into_iter()
+            .next()
+            .map(|row| {
+                row.get("updated_at")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned()
+            });
+        Ok(stamp)
+    }
+
+    /// Dari `ids`, mana yang punya foto di cloud. Hanya ID yang dikembalikan,
+    /// tidak pernah isi fotonya: daftar personil tidak berhalaman, dan
+    /// mengirim ratusan foto penuh untuk satu tabel akan berukuran puluhan MB.
+    pub async fn list_personnel_photo_ids(&self, ids: &[String]) -> Result<Vec<String>, CommandError> {
+        self.ensure_schema_current().await?;
+        let rows = self
+            .query_one(
+                "SELECT id_unik FROM personil_foto WHERE id_unik IN (SELECT value FROM json_each(?)) AND TRIM(COALESCE(foto_base64, '')) <> '' ORDER BY id_unik LIMIT 500;",
+                vec![json!(json!(ids).to_string())],
+            )
+            .await?
+            .to_objects();
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.get("id_unik").and_then(Value::as_str).map(str::to_owned))
+            .collect())
+    }
+
     pub async fn get_personnel_photo(&self, id_unik: &str) -> Result<Value, CommandError> {
         self.ensure_schema_current().await?;
         let id = id_unik.trim();
@@ -14359,6 +14660,59 @@ mod tests {
         assert!(!is_recoverable_schema_error(
             "UNIQUE constraint failed: tbl_shift.kode_shift"
         ));
+    }
+
+    /// Operator harus tahu siapa yang bentrok dan apa pilihannya.
+    #[test]
+    fn bentrok_id_unik_ditahan_dengan_pesan_yang_sama_dengan_web() {
+        let ani = json!({"id_unik": "K-01", "kode_karyawan": "001", "nama": "Ani", "id_shift": 1});
+        let budi = json!({"id_unik": "K-01", "kode_karyawan": "002", "nama": "Budi"});
+
+        assert!(!employee_identity_differs(
+            &ani,
+            &json!({"kode_karyawan": "001", "nama": " ANI "})
+        ));
+        assert!(employee_identity_differs(&ani, &budi));
+        assert_eq!(
+            employee_id_conflict_message("K-01", &ani, &budi),
+            "ID Unik 'K-01' sudah terpakai di server oleh Ani (Kode Karyawan 001). Ganti dengan Budi (Kode Karyawan 002) dari perangkat ini? Pilih \"Gunakan Versi Lokal\" untuk mengganti: data server tertimpa, absensi yang tercatat atas ID ini ikut menjadi milik Budi, dan penggantiannya dicatat di Riwayat Identitas Karyawan. Pilih \"Ikuti Cloud\" untuk membuang data perangkat ini."
+        );
+
+        let ringkas: Value = serde_json::from_str(&employee_identity_snapshot(
+            &json!({"id_unik": "K-01", "id_shift": 1, "token_absensi": "rahasia"}),
+        ))
+        .expect("json");
+        assert!(ringkas.get("token_absensi").is_none());
+        assert_eq!(ringkas["id_shift"], "1");
+    }
+
+    /// Pesan mentah SQLite tidak memberi tahu operator siapa yang bentrok atau
+    /// apa yang harus dilakukan; konflik ini juga tidak pernah selesai sendiri.
+    #[test]
+    fn bentrok_kode_karyawan_menjadi_pesan_yang_bisa_ditindaklanjuti() {
+        let payload = json!({"id_unik": "K-02", "kode_karyawan": "001", "nama": "Budi"});
+        let pesan = employee_code_conflict(
+            "employee",
+            &payload,
+            "SQLite error: UNIQUE constraint failed: master_data.kode_karyawan",
+        )
+        .expect("bentrokan kode karyawan dikenali");
+        assert!(pesan.contains("'001'"));
+        assert!(pesan.contains("Budi (K-02)"));
+        assert!(pesan.contains("Ikuti Cloud"));
+
+        let dibungkus = json!({"employee": payload});
+        assert_eq!(
+            employee_code_conflict("employee", &dibungkus, EMPLOYEE_CODE_UNIQUE_ERROR),
+            Some(pesan)
+        );
+        assert!(employee_code_conflict("shift", &payload, EMPLOYEE_CODE_UNIQUE_ERROR).is_none());
+        assert!(employee_code_conflict(
+            "employee",
+            &payload,
+            "UNIQUE constraint failed: tbl_shift.kode_shift"
+        )
+        .is_none());
     }
 
     #[test]

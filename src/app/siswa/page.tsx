@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { PersonnelPhotoField } from "@/components/PersonnelPhotoField";
+import { PersonnelAvatar } from "@/components/personnel/PersonnelAvatar";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
@@ -20,6 +21,7 @@ import {
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarRombel, getDaftarUnit } from "@/lib/gateways/academic";
+import { simpanFotoPersonilBaru } from "@/lib/gateways/personnel-photo";
 import { getDaftarShift } from "@/lib/gateways/shift";
 import {
   getDaftarSiswa,
@@ -37,6 +39,7 @@ import {
   type WaliSlipCredential,
 } from "@/lib/gateways/wali-credential";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
+import { useStatusFotoPersonil } from "@/lib/hooks/useStatusFotoPersonil";
 import { normalizeOperatorPhone } from "@/lib/operators/contact";
 import {
   opsiFilterUnit,
@@ -201,6 +204,16 @@ export default function SiswaPage() {
     });
   }, [siswaList, search, filterStatus, filterUnit]);
 
+  // Kolom Foto hanya butuh status "punya foto"; fotonya dimuat saat dibuka.
+  const idSiswaTampil = useMemo(
+    () => filteredStudents.map((item) => String(item.id_siswa)),
+    [filteredStudents],
+  );
+  const { punyaFoto, muatUlang: muatUlangStatusFoto } =
+    useStatusFotoPersonil(idSiswaTampil);
+  // Foto yang dipilih di form Tambah, disimpan setelah siswanya tercipta.
+  const [fotoBaru, setFotoBaru] = useState<string | null>(null);
+
   const unitOptions = useMemo(
     () => opsiFilterUnit(unitList, siswaList),
     [unitList, siswaList],
@@ -223,6 +236,7 @@ export default function SiswaPage() {
       unit: "",
     });
     setIsEditing(false);
+    setFotoBaru(null);
     setShowModal(true);
   };
 
@@ -312,13 +326,22 @@ export default function SiswaPage() {
     isSubmittingRef.current = true;
     setSaving(true);
     try {
-      await simpanSiswa(formData);
-      setFeedback({
-        tone: "success",
-        message: "Data profil siswa berhasil disimpan.",
-      });
+      const hasil = await simpanSiswa(formData);
+      const peringatanFoto = isEditing
+        ? null
+        : await simpanFotoPersonilBaru(hasil.id_siswa, fotoBaru);
+      setFotoBaru(null);
+      setFeedback(
+        peringatanFoto
+          ? { tone: "warning", message: peringatanFoto }
+          : {
+              tone: "success",
+              message: "Data profil siswa berhasil disimpan.",
+            },
+      );
       setShowModal(false);
       void loadData();
+      void muatUlangStatusFoto();
     } catch (err) {
       setFeedback({
         tone: "error",
@@ -761,6 +784,7 @@ export default function SiswaPage() {
             <table className="w-full text-left text-sm text-slate-200">
               <thead className="border-b border-white/10 bg-white/[0.03] text-xs uppercase tracking-wider text-slate-400">
                 <tr>
+                  <th className="px-6 py-4">Foto</th>
                   <th className="px-6 py-4">Peserta Didik</th>
                   <th className="px-6 py-4">NIS / NISN</th>
                   <th className="px-6 py-4">Rombel / Kelas</th>
@@ -774,7 +798,7 @@ export default function SiswaPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-6 py-8 text-center text-slate-400"
                     >
                       Memuat direktori siswa...
@@ -783,7 +807,7 @@ export default function SiswaPage() {
                 ) : filteredStudents.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-6 py-8 text-center text-slate-400"
                     >
                       Tidak ada data siswa yang cocok dengan filter pencarian.
@@ -805,12 +829,14 @@ export default function SiswaPage() {
                     return (
                       <tr key={id} className="transition hover:bg-white/[0.02]">
                         <td className="px-6 py-4">
+                          <PersonnelAvatar
+                            idUnik={id}
+                            nama={String(item.nama_lengkap || "")}
+                            punyaFoto={punyaFoto.has(id)}
+                          />
+                        </td>
+                        <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="flex size-10 items-center justify-center rounded-xl bg-sky-500/10 text-sky-400 font-bold border border-sky-500/20">
-                              {String(item.nama_lengkap || "")
-                                .charAt(0)
-                                .toUpperCase()}
-                            </div>
                             <div>
                               <div className="font-bold text-white">
                                 {String(item.nama_lengkap)}
@@ -1280,6 +1306,8 @@ export default function SiswaPage() {
                 <PersonnelPhotoField
                   idUnik={isEditing ? (formData.id_siswa ?? "") : ""}
                   nama={formData.nama_lengkap || "siswa ini"}
+                  onChanged={() => void muatUlangStatusFoto()}
+                  onPendingChange={isEditing ? undefined : setFotoBaru}
                 />
               </div>
 

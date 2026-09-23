@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { PersonnelPhotoField } from "@/components/PersonnelPhotoField";
+import { PersonnelAvatar } from "@/components/personnel/PersonnelAvatar";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
@@ -20,6 +21,7 @@ import {
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarUnit } from "@/lib/gateways/academic";
+import { simpanFotoPersonilBaru } from "@/lib/gateways/personnel-photo";
 import { getDaftarShift } from "@/lib/gateways/shift";
 import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import {
@@ -29,6 +31,7 @@ import {
   simpanGuru,
 } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
+import { useStatusFotoPersonil } from "@/lib/hooks/useStatusFotoPersonil";
 import {
   opsiFilterUnit,
   shiftLabel,
@@ -157,6 +160,16 @@ export default function GuruPage() {
     });
   }, [guruList, search, filterStatus, filterKepegawaian, filterUnit]);
 
+  // Kolom Foto hanya butuh status "punya foto"; fotonya dimuat saat dibuka.
+  const idGuruTampil = useMemo(
+    () => filteredTeachers.map((item) => String(item.id_guru)),
+    [filteredTeachers],
+  );
+  const { punyaFoto, muatUlang: muatUlangStatusFoto } =
+    useStatusFotoPersonil(idGuruTampil);
+  // Foto yang dipilih di form Tambah, disimpan setelah gurunya tercipta.
+  const [fotoBaru, setFotoBaru] = useState<string | null>(null);
+
   const unitOptions = useMemo(
     () => opsiFilterUnit(unitList, guruList),
     [unitList, guruList],
@@ -178,6 +191,7 @@ export default function GuruPage() {
       unit: "",
     });
     setIsEditing(false);
+    setFotoBaru(null);
     setShowModal(true);
   };
 
@@ -269,10 +283,19 @@ export default function GuruPage() {
     isSubmittingRef.current = true;
     setSaving(true);
     try {
-      await simpanGuru(formData);
-      setFeedback({ tone: "success", message: "Data guru berhasil disimpan." });
+      const hasil = await simpanGuru(formData);
+      const peringatanFoto = isEditing
+        ? null
+        : await simpanFotoPersonilBaru(hasil.id_guru, fotoBaru);
+      setFotoBaru(null);
+      setFeedback(
+        peringatanFoto
+          ? { tone: "warning", message: peringatanFoto }
+          : { tone: "success", message: "Data guru berhasil disimpan." },
+      );
       setShowModal(false);
       void loadData();
+      void muatUlangStatusFoto();
     } catch (err) {
       setFeedback({
         tone: "error",
@@ -553,6 +576,7 @@ export default function GuruPage() {
             <table className="w-full text-left text-sm text-slate-200">
               <thead className="border-b border-white/10 bg-white/[0.03] text-xs uppercase tracking-wider text-slate-400">
                 <tr>
+                  <th className="px-6 py-4">Foto</th>
                   <th className="px-6 py-4">Guru / Tenaga Pengajar</th>
                   <th className="px-6 py-4">NIP / NUPTK</th>
                   <th className="px-6 py-4">Spesialisasi Mapel</th>
@@ -566,7 +590,7 @@ export default function GuruPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-6 py-8 text-center text-slate-400"
                     >
                       Memuat direktori guru...
@@ -575,7 +599,7 @@ export default function GuruPage() {
                 ) : filteredTeachers.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-6 py-8 text-center text-slate-400"
                     >
                       Tidak ada data guru yang cocok dengan filter pencarian.
@@ -589,12 +613,14 @@ export default function GuruPage() {
                     return (
                       <tr key={id} className="transition hover:bg-white/[0.02]">
                         <td className="px-6 py-4">
+                          <PersonnelAvatar
+                            idUnik={id}
+                            nama={String(item.nama || "")}
+                            punyaFoto={punyaFoto.has(id)}
+                          />
+                        </td>
+                        <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="flex size-10 items-center justify-center rounded-xl bg-sky-500/10 text-sky-400 font-bold border border-sky-500/20">
-                              {String(item.nama || "")
-                                .charAt(0)
-                                .toUpperCase()}
-                            </div>
                             <div>
                               <div className="font-bold text-white">
                                 {String(item.nama)}
@@ -1025,6 +1051,8 @@ export default function GuruPage() {
                 <PersonnelPhotoField
                   idUnik={isEditing ? (formData.id_guru ?? "") : ""}
                   nama={formData.nama || "guru ini"}
+                  onChanged={() => void muatUlangStatusFoto()}
+                  onPendingChange={isEditing ? undefined : setFotoBaru}
                 />
               </div>
 

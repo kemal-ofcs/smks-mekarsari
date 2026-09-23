@@ -36,6 +36,8 @@ const ACADEMIC_UNIT_MIGRATION_VERSION = 29;
 const WALI_KREDENSIAL_MIGRATION_VERSION = 30;
 const CMS_LANDING_PAGE_MIGRATION_VERSION = 31;
 const PERSONNEL_PHOTO_MIGRATION_VERSION = 32;
+const EMPLOYEE_IDENTITY_HISTORY_MIGRATION_VERSION = 33;
+const WA_SEND_CLAIM_MIGRATION_VERSION = 34;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -1356,6 +1358,47 @@ export async function runDatabaseMigrations(client: Client) {
     args: [PERSONNEL_PHOTO_MIGRATION_VERSION, now],
   });
 
+  // v33 — riwayat penggantian identitas karyawan. Khusus cloud, cerminan DDL
+  // `turso.rs`; satu baris lahir setiap kali operator memilih "Gunakan Versi
+  // Lokal" pada konflik ID Unik, di transaksi yang sama dengan penimpaannya.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS riwayat_identitas_karyawan (
+      id_riwayat INTEGER PRIMARY KEY AUTOINCREMENT,
+      waktu TEXT NOT NULL,
+      id_unik TEXT NOT NULL,
+      data_lama TEXT NOT NULL,
+      data_baru TEXT NOT NULL,
+      kode_operator TEXT,
+      client_id TEXT,
+      event_id TEXT
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_riwayat_identitas_id_unik ON riwayat_identitas_karyawan(id_unik);",
+  );
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'employee-identity-history', ?);`,
+    args: [EMPLOYEE_IDENTITY_HISTORY_MIGRATION_VERSION, now],
+  });
+
+  // v34 — klaim pengiriman WhatsApp. Web dan perangkat kini sama-sama bisa
+  // menguras antrean; tanpa klaim atomik dua pengirim bisa mengirim baris yang
+  // sama ke wali. Dijalankan di sini, SETELAH rebuild `notifikasi_wa` di atas
+  // yang menyalin daftar kolom eksplisit. Cerminan `ensure_column` di Rust.
+  for (const column of ["klaim_oleh", "klaim_sampai"]) {
+    if (!(await hasColumn(client, "notifikasi_wa", column))) {
+      await client.execute(
+        `ALTER TABLE notifikasi_wa ADD COLUMN ${column} TEXT;`,
+      );
+    }
+  }
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'wa-send-claim', ?);`,
+    args: [WA_SEND_CLAIM_MIGRATION_VERSION, now],
+  });
+
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_jurnal_presensi ON jurnal_mengajar(id_presensi_mapel);",
   );
@@ -1385,7 +1428,9 @@ export async function runDatabaseMigrations(client: Client) {
       last_error TEXT,
       sent_at TEXT,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      klaim_oleh TEXT,
+      klaim_sampai TEXT
     );
   `);
 

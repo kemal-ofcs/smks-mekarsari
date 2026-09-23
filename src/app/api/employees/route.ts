@@ -1,9 +1,6 @@
 import type { NextRequest } from "next/server";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
-import {
-  ensureServerDatabaseInitialized,
-  getServerDatabase,
-} from "@/lib/server/db";
+import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
   ApiRequestError,
   noStoreJson,
@@ -11,11 +8,11 @@ import {
   toApiErrorResponse,
 } from "@/lib/server/http/api-response";
 import { assertSameOriginMutation } from "@/lib/server/http/request-security";
-import { recordOperationalChange } from "@/lib/server/operational/change-log";
 import {
   generateTokenMassal,
   importKaryawanMassal,
   type KaryawanInput,
+  pesanBentrokIdentitasKaryawan,
   tambahKaryawan,
   toggleStatusKaryawan,
   updateKaryawan,
@@ -85,18 +82,16 @@ async function prepare(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const body = await readJsonBody<EmployeeMutationBody>(request, 10_485_760);
     const draft = parseDraft(body.draft);
+    const bentrok = await pesanBentrokIdentitasKaryawan(
+      draft.id_unik,
+      draft.kode_karyawan,
+    );
+    if (bentrok) throw new ApiRequestError(bentrok, 409);
     const result = await tambahKaryawan(draft);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "employee",
-      entityKey: draft.id_unik,
-      operation: "create",
-      payload: draft,
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ ...result, revision }, 201);
+    return noStoreJson(result, 201);
   } catch (error) {
     return toApiErrorResponse(error);
   }
@@ -104,20 +99,19 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const body = await readJsonBody<EmployeeMutationBody>(request, 10_485_760);
     const idUnik = typeof body.idUnik === "string" ? body.idUnik.trim() : "";
     if (!idUnik) throw new ApiRequestError("ID karyawan tidak valid.", 400);
     const draft = parseDraft(body.draft);
+    const bentrok = await pesanBentrokIdentitasKaryawan(
+      idUnik,
+      draft.kode_karyawan,
+      idUnik,
+    );
+    if (bentrok) throw new ApiRequestError(bentrok, 409);
     await updateKaryawan(idUnik, draft);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "employee",
-      entityKey: idUnik,
-      operation: "update",
-      payload: draft,
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ sukses: true, revision });
+    return noStoreJson({ sukses: true });
   } catch (error) {
     return toApiErrorResponse(error);
   }
@@ -125,18 +119,11 @@ export async function PATCH(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const actor = await prepare(request);
+    await prepare(request);
     const body = await readJsonBody<EmployeeMutationBody>(request, 10_485_760);
     if (body.action === "generate-tokens") {
       const result = await generateTokenMassal();
-      const revision = await recordOperationalChange(getServerDatabase(), {
-        domain: "employee",
-        entityKey: "*",
-        operation: "generate-tokens",
-        payload: result,
-        actorOperatorId: actor.id,
-      });
-      return noStoreJson({ ...result, revision });
+      return noStoreJson(result);
     }
     if (body.action === "import") {
       if (!Array.isArray(body.drafts) || body.drafts.length > 500) {
@@ -158,28 +145,14 @@ export async function PUT(request: NextRequest) {
         );
       }
       const result = await importKaryawanMassal(drafts);
-      const revision = await recordOperationalChange(getServerDatabase(), {
-        domain: "employee",
-        entityKey: "*",
-        operation: "import",
-        payload: result,
-        actorOperatorId: actor.id,
-      });
-      return noStoreJson({ ...result, revision });
+      return noStoreJson(result);
     }
     const idUnik = typeof body.idUnik === "string" ? body.idUnik.trim() : "";
     if (!idUnik || (body.status !== "Aktif" && body.status !== "Nonaktif")) {
       throw new ApiRequestError("Perubahan status karyawan tidak valid.", 400);
     }
     await toggleStatusKaryawan(idUnik, body.status);
-    const revision = await recordOperationalChange(getServerDatabase(), {
-      domain: "employee",
-      entityKey: idUnik,
-      operation: "status",
-      payload: { status_aktif: body.status },
-      actorOperatorId: actor.id,
-    });
-    return noStoreJson({ sukses: true, revision });
+    return noStoreJson({ sukses: true });
   } catch (error) {
     return toApiErrorResponse(error);
   }

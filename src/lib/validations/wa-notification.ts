@@ -23,6 +23,13 @@ export const WA_NOTIFY_AMBANG_ALFA_KEY = "wa_notify_ambang_alfa";
 export const WA_NOTIFY_KOREKSI_ADMIN_KEY = "wa_notify_koreksi_admin";
 export const WA_NOTIFY_IMPORT_MANUAL_KEY = "wa_notify_import_manual";
 
+/**
+ * Sakelar "Kirim otomatis" — cerminan `WA_AUTO_SEND_KEY` di Rust. Bawaannya
+ * MATI. Diperiksa oleh pengirim (`drainWaQueue` / `wa_sender::drain`) saat
+ * dipanggil runner, bukan oleh runner-nya.
+ */
+export const WA_AUTO_SEND_KEY = "wa_kirim_otomatis";
+
 /** Kunci setting dinamis untuk ambang jumlah alfa dan rentang hari evaluasi. */
 export const WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY = "wa_notify_ambang_alfa_limit";
 export const WA_NOTIFY_AMBANG_ALFA_DAYS_KEY = "wa_notify_ambang_alfa_days";
