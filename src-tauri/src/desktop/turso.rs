@@ -3385,6 +3385,11 @@ impl TursoClient {
             vec![],
         )
         .await?;
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2017, 'employee-identity-history-v1', datetime('now'));",
+            vec![],
+        )
+        .await?;
 
         Ok(())
     }
@@ -3655,7 +3660,7 @@ impl TursoClient {
                 // Sentinel WAJIB dinaikkan setiap kali ensure_schema menambah
                 // tabel atau kolom — nilainya di sini dan pada INSERT di atas
                 // harus selalu sama.
-                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2016;",
+                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2017;",
                 vec![],
             )
             .await
@@ -14393,6 +14398,45 @@ mod tests {
                 crate::desktop::sync::CLIENT_SCHEMA_VERSION,
                 "versi skema hasil provisioning lokal berbeda dari versi klien"
             );
+        });
+    }
+
+    /// Database yang diprovisikan sebelum `riwayat_identitas_karyawan` ada
+    /// hanya membawa sentinel `-2016`; tabel itu wajib lahir lewat
+    /// `ensure_schema_current`, bukan menunggu provisioning ulang manual.
+    #[test]
+    fn sentinel_lama_memicu_provisioning_ulang() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime uji");
+        runtime.block_on(async {
+            let dir = tempfile::tempdir().expect("direktori sementara");
+            let hub = dir.path().join("sppg-hub.db");
+            // Origin unik: cache verifikasi skema bersifat global per proses.
+            let client = TursoClient::local_file(
+                Url::parse("https://sentinel-lama.sppg.invalid").expect("origin uji"),
+                &hub,
+                Client::new(),
+            );
+            client.ensure_schema().await.expect("provisioning lokal");
+
+            let connection = rusqlite::Connection::open(&hub).expect("buka hub");
+            connection
+                .execute_batch(
+                    "DROP TABLE riwayat_identitas_karyawan;
+                     DELETE FROM schema_migration WHERE version = -2017;",
+                )
+                .expect("siapkan database lama");
+
+            client.ensure_schema_current().await.expect("skema mutakhir");
+            let ada: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = 'riwayat_identitas_karyawan';",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("cek tabel");
+            assert_eq!(ada, 1, "database bersentinel lama tidak diperbarui");
         });
     }
 

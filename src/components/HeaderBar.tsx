@@ -162,20 +162,17 @@ const NAVIGATION: NavigationItem[] = [
   },
 ];
 
-const PRIMARY_AREAS = new Set<AppArea>([
-  "home",
-  "scanner",
-  "operational",
-  "karyawan",
-  "settings",
+// Dikunci per href, bukan per area: satu area bisa punya beberapa halaman
+// (area `karyawan` juga memiliki Riwayat Identitas), dan hanya halaman induknya
+// yang pantas mengisi baris utama.
+const PRIMARY_HREFS = new Set([
+  "/",
+  "/scanner",
+  "/operational",
+  "/karyawan",
+  "/settings",
 ]);
-const MOBILE_FIXED_AREAS = new Set<AppArea>([
-  "home",
-  "operational",
-  "scanner",
-  "karyawan",
-  "settings",
-]);
+const MOBILE_FIXED_HREFS = PRIMARY_HREFS;
 
 /**
  * Pengelompokan isi menu "Kelola".
@@ -251,8 +248,10 @@ function NavigationLink({
       href={item.href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
-      className={`group flex items-center gap-2 rounded-xl font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-        compact ? "min-h-10 px-2.5 text-xs xl:px-3" : "min-h-11 px-4 text-sm"
+      className={`group flex items-center rounded-xl font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+        compact
+          ? "min-h-10 gap-1.5 px-2 text-xs xl:px-2.5"
+          : "min-h-11 gap-2 px-4 text-sm"
       } ${
         active
           ? "bg-sky-600 dark:bg-[#003399] text-white shadow-md shadow-sky-600/20 dark:shadow-blue-950/30 ring-1 ring-black/5 dark:ring-white/15"
@@ -301,10 +300,10 @@ export function HeaderBar() {
     canAccessArea(user, item.area),
   );
   const primaryNavigation = visibleNavigation.filter((item) =>
-    PRIMARY_AREAS.has(item.area),
+    PRIMARY_HREFS.has(item.href),
   );
   const managementNavigation = visibleNavigation.filter(
-    (item) => !PRIMARY_AREAS.has(item.area),
+    (item) => !PRIMARY_HREFS.has(item.href),
   );
   const activeManagementItem = managementNavigation.find((item) =>
     routeIsActive(pathname, item.href),
@@ -330,22 +329,22 @@ export function HeaderBar() {
   );
 
   const mobileNavigation = visibleNavigation.filter((item) =>
-    MOBILE_FIXED_AREAS.has(item.area),
+    MOBILE_FIXED_HREFS.has(item.href),
   );
   const contextualMobileItem =
     visibleNavigation.find(
       (item) =>
-        !MOBILE_FIXED_AREAS.has(item.area) &&
+        !MOBILE_FIXED_HREFS.has(item.href) &&
         routeIsActive(pathname, item.href),
     ) ?? visibleNavigation.find((item) => item.area === "history");
   if (
     contextualMobileItem &&
-    !mobileNavigation.some((item) => item.area === contextualMobileItem.area)
+    !mobileNavigation.some((item) => item.href === contextualMobileItem.href)
   ) {
     mobileNavigation.push(contextualMobileItem);
   }
   const hasMoreMobileItems = visibleNavigation.some(
-    (item) => !mobileNavigation.some((direct) => direct.area === item.area),
+    (item) => !mobileNavigation.some((direct) => direct.href === item.href),
   );
 
   return (
@@ -406,7 +405,7 @@ export function HeaderBar() {
                     aria-expanded={desktopMenuOpen}
                     aria-controls="desktop-management-menu"
                     onClick={() => setDesktopMenuOpen((open) => !open)}
-                    className={`flex min-h-10 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 xl:px-3 ${
+                    className={`flex min-h-10 items-center gap-1.5 rounded-xl px-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 xl:px-2.5 ${
                       activeManagementItem
                         ? "bg-sky-600 dark:bg-[#003399] text-white shadow-md shadow-sky-600/20 dark:shadow-blue-950/30"
                         : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.07] hover:text-slate-900 dark:hover:text-white"
