@@ -4,6 +4,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { LicenseHolderLabel } from "@/components/license/LicenseNotice";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { QuickActionGrid } from "@/components/ui/QuickActionGrid";
@@ -305,9 +306,7 @@ export default function Home() {
       {/* 6. Footer Sistem & Versi */}
       <footer className="pt-2 text-center text-xs text-slate-600 dark:text-slate-400">
         <p>{BRANDING.appDisplayName} • Sistem Presensi & Operasional Sekolah</p>
-        <p className="text-[10px] mt-0.5 text-slate-500 dark:text-slate-400">
-          Offline-First Architecture • Turso LibSQL Direct Engine
-        </p>
+        <LicenseHolderLabel className="mt-0.5 block text-[10px] text-slate-500 dark:text-slate-400" />
       </footer>
     </AppShell>
   );
