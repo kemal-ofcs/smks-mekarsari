@@ -5,6 +5,7 @@ import {
   buildDefaultFrontSlots,
   computeMirroredBackLayout,
 } from "@/lib/client/print-layout-store";
+import { BRANDING } from "@/lib/constants/branding";
 import type { CompanyProfile } from "@/types/company-profile";
 import type {
   CardSide,
@@ -670,7 +671,7 @@ async function renderSingleElement(
         val = String(employee.nama || "NAMA KARYAWAN");
         break;
       case "employee.nik":
-        val = String(employee.kode_karyawan || employee.id_unik || "SPPG-001");
+        val = String(employee.kode_karyawan || employee.id_unik || "DEMO-001");
         break;
       case "employee.gender":
         val = String(employee.jenis_kelamin || employee.gender || "Laki-laki");
@@ -682,13 +683,10 @@ async function renderSingleElement(
         val = String(employee.divisi || "Operasional");
         break;
       case "company.name":
-        val = String(company?.company_name || "SPPG");
+        val = String(company?.company_name || BRANDING.defaultCompanyName);
         break;
       case "company.terms":
-        val = String(
-          company?.card_terms ||
-            "1. Kartu ini milik instansi SPPG.\n2. Wajib dibawa setiap hari kerja.",
-        );
+        val = String(company?.card_terms || BRANDING.defaultCardTerms);
         break;
       case "static_text":
         val = el.staticValue || el.label || "";

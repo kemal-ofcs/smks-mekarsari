@@ -13,23 +13,27 @@
 export const BRANDING = {
   /** Nama tetap aplikasi (tidak bergantung pada nama instansi). */
   appDisplayName: "Manajemen Sekolah",
-  /** Nama perusahaan/instansi default (sebelum admin mengisi form Pengaturan). */
-  defaultCompanyName: "YOUR COMPANY",
-  defaultBranchName: "Operations Center",
-  defaultAddress: "Your Company Address",
+  /**
+   * Placeholder instansi sebelum admin mengisi Pengaturan. Sengaja terbaca
+   * sebagai placeholder, bukan nama orang atau lembaga karangan: nilai ini
+   * ikut tercetak di kartu dan laporan sekolah baru.
+   */
+  defaultCompanyName: "Nama Instansi",
+  defaultBranchName: "Pusat",
+  defaultAddress: "Alamat Instansi",
   defaultPhone: "-",
-  defaultEmail: "info@yourcompany.com",
-  defaultWebsite: "https://yourcompany.com",
-  defaultLeaderTitle: "Director",
-  defaultLeaderName: "Your Name",
+  defaultEmail: "-",
+  defaultWebsite: "-",
+  defaultLeaderTitle: "Kepala Sekolah",
+  defaultLeaderName: "-",
   defaultLeaderNip: "-",
-  defaultCardTerms: `1. This card is the official identification of your company's employees/personnel.\n2. Must be carried and scanned (QR scan) every time you arrive and leave work.\n3. It is prohibited to transfer or lend this card to other parties.\n4. If the card is lost or found, please report it immediately to the HR/Operations Department.`,
-  defaultTemplateName: "Default ID Card Template",
+  defaultCardTerms: `1. Kartu ini adalah tanda pengenal resmi personil instansi.\n2. Wajib dibawa dan dipindai (scan QR) setiap datang dan pulang.\n3. Dilarang memindahtangankan atau meminjamkan kartu ini kepada pihak lain.\n4. Bila kartu hilang atau ditemukan, segera laporkan ke bagian tata usaha.`,
+  defaultTemplateName: "Template Standar ID Card",
 } as const;
 
 /**
  * Mengambil singkatan nama perusahaan untuk BrandLogo fallback.
- * Contoh: "PT Maju Bersama" => "PMB", "YOUR COMPANY" => "YOUR"
+ * Contoh: "PT Maju Bersama" => "PMB", "Nama Instansi" => "NI"
  * Maks 4 karakter.
  */
 export function companyInitials(companyName?: string | null): string {

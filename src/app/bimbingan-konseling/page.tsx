@@ -9,6 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
+import { companyInitials } from "@/lib/constants/branding";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarTahunAjaran } from "@/lib/gateways/academic";
 import {
@@ -1373,7 +1374,11 @@ export default function BimbinganKonselingPage() {
                 {/* Info Nomor & Tanggal */}
                 <div className="mt-4 flex justify-between text-xs">
                   <div>
-                    <p>Nomor: 421.3 / BK / SPPG / {new Date().getFullYear()}</p>
+                    <p>
+                      Nomor: 421.3 / BK /{" "}
+                      {companyInitials(companyProfile?.company_name)} /{" "}
+                      {new Date().getFullYear()}
+                    </p>
                     <p>Lampiran: -</p>
                     <p>
                       Perihal:{" "}

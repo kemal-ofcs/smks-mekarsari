@@ -1198,14 +1198,17 @@ pub fn create_correction(
         &employee_id,
         &format!("koreksi_admin:{session_id}:{status_akhir}"),
         |wali| {
-            format!(
-                "Yth. Wali Murid dari {} ({}). Kami informasikan bahwa catatan kehadiran ananda pada {} telah dikoreksi oleh admin sekolah menjadi: {}. Keterangan: {}. Mohon konfirmasi bila ada yang tidak sesuai.",
-                wali.nama,
-                wali.rombel,
-                date,
-                if status_akhir.is_empty() { "-" } else { status_akhir },
-                if note.is_empty() { correction_type } else { note },
-            )
+            wali.isian(vec![
+                ("tanggal", date.to_string()),
+                (
+                    "status",
+                    if status_akhir.is_empty() { "-" } else { status_akhir }.to_string(),
+                ),
+                (
+                    "keterangan",
+                    if note.is_empty() { correction_type } else { note }.to_string(),
+                ),
+            ])
         },
     )?;
 
@@ -2011,17 +2014,15 @@ pub fn import_offline(
                     &id,
                     &format!("import_manual:{id}:{date}:{attendance_status}"),
                     |wali| {
-                        format!(
-                            "Yth. Wali Murid dari {} ({}). Kami informasikan bahwa catatan kehadiran ananda pada {} dimasukkan secara manual oleh admin sekolah dengan status: {}. Keterangan: {}. Mohon konfirmasi bila ada yang tidak sesuai.",
-                            wali.nama,
-                            wali.rombel,
-                            date,
-                            attendance_status,
-                            {
-                                let catatan = text(row, "keterangan");
-                                if catatan.is_empty() { "Import manual" } else { catatan }
-                            },
-                        )
+                        let catatan = text(row, "keterangan");
+                        wali.isian(vec![
+                            ("tanggal", date.to_string()),
+                            ("status", attendance_status.to_string()),
+                            (
+                                "keterangan",
+                                if catatan.is_empty() { "Import manual" } else { catatan }.to_string(),
+                            ),
+                        ])
                     },
                 )?;
                 if terkirim {

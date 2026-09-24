@@ -11,7 +11,7 @@ function normalizeIdCardTemplate(raw: unknown): IdCardTemplateConfig {
   if (!raw || typeof raw !== "object") {
     return {
       id: "default_template",
-      name: "Template Default SPPG",
+      name: "Template Standar ID Card",
       orientation: "landscape",
       frontBgUrl: undefined,
       backBgUrl: undefined,
@@ -67,7 +67,7 @@ function normalizeIdCardTemplate(raw: unknown): IdCardTemplateConfig {
 
   return {
     id: String(r.id || "default_template"),
-    name: String(r.name || "Template Default SPPG"),
+    name: String(r.name || "Template Standar ID Card"),
     orientation,
     frontBgUrl,
     backBgUrl,

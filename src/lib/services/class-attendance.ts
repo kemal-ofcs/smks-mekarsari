@@ -16,8 +16,10 @@ import {
   rentangJamKe,
 } from "@/lib/validations/class-attendance";
 import {
+  composeWaMessage,
   settingEnabled,
   WA_NOTIFY_BOLOS_KEY,
+  waTemplateKey,
 } from "@/lib/validations/wa-notification";
 
 /**
@@ -520,12 +522,13 @@ export async function saveClassAttendance(draft: SaveClassAttendanceDraft) {
   );
   if (alfaStudents.length > 0) {
     const bolosSettingRes = await db.execute({
-      sql: "SELECT value FROM setting_gex_system WHERE key = ? LIMIT 1;",
-      args: [WA_NOTIFY_BOLOS_KEY],
+      sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
+      args: [WA_NOTIFY_BOLOS_KEY, waTemplateKey("bolos")],
     });
-    const bolosEnabled = settingEnabled(
-      String(bolosSettingRes.rows[0]?.value ?? ""),
+    const bolosSettings = new Map(
+      bolosSettingRes.rows.map((r) => [String(r.key), String(r.value ?? "")]),
     );
+    const bolosEnabled = settingEnabled(bolosSettings.get(WA_NOTIFY_BOLOS_KEY));
 
     if (bolosEnabled) {
       const alfaIds = alfaStudents.map((s) => s.id_siswa);
@@ -563,7 +566,17 @@ export async function saveClassAttendance(draft: SaveClassAttendanceDraft) {
             const namaSiswa = String(row.nama_siswa || "Siswa");
             const namaRombel = String(row.nama_rombel || "-");
             const namaMapel = String(row.nama_mapel || "Mata Pelajaran");
-            const pesan = `Yth. Wali Murid dari ${namaSiswa} (${namaRombel}). Kami informasikan bahwa ananda tercatat hadir di sekolah namun tidak mengikuti KBM ${namaMapel} (Jam ke-${jamKeNormal}) pada tanggal ${tanggal}. Status: Alfa.`;
+            const pesan = composeWaMessage(
+              "bolos",
+              bolosSettings.get(waTemplateKey("bolos")),
+              {
+                nama: namaSiswa,
+                rombel: namaRombel,
+                mapel: namaMapel,
+                jam_ke: String(jamKeNormal),
+                tanggal,
+              },
+            );
             statements.push({
               sql: `
                 INSERT INTO notifikasi_wa (

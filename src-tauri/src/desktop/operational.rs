@@ -1374,7 +1374,7 @@ pub fn get_app_display_name(state: &DesktopState) -> Result<String, CommandError
     Ok(result
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Absensi Perusahaan".to_string()))
+        .unwrap_or_else(|| "Manajemen Sekolah".to_string()))
 }
 
 pub fn save_app_display_name(state: &DesktopState, name: &str) -> Result<String, CommandError> {
@@ -1384,7 +1384,7 @@ pub fn save_app_display_name(state: &DesktopState, name: &str) -> Result<String,
         .transaction()
         .map_err(|_| CommandError::internal())?;
     let resolved = if name.trim().is_empty() {
-        "Absensi Perusahaan".to_string()
+        "Manajemen Sekolah".to_string()
     } else {
         name.trim().to_string()
     };
@@ -2715,8 +2715,15 @@ pub fn generate_alfa_harian(
                 if super::wa_notification::is_valid_phone(&canon_phone) {
                     let nama_tampil = if nama_siswa.is_empty() { "Siswa" } else { &nama_siswa };
                     let rombel_tampil = if nama_rombel.is_empty() { "-" } else { &nama_rombel };
-                    let pesan = format!(
-                        "Yth. Wali Murid dari {nama_tampil} ({rombel_tampil}). Kami informasikan bahwa ananda telah tercatat tidak hadir tanpa keterangan (Alfa) sebanyak {total_alfa} kali dalam {days} hari terakhir. Mohon perhatian dan konfirmasi dari Bapak/Ibu Wali Murid."
+                    let pesan = super::wa_notification::compose_wa_message(
+                        &transaction,
+                        "ambang_alfa",
+                        &[
+                            ("nama", nama_tampil.to_string()),
+                            ("rombel", rombel_tampil.to_string()),
+                            ("total_alfa", total_alfa.to_string()),
+                            ("hari", days.to_string()),
+                        ],
                     );
                     let draft_notif = json!({
                         "dedupe_key": dedupe_key,
@@ -3327,7 +3334,8 @@ fn current_iso(connection: &rusqlite::Connection) -> String {
         .unwrap_or_else(|_| "2026-01-01T00:00:00Z".to_string())
 }
 
-const DEFAULT_CARD_TERMS: &str = "1. This card is the official identification of your company's employees/personnel.\n2. Must be carried and scanned (QR scan) every time you arrive and leave work.\n3. It is prohibited to transfer or lend this card to other parties.\n4. If the card is lost or found, please report it immediately to the HR/Operations Department.";
+/// Cerminan `BRANDING.defaultCardTerms` di `src/lib/constants/branding.ts`.
+const DEFAULT_CARD_TERMS: &str = "1. Kartu ini adalah tanda pengenal resmi personil instansi.\n2. Wajib dibawa dan dipindai (scan QR) setiap datang dan pulang.\n3. Dilarang memindahtangankan atau meminjamkan kartu ini kepada pihak lain.\n4. Bila kartu hilang atau ditemukan, segera laporkan ke bagian tata usaha.";
 
 pub fn get_company_profile(state: &DesktopState) -> Result<Value, CommandError> {
     let connection = storage::database(&state.data_dir)?;
@@ -3370,9 +3378,9 @@ pub fn get_company_profile(state: &DesktopState) -> Result<Value, CommandError> 
                     leader_name, leader_title, leader_nip,
                     card_terms, timezone, updated_at
                 ) VALUES (
-                    'default_company', 'YOUR COMPANY', 'Operations Center', NULL, NULL,
-                    'Your Company Address', '-', 'info@yourcompany.com', 'https://yourcompany.com',
-                    'Your Name', 'Director', '-',
+                    'default_company', 'Nama Instansi', 'Pusat', NULL, NULL,
+                    'Alamat Instansi', '-', '-', '-',
+                    '-', 'Kepala Sekolah', '-',
                     ?, 'Asia/Jakarta', ?
                 );
                 "#,
@@ -3380,16 +3388,16 @@ pub fn get_company_profile(state: &DesktopState) -> Result<Value, CommandError> 
             );
             Ok(json!({
                 "id": "default_company",
-                "company_name": "YOUR COMPANY",
-                "branch_name": "Operations Center",
+                "company_name": "Nama Instansi",
+                "branch_name": "Pusat",
                 "logo_url": Value::Null,
                 "signature_url": Value::Null,
-                "address": "Your Company Address",
+                "address": "Alamat Instansi",
                 "phone": "-",
-                "email": "info@yourcompany.com",
-                "website": "https://yourcompany.com",
-                "leader_name": "Your Name",
-                "leader_title": "Director",
+                "email": "-",
+                "website": "-",
+                "leader_name": "-",
+                "leader_title": "Kepala Sekolah",
                 "leader_nip": "-",
                 "card_terms": DEFAULT_CARD_TERMS,
                 "timezone": "Asia/Jakarta",
@@ -3412,7 +3420,7 @@ pub fn update_company_profile(
     let now = current_iso(&transaction);
     let company_name = text(profile, "company_name");
     let company_name = if company_name.is_empty() {
-        "YOUR COMPANY"
+        "Nama Instansi"
     } else {
         company_name
     };
@@ -3787,14 +3795,14 @@ pub fn get_id_card_template(state: &DesktopState, id: &str) -> Result<Value, Com
                 INSERT OR IGNORE INTO id_card_template (
                     id, name, orientation, front_bg_url, back_bg_url, elements_json, is_active, created_at, updated_at
                 ) VALUES (
-                    ?, 'Template Default SPPG', 'landscape', NULL, NULL, ?, 1, ?, ?
+                    ?, 'Template Standar ID Card', 'landscape', NULL, NULL, ?, 1, ?, ?
                 );
                 "#,
                 params![target_id, default_elements_str, now, now],
             );
             Ok(json!({
                 "id": target_id,
-                "name": "Template Default SPPG",
+                "name": "Template Standar ID Card",
                 "orientation": "landscape",
                 "frontBgUrl": Value::Null,
                 "backBgUrl": Value::Null,
@@ -3826,7 +3834,7 @@ pub fn save_id_card_template(
     };
     let name = text(template, "name");
     let name = if name.is_empty() {
-        "Template Default SPPG"
+        "Template Standar ID Card"
     } else {
         name
     };

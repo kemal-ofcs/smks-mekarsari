@@ -205,6 +205,8 @@ const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_queue_wa_notification",
     "desktop_cancel_wa_notification",
     "desktop_list_wa_notifications",
+    "desktop_get_wa_templates",
+    "desktop_save_wa_templates",
     "desktop_get_wa_config",
     "desktop_save_wa_config",
     "desktop_drain_wa_queue",

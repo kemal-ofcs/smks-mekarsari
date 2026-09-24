@@ -210,6 +210,8 @@
     "allow-desktop-queue-wa-notification",
     "allow-desktop-cancel-wa-notification",
     "allow-desktop-list-wa-notifications",
+    "allow-desktop-get-wa-templates",
+    "allow-desktop-save-wa-templates",
     "allow-desktop-get-wa-config",
     "allow-desktop-save-wa-config",
     "allow-desktop-drain-wa-queue",

@@ -1335,8 +1335,16 @@ pub fn save_class_attendance(state: &DesktopState, draft: &Value) -> Result<Valu
                                 let nama_tampil = if nama_siswa.is_empty() { "Siswa" } else { &nama_siswa };
                                 let rombel_tampil = if nama_rombel.is_empty() { "-" } else { &nama_rombel };
                                 let mapel_tampil = if nama_mapel.is_empty() { "Mata Pelajaran" } else { &nama_mapel };
-                                let pesan = format!(
-                                    "Yth. Wali Murid dari {nama_tampil} ({rombel_tampil}). Kami informasikan bahwa ananda tercatat hadir di sekolah namun tidak mengikuti KBM {mapel_tampil} (Jam ke-{jam_ke}) pada tanggal {tanggal}. Status: Alfa."
+                                let pesan = super::wa_notification::compose_wa_message(
+                                    &tx,
+                                    "bolos",
+                                    &[
+                                        ("nama", nama_tampil.to_string()),
+                                        ("rombel", rombel_tampil.to_string()),
+                                        ("mapel", mapel_tampil.to_string()),
+                                        ("jam_ke", jam_ke.to_string()),
+                                        ("tanggal", tanggal.to_string()),
+                                    ],
                                 );
                                 let draft_notif = json!({
                                     "dedupe_key": dedupe_key,

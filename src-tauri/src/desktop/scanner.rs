@@ -2235,17 +2235,17 @@ fn submit_internal(
             if super::wa_notification::is_valid_phone(&canon_phone) {
                 let jenis = jenis_notifikasi;
                 let dedupe_key = format!("scan:{session_id}:{jenis}");
-                let pesan = if is_check_in {
-                    format!(
-                        "Yth. Wali Murid dari {student_name} ({class_name}). Kami informasikan bahwa ananda telah hadir dan melakukan scan masuk di sekolah pada pukul {} WIB ({}). Status: {}.",
-                        moment.time, decision.work_date, status
-                    )
-                } else {
-                    format!(
-                        "Yth. Wali Murid dari {student_name} ({class_name}). Kami informasikan bahwa ananda telah selesai KBM dan melakukan scan pulang pada pukul {} WIB ({}).",
-                        moment.time, decision.work_date
-                    )
-                };
+                let pesan = super::wa_notification::compose_wa_message(
+                    &transaction,
+                    jenis,
+                    &[
+                        ("nama", student_name.to_string()),
+                        ("rombel", class_name.to_string()),
+                        ("jam", moment.time.to_string()),
+                        ("tanggal", decision.work_date.to_string()),
+                        ("status", status.to_string()),
+                    ],
+                );
 
                 let draft_notif = json!({
                     "dedupe_key": dedupe_key,

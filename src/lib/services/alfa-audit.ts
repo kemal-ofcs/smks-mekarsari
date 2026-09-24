@@ -18,12 +18,14 @@ import {
 } from "@/lib/operators/contact";
 import { generateWaNotificationId } from "@/lib/services/wa-notification";
 import {
+  composeWaMessage,
   parseAmbangAlfaDays,
   parseAmbangAlfaLimit,
   settingEnabled,
   WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
   WA_NOTIFY_AMBANG_ALFA_KEY,
   WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
+  waTemplateKey,
 } from "@/lib/validations/wa-notification";
 
 export interface RingkasanAlfa {
@@ -318,11 +320,12 @@ export async function generateAlfaHarian(
   //    Evaluasi siswa dengan akumulasi Alfa >= limit (default 3) dalam 30 hari terakhir.
   try {
     const waSettingsRes = await targetDb.execute({
-      sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?, ?);",
+      sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?, ?, ?);",
       args: [
         WA_NOTIFY_AMBANG_ALFA_KEY,
         WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
         WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
+        waTemplateKey("ambang_alfa"),
       ],
     });
     const waSettingsMap = new Map<string, string>();
@@ -382,7 +385,16 @@ export async function generateAlfaHarian(
             const namaSiswa = String(row.nama_siswa || "Siswa");
             const namaRombel = String(row.nama_rombel || "-");
             const totalAlfa = Number(row.total_alfa ?? limit);
-            const pesan = `Yth. Wali Murid dari ${namaSiswa} (${namaRombel}). Kami informasikan bahwa ananda telah tercatat tidak hadir tanpa keterangan (Alfa) sebanyak ${totalAlfa} kali dalam ${days} hari terakhir. Mohon perhatian dan konfirmasi dari Bapak/Ibu Wali Murid.`;
+            const pesan = composeWaMessage(
+              "ambang_alfa",
+              waSettingsMap.get(waTemplateKey("ambang_alfa")),
+              {
+                nama: namaSiswa,
+                rombel: namaRombel,
+                total_alfa: String(totalAlfa),
+                hari: String(days),
+              },
+            );
 
             await targetDb.execute({
               sql: `

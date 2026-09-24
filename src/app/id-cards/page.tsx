@@ -243,7 +243,7 @@ export default function IdCardsPage() {
   );
   const [template, setTemplate] = useState<IdCardTemplateConfig>({
     id: "default_template",
-    name: "Template Standar SPPG",
+    name: "Template Standar",
     orientation: "landscape",
     frontBgUrl: "",
     backBgUrl: "",
@@ -291,7 +291,7 @@ export default function IdCardsPage() {
   const [newElementLabel, setNewElementLabel] =
     useState<string>("Teks Kustom Baru");
   const [newElementStaticVal, setNewElementStaticVal] =
-    useState<string>("Teks Kustom SPPG");
+    useState<string>("Teks Kustom");
   const builderCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Unified Print Modal State (Single or Batch)
@@ -640,12 +640,12 @@ export default function IdCardsPage() {
   useEffect(() => {
     if (!template) return;
     const sampleEmp = rows[0] || {
-      id_unik: "SPPG-2026-001",
+      id_unik: "DEMO-2026-001",
       nama: "AHMAD FAUZI, S.Kom.",
-      kode_karyawan: "SPPG-001",
+      kode_karyawan: "DEMO-001",
       divisi: "Divisi Operasional & IT",
       jabatan_status: "Koordinator Tim",
-      token_absensi: "DEMO_TOKEN_SPPG_2026",
+      token_absensi: "DEMO_TOKEN_2026",
     };
     void preloadCardAssets({
       template,
@@ -660,13 +660,13 @@ export default function IdCardsPage() {
     if (!canvas || !template) return;
 
     const sampleEmp = rows[0] || {
-      id_unik: "SPPG-2026-001",
+      id_unik: "DEMO-2026-001",
       nama: "AHMAD FAUZI, S.Kom.",
-      kode_karyawan: "SPPG-001",
+      kode_karyawan: "DEMO-001",
       jenis_kelamin: "Laki-laki",
       divisi: "Divisi Operasional & IT",
       jabatan_status: "Koordinator Tim",
-      token_absensi: "DEMO_TOKEN_SPPG_2026",
+      token_absensi: "DEMO_TOKEN_2026",
     };
 
     let animId: number;
@@ -835,7 +835,7 @@ export default function IdCardsPage() {
         title:
           printTargetRows.length === 1
             ? `ID Card - ${String(printTargetRows[0]?.nama || "Karyawan")}`
-            : "Cetak Lembar ID Card SPPG",
+            : "Cetak Lembar ID Card",
         customLayout: activeLayout,
       });
 
@@ -1213,7 +1213,7 @@ export default function IdCardsPage() {
       elements: DEFAULT_ID_CARD_ELEMENTS,
     });
     setSelectedElementId("el-emp-name");
-    setMessage("Tata letak elemen ID Card berhasil di-reset ke standar SPPG.");
+    setMessage("Tata letak elemen ID Card berhasil di-reset ke standar.");
   };
 
   const selectedElement = useMemo(() => {
@@ -1937,9 +1937,7 @@ export default function IdCardsPage() {
                 <option value="photo|employee.avatar">
                   Foto / Avatar Karyawan
                 </option>
-                <option value="company_logo|company.logo">
-                  Logo Instansi SPPG
-                </option>
+                <option value="company_logo|company.logo">Logo Instansi</option>
                 <option value="photo|company.signature">
                   Tanda Tangan & Stempel Pimpinan
                 </option>
@@ -1958,7 +1956,7 @@ export default function IdCardsPage() {
                 <option value="text|employee.department">
                   Divisi / Unit Departemen
                 </option>
-                <option value="text|company.name">Nama Instansi SPPG</option>
+                <option value="text|company.name">Nama Instansi</option>
                 <option value="text|company.terms">
                   Syarat & Ketentuan Penggunaan
                 </option>

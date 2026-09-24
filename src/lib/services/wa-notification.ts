@@ -6,12 +6,16 @@ import {
   isValidOperatorPhone,
   normalizeOperatorPhone,
 } from "@/lib/operators/contact";
+import { ApiRequestError } from "@/lib/server/http/api-response";
 import {
   isValidWaNotificationStatus,
+  isWaNotificationKind,
   parseAmbangAlfaDays,
   parseAmbangAlfaLimit,
   settingEnabled,
+  validateWaTemplate,
   WA_AUTO_SEND_KEY,
+  WA_NOTIFICATION_KINDS,
   WA_NOTIFICATION_STATUSES,
   WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
   WA_NOTIFY_AMBANG_ALFA_KEY,
@@ -21,6 +25,9 @@ import {
   WA_NOTIFY_KOREKSI_ADMIN_KEY,
   WA_NOTIFY_SCAN_MASUK_KEY,
   WA_NOTIFY_SCAN_PULANG_KEY,
+  WA_TEMPLATE_LABELS,
+  type WaTemplateMap,
+  waTemplateKey,
 } from "@/lib/validations/wa-notification";
 import type {
   WaConfig,
@@ -406,4 +413,62 @@ export async function saveWaConfig(
   await client.batch([konfigurasi, ...cerminan], "write");
 
   return { sukses: true };
+}
+
+/** Template tersimpan per jenis; string kosong berarti teks bawaan. */
+export async function getWaTemplates(client: Client): Promise<WaTemplateMap> {
+  const result = await client.execute({
+    sql: `SELECT key, value FROM setting_gex_system WHERE key IN (${WA_NOTIFICATION_KINDS.map(() => "?").join(", ")});`,
+    args: WA_NOTIFICATION_KINDS.map(waTemplateKey),
+  });
+  const tersimpan = new Map(
+    result.rows.map((row) => [String(row.key), String(row.value ?? "")]),
+  );
+  return Object.fromEntries(
+    WA_NOTIFICATION_KINDS.map((jenis) => [
+      jenis,
+      tersimpan.get(waTemplateKey(jenis)) ?? "",
+    ]),
+  ) as WaTemplateMap;
+}
+
+/**
+ * Simpan keenam template sekaligus — cerminan `save_wa_templates` di Rust.
+ * Semuanya divalidasi dulu; satu yang salah membatalkan seluruh penyimpanan.
+ */
+export async function saveWaTemplates(
+  client: Client,
+  body: unknown,
+): Promise<WaTemplateMap> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ApiRequestError("Format template tidak valid.", 400);
+  }
+  const input = body as Record<string, unknown>;
+  const asing = Object.keys(input).find((key) => !isWaNotificationKind(key));
+  if (asing) {
+    throw new ApiRequestError(`Jenis notifikasi tidak dikenal: ${asing}.`, 400);
+  }
+  const hasil = {} as WaTemplateMap;
+  for (const jenis of WA_NOTIFICATION_KINDS) {
+    const raw = typeof input[jenis] === "string" ? input[jenis] : "";
+    const check = validateWaTemplate(jenis, raw as string);
+    if (!check.ok) {
+      throw new ApiRequestError(
+        `${WA_TEMPLATE_LABELS[jenis]}: ${check.pesan}`,
+        400,
+      );
+    }
+    hasil[jenis] = check.value;
+  }
+  await client.batch(
+    WA_NOTIFICATION_KINDS.map((jenis) => ({
+      sql: `
+        INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+      `,
+      args: [waTemplateKey(jenis), hasil[jenis]],
+    })),
+    "write",
+  );
+  return hasil;
 }

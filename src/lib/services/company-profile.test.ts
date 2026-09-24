@@ -29,7 +29,7 @@ describe("Company Profile Service", () => {
     const profile = await getCompanyProfile();
     expect(profile).toBeDefined();
     expect(profile.id).toBe("default_company");
-    expect(profile.company_name).toBe("SPPG");
+    expect(profile.company_name).toBe("Nama Instansi");
   });
 
   test("updateCompanyProfile memperbarui profil instansi dengan benar", async () => {

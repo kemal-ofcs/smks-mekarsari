@@ -420,7 +420,7 @@ impl BootstrapStatus {
     }
 }
 
-/// Tabel inti yang wajib ada agar database dianggap benar-benar database Absensi SPPG.
+/// Tabel inti yang wajib ada agar database dianggap benar-benar database Manajemen Sekolah.
 const DATABASE_CHECK_CORE_TABLES: [&str; 6] = [
     "app_role",
     "master_operator",
@@ -1969,7 +1969,7 @@ impl TursoClient {
             Statement::new(
                 r#"CREATE TABLE IF NOT EXISTS company_profile (
                     id TEXT PRIMARY KEY DEFAULT 'default_company',
-                    company_name TEXT NOT NULL DEFAULT 'YOUR COMPANY',
+                    company_name TEXT NOT NULL DEFAULT 'Nama Instansi',
                     branch_name TEXT,
                     logo_url TEXT,
                     signature_url TEXT,
@@ -1989,7 +1989,7 @@ impl TursoClient {
             Statement::new(
                 r#"CREATE TABLE IF NOT EXISTS id_card_template (
                     id TEXT PRIMARY KEY DEFAULT 'default_template',
-                    name TEXT NOT NULL DEFAULT 'Default ID Card Template',
+                    name TEXT NOT NULL DEFAULT 'Template Standar ID Card',
                     orientation TEXT NOT NULL DEFAULT 'landscape',
                     front_bg_url TEXT,
                     back_bg_url TEXT,
@@ -2220,6 +2220,7 @@ impl TursoClient {
                 ('notification.manage', 'Kelola Pengaturan Notifikasi', 'Komunikasi', 'Mengatur provider dan konfigurasi WhatsApp gateway.', 1, 501),
                 ('notification.send', 'Kirim Pesan WhatsApp ke Wali Murid', 'Komunikasi', 'Memicu pengiriman pesan WhatsApp wali murid.', 1, 502),
                 ('notification.delete', 'Batalkan / Hapus Antrean Notifikasi', 'Komunikasi', 'Membatalkan dan menghapus antrean notifikasi WhatsApp.', 1, 503),
+                ('notification.template', 'Ubah Teks Pesan WhatsApp', 'Komunikasi', 'Mengubah teks pesan otomatis WhatsApp yang dikirim ke wali murid.', 1, 504),
                 ('counseling.view', 'Lihat Kasus Bimbingan Konseling (BK)', 'Kesiswaan', 'Melihat daftar dan riwayat kasus bimbingan konseling siswa.', 1, 600),
                 ('counseling.manage', 'Kelola Kasus & Sesi Konseling (BK)', 'Kesiswaan', 'Mencatat kasus baru dan menambah sesi bimbingan konseling.', 1, 601),
                 ('counseling.delete', 'Hapus Kasus Bimbingan Konseling (BK)', 'Kesiswaan', 'Menghapus catatan kasus dan sesi bimbingan konseling siswa.', 1, 602),
@@ -2264,13 +2265,13 @@ impl TursoClient {
             // Seed Company Profile
             Statement::new(
                 r#"INSERT OR IGNORE INTO company_profile (id, company_name, branch_name, address, timezone, updated_at) VALUES
-                ('default_company', 'YOUR COMPANY', 'Operations Center', 'Your Company Address', 'Asia/Jakarta', datetime('now'));"#,
+                ('default_company', 'Nama Instansi', 'Pusat', 'Alamat Instansi', 'Asia/Jakarta', datetime('now'));"#,
                 vec![],
             ),
             // Seed ID Card Template
             Statement::new(
                 r#"INSERT OR IGNORE INTO id_card_template (id, name, orientation, elements_json, is_active, created_at, updated_at) VALUES
-                ('default_template', 'Default ID Card Template', 'landscape', ?, 1, datetime('now'), datetime('now'));"#,
+                ('default_template', 'Template Standar ID Card', 'landscape', ?, 1, datetime('now'), datetime('now'));"#,
                 vec![json!(serde_json::to_string(&crate::desktop::operational::default_id_card_elements()).unwrap_or_else(|_| "[]".to_string()))],
             ),
             Statement::new(
@@ -9278,7 +9279,7 @@ async fn apply_event_to_turso(
                         json!(row
                             .get("company_name")
                             .and_then(Value::as_str)
-                            .unwrap_or("SPPG")),
+                            .unwrap_or("Nama Instansi")),
                         json!(row.get("branch_name").and_then(Value::as_str)),
                         json!(row.get("logo_url").and_then(Value::as_str)),
                         json!(row.get("signature_url").and_then(Value::as_str)),
@@ -9391,7 +9392,7 @@ async fn apply_event_to_turso(
                         json!(row
                             .get("name")
                             .and_then(Value::as_str)
-                            .unwrap_or("Template Default SPPG")),
+                            .unwrap_or("Template Standar ID Card")),
                         json!(row
                             .get("orientation")
                             .and_then(Value::as_str)
@@ -12883,10 +12884,10 @@ impl TursoClient {
             .unwrap_or("Admin")
             .to_string();
         let body = format!(
-            "Halo {name},\n\nEmail ini dikirim dari menu Pengaturan > Email Sistem untuk menguji konfigurasi pengirim.\nBila email ini sampai, fitur Lupa Password sudah siap dipakai.\n\nAbsensi SPPG"
+            "Halo {name},\n\nEmail ini dikirim dari menu Pengaturan > Email Sistem untuk menguji konfigurasi pengirim.\nBila email ini sampai, fitur Lupa Password sudah siap dipakai.\n\nManajemen Sekolah"
         );
         match self
-            .deliver_mail(&to, "Uji Kirim Email Sistem Absensi SPPG", &body)
+            .deliver_mail(&to, "Uji Kirim Email Sistem Manajemen Sekolah", &body)
             .await
         {
             Ok(()) => Ok(json!({
@@ -12947,7 +12948,7 @@ impl TursoClient {
             });
         }
         let sender_name = if text("sender_name").is_empty() {
-            "Absensi SPPG".to_string()
+            "Manajemen Sekolah".to_string()
         } else {
             text("sender_name")
         };
@@ -13041,7 +13042,7 @@ impl TursoClient {
             "Halo {operator_name},
 
 \
-             Kami menerima permintaan pemulihan password untuk akun Absensi SPPG Anda.
+             Kami menerima permintaan pemulihan password untuk akun Manajemen Sekolah Anda.
 \
              Permintaan ini sudah melewati verifikasi wajah pada perangkat pemohon.
 
@@ -13056,9 +13057,9 @@ impl TursoClient {
              laporkan ke Admin — foto pemohon sudah tersimpan sebagai bukti.
 
 \
-             Absensi SPPG"
+             Manajemen Sekolah"
         );
-        self.deliver_mail(to, "Pemulihan Password Absensi SPPG", &body_text)
+        self.deliver_mail(to, "Pemulihan Password Manajemen Sekolah", &body_text)
             .await
     }
 

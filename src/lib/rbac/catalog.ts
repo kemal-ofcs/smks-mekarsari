@@ -247,6 +247,11 @@ export const PERMISSION_CATALOG = [
     group: "Komunikasi",
   },
   {
+    key: "notification.template",
+    name: "Ubah Teks Pesan WhatsApp",
+    group: "Komunikasi",
+  },
+  {
     key: "counseling.view",
     name: "Lihat Kasus Bimbingan Konseling (BK)",
     group: "Kesiswaan",
@@ -358,6 +363,9 @@ export const SENSITIVE_MUTATION_PERMISSIONS = new Set<PermissionKey>([
   "notification.send",
   // Membatalkan/menghapus antrean notifikasi menghilangkan antrean pemberitahuan wali.
   "notification.delete",
+  // Teks pesan otomatis dikirim atas nama sekolah ke setiap nomor wali, dan
+  // pesan yang sudah terkirim tidak bisa ditarik kembali.
+  "notification.template",
   // Menghapus kasus BK memusnahkan rekam jejak konseling dan kedisiplinan siswa.
   "counseling.delete",
   // Menghapus pendaftar PMB memusnahkan berkas identitas seorang anak — kartu

@@ -280,7 +280,7 @@ export function BuilderPanel({
               onClick={handleResetToDefault}
               className="rounded-xl border border-white/10 bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition"
             >
-              Reset ke Standar SPPG
+              Reset ke Standar
             </button>
             <button
               type="button"

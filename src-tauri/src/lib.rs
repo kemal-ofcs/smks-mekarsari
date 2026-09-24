@@ -221,6 +221,8 @@ pub fn run() {
             desktop::commands::desktop_queue_wa_notification,
             desktop::commands::desktop_cancel_wa_notification,
             desktop::commands::desktop_list_wa_notifications,
+            desktop::commands::desktop_get_wa_templates,
+            desktop::commands::desktop_save_wa_templates,
             desktop::commands::desktop_get_wa_config,
             desktop::commands::desktop_save_wa_config,
             desktop::commands::desktop_drain_wa_queue,

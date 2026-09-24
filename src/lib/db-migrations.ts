@@ -1,4 +1,5 @@
 import type { Client } from "@libsql/client";
+import { BRANDING } from "@/lib/constants/branding";
 import {
   DEFAULT_ROLE_PERMISSIONS,
   PERMISSION_CATALOG,
@@ -742,7 +743,7 @@ export async function runDatabaseMigrations(client: Client) {
   await client.execute(`
     CREATE TABLE IF NOT EXISTS company_profile (
       id TEXT PRIMARY KEY DEFAULT 'default_company',
-      company_name TEXT NOT NULL DEFAULT 'SPPG',
+      company_name TEXT NOT NULL DEFAULT 'Nama Instansi',
       branch_name TEXT,
       logo_url TEXT,
       signature_url TEXT,
@@ -762,7 +763,7 @@ export async function runDatabaseMigrations(client: Client) {
   await client.execute(`
     CREATE TABLE IF NOT EXISTS id_card_template (
       id TEXT PRIMARY KEY DEFAULT 'default_template',
-      name TEXT NOT NULL DEFAULT 'Template Default SPPG',
+      name TEXT NOT NULL DEFAULT 'Template Standar ID Card',
       orientation TEXT NOT NULL DEFAULT 'landscape',
       front_bg_url TEXT,
       back_bg_url TEXT,
@@ -773,11 +774,8 @@ export async function runDatabaseMigrations(client: Client) {
     );
   `);
 
-  const defaultTerms = `1. Kartu ini adalah tanda pengenal resmi karyawan/personil SPPG.
-2. Wajib dibawa dan dipindai (scan QR) setiap hadir dan pulang kerja.
-3. Dilarang memindahtangankan atau meminjamkan kartu ini kepada pihak lain.
-4. Apabila kartu hilang atau menemukan kartu ini, harap segera melapor ke Bagian SDM/Operasional SPPG.`;
-
+  // Placeholder dari `BRANDING`, bukan nama orang atau alamat karangan: nilai
+  // ini tercetak di kartu dan laporan sekolah baru sampai admin mengisinya.
   await client.execute({
     sql: `
       INSERT OR IGNORE INTO company_profile (
@@ -786,13 +784,25 @@ export async function runDatabaseMigrations(client: Client) {
         leader_name, leader_title, leader_nip,
         card_terms, timezone, updated_at
       ) VALUES (
-        'default_company', 'SPPG', 'Pusat Operasional', NULL, NULL,
-        'Jl. Sudirman No. 123, Jakarta', '021-5550123', 'info@sppg.id', 'https://sppg.id',
-        'Dr. H. Ahmad Fauzi, M.M.', 'Kepala SPPG', '19750815 200003 1 002',
+        'default_company', ?, ?, NULL, NULL,
+        ?, ?, ?, ?,
+        ?, ?, ?,
         ?, 'Asia/Jakarta', ?
       );
     `,
-    args: [defaultTerms, now],
+    args: [
+      BRANDING.defaultCompanyName,
+      BRANDING.defaultBranchName,
+      BRANDING.defaultAddress,
+      BRANDING.defaultPhone,
+      BRANDING.defaultEmail,
+      BRANDING.defaultWebsite,
+      BRANDING.defaultLeaderName,
+      BRANDING.defaultLeaderTitle,
+      BRANDING.defaultLeaderNip,
+      BRANDING.defaultCardTerms,
+      now,
+    ],
   });
 
   await client.execute({

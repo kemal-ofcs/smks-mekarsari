@@ -3,6 +3,7 @@
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime, isMobileRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop } from "@/lib/runtime/desktop-commands";
+import type { WaTemplateMap } from "@/lib/validations/wa-notification";
 import type {
   WaConfig,
   WaConfigDraft,
@@ -170,4 +171,37 @@ export async function drainWaQueueGateway(
   return requestWebApi<WaDrainResult>("/api/notifications/wa/drain", "POST", {
     otomatis,
   });
+}
+
+/**
+ * Template teks pesan per jenis; string kosong berarti teks bawaan.
+ *
+ * Desktop dan Mobile membaca `setting_gex_system` LOKAL — tabel itu ikut
+ * snapshot, jadi ada di setiap perangkat, dan scanner membaca salinan yang
+ * sama saat mengantre.
+ */
+export async function getWaTemplatesGateway(): Promise<WaTemplateMap> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<WaTemplateMap>("desktop_get_wa_templates");
+  }
+  return requestWebApi<WaTemplateMap>(
+    "/api/notifications/wa/templates/query",
+    "POST",
+    {},
+  );
+}
+
+export async function saveWaTemplatesGateway(
+  templates: WaTemplateMap,
+): Promise<WaTemplateMap> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop<WaTemplateMap>("desktop_save_wa_templates", {
+      templates,
+    });
+  }
+  return requestWebApi<WaTemplateMap>(
+    "/api/notifications/wa/templates/save",
+    "POST",
+    templates,
+  );
 }

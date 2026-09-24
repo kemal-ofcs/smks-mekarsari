@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { WaQueueEmptyDiagnostic } from "@/components/notifikasi-wa/WaQueueEmptyDiagnostic";
+import { WaTemplateDialog } from "@/components/notifikasi-wa/WaTemplateDialog";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
@@ -42,6 +43,7 @@ export default function NotifikasiWaPage() {
 
   // Modals & Dialogs
   const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState<WaConfigDraft | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -135,6 +137,7 @@ export default function NotifikasiWaPage() {
   const canManage = hasPermission(user, "notification.manage");
   const canDelete = hasPermission(user, "notification.delete");
   const canSend = hasPermission(user, "notification.send");
+  const canEditTemplate = hasPermission(user, "notification.template");
 
   const handleRefresh = async () => {
     setLoading(true);
@@ -405,6 +408,16 @@ export default function NotifikasiWaPage() {
                 >
                   <Icon name="settings" className="h-4 w-4" />
                   Konfigurasi Gateway
+                </button>
+              )}
+              {canEditTemplate && (
+                <button
+                  type="button"
+                  onClick={() => setTemplateModalOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-medium text-slate-200 shadow-sm transition hover:bg-slate-700 hover:text-white"
+                >
+                  <Icon name="document" className="h-4 w-4" />
+                  Ubah Teks Pesan
                 </button>
               )}
               {canSend && (
@@ -789,6 +802,12 @@ export default function NotifikasiWaPage() {
             </div>
           </Modal>
         )}
+
+        <WaTemplateDialog
+          isOpen={templateModalOpen}
+          onClose={() => setTemplateModalOpen(false)}
+          onSaved={(message) => setFeedback({ tone: "success", message })}
+        />
 
         {/* Modal Konfigurasi Gateway */}
         {configModalOpen && configDraft && (

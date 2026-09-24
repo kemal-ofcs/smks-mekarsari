@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
+  composeWaMessage,
   DEFAULT_AMBANG_ALFA_DAYS,
   DEFAULT_AMBANG_ALFA_LIMIT,
+  DEFAULT_WA_TEMPLATES,
   isValidWaNotificationStatus,
   parseAmbangAlfaDays,
   parseAmbangAlfaLimit,
+  renderWaTemplate,
+  validateWaTemplate,
+  WA_NOTIFICATION_KINDS,
   WA_NOTIFY_AMBANG_ALFA_DAYS_KEY,
   WA_NOTIFY_AMBANG_ALFA_KEY,
   WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
@@ -176,5 +181,87 @@ describe("pengaturan parameter ambang batas akumulasi alfa", () => {
     ]);
     expect(parseAmbangAlfaLimit(map)).toBe(7);
     expect(parseAmbangAlfaDays(map)).toBe(45);
+  });
+});
+
+// Vektor kembar dengan `render_template_sesuai_vektor`,
+// `validasi_template_sesuai_vektor`, dan
+// `susun_pesan_memakai_template_tersimpan` di `wa_notification.rs`.
+describe("template teks pesan WhatsApp", () => {
+  test("isian diisi dalam satu lintasan", () => {
+    const vektor: [string, Record<string, string>, string][] = [
+      [
+        "Halo {nama} ({rombel})",
+        { nama: "Budi", rombel: "7A" },
+        "Halo Budi (7A)",
+      ],
+      ["{nama} {tidak_ada}", { nama: "Ani" }, "Ani {tidak_ada}"],
+      ["{nama}", { nama: "{rombel}", rombel: "X" }, "{rombel}"],
+      ["Kurung {nama", { nama: "A" }, "Kurung {nama"],
+      ["Émoji 🎉 {nama}!", { nama: "Çağ" }, "Émoji 🎉 Çağ!"],
+    ];
+    for (const [template, vars, harapan] of vektor) {
+      expect(renderWaTemplate(template, vars)).toBe(harapan);
+    }
+  });
+
+  test("validasi menolak isian asing dan mewajibkan {nama}", () => {
+    const panjang = `{nama}${"a".repeat(995)}`;
+    const vektor: [string, string, string | { pesan: string }][] = [
+      ["scan_masuk", "", ""],
+      ["scan_masuk", "   ", ""],
+      ["scan_masuk", "  Halo {nama}  ", "Halo {nama}"],
+      [
+        "scan_masuk",
+        "Halo {rombel}",
+        { pesan: "Teks pesan wajib memuat isian {nama}." },
+      ],
+      [
+        "scan_masuk",
+        "Halo {nama} {mapel}",
+        { pesan: "Isian {mapel} tidak dikenal untuk pesan ini." },
+      ],
+      [
+        "scan_masuk",
+        "Halo {nama",
+        { pesan: "Ada tanda { yang tidak ditutup dengan }." },
+      ],
+      ["scan_masuk", panjang, { pesan: "Teks pesan maksimal 1000 karakter." }],
+      ["asing", "Halo {nama}", { pesan: "Jenis notifikasi tidak dikenal." }],
+    ];
+    for (const [jenis, teks, harapan] of vektor) {
+      const hasil = validateWaTemplate(jenis, teks);
+      expect(hasil).toEqual(
+        typeof harapan === "string"
+          ? { ok: true, value: harapan }
+          : { ok: false, pesan: harapan.pesan },
+      );
+    }
+    for (const jenis of WA_NOTIFICATION_KINDS) {
+      const bawaan = DEFAULT_WA_TEMPLATES[jenis];
+      expect(validateWaTemplate(jenis, bawaan)).toEqual({
+        ok: true,
+        value: bawaan,
+      });
+    }
+  });
+
+  test("tanpa template tersimpan, teksnya sama dengan sebelum fitur ini", () => {
+    const vars = {
+      nama: "Budi",
+      rombel: "7A",
+      jam: "07:05",
+      tanggal: "2026-09-24",
+      status: "Tepat Waktu",
+    };
+    expect(composeWaMessage("scan_masuk", null, vars)).toBe(
+      "Yth. Wali Murid dari Budi (7A). Kami informasikan bahwa ananda telah hadir dan melakukan scan masuk di sekolah pada pukul 07:05 WIB (2026-09-24). Status: Tepat Waktu.",
+    );
+    expect(
+      composeWaMessage("scan_masuk", "{nama} tiba pukul {jam}.", vars),
+    ).toBe("Budi tiba pukul 07:05.");
+    expect(composeWaMessage("scan_masuk", "{nmaa} tiba.", vars)).toStartWith(
+      "Yth. Wali Murid dari Budi",
+    );
   });
 });

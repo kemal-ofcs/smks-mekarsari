@@ -8,7 +8,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-# SPPG Absensi App - Core Engineering Rules
+# Manajemen Sekolah - Core Engineering Rules
 
 1. **Quality Gate**: Every task must pass `bun run check` (Biome linter, TypeScript strict typecheck, Bun tests, and Rust cargo tests) with 0 errors and 0 warnings. Format issues can be auto-resolved with `bun run format`.
 2. **Anti-Asumsi & Single Source of Truth**:

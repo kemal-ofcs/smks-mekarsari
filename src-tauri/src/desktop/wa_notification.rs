@@ -249,6 +249,223 @@ pub fn wa_notify_enabled(settings: &HashMap<String, String>, jenis: &str) -> boo
         .unwrap_or(false)
 }
 
+/// Teks pesan per jenis yang bisa disunting pemegang izin `notification.template`.
+///
+/// Disimpan di `setting_gex_system` (`wa_template_<jenis>`) karena alasan yang
+/// sama dengan sakelarnya: pesan disusun SAAT MENGANTRE, di dalam transaksi
+/// SQLite lokal terminal yang mungkin tanpa jaringan. Nilai kosong berarti teks
+/// bawaan di bawah, sehingga pemasangan lama tidak berubah apa pun.
+///
+/// Cerminan TypeScript-nya di `src/lib/validations/wa-notification.ts`, diuji
+/// dengan vektor yang sama.
+pub const WA_TEMPLATE_KEY_PREFIX: &str = "wa_template_";
+pub const MAX_WA_TEMPLATE_CHARS: usize = 1000;
+pub const WA_TEMPLATE_KINDS: [&str; 6] = [
+    "scan_masuk",
+    "scan_pulang",
+    "bolos",
+    "ambang_alfa",
+    "koreksi_admin",
+    "import_manual",
+];
+
+pub fn wa_template_key(jenis: &str) -> Option<String> {
+    wa_notify_setting_key(jenis).map(|_| format!("{WA_TEMPLATE_KEY_PREFIX}{jenis}"))
+}
+
+pub fn wa_template_label(jenis: &str) -> &'static str {
+    match jenis {
+        "scan_masuk" => "Scan masuk",
+        "scan_pulang" => "Scan pulang",
+        "bolos" => "Tidak ikut pelajaran",
+        "ambang_alfa" => "Ambang alfa",
+        "koreksi_admin" => "Koreksi admin",
+        "import_manual" => "Input manual",
+        _ => "Pesan",
+    }
+}
+
+/// Teks bawaan, sama persis dengan pesan sebelum template bisa disunting.
+pub fn default_wa_template(jenis: &str) -> Option<&'static str> {
+    Some(match jenis {
+        "scan_masuk" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda telah hadir dan melakukan scan masuk di sekolah pada pukul {jam} WIB ({tanggal}). Status: {status}.",
+        "scan_pulang" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda telah selesai KBM dan melakukan scan pulang pada pukul {jam} WIB ({tanggal}).",
+        "bolos" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda tercatat hadir di sekolah namun tidak mengikuti KBM {mapel} (Jam ke-{jam_ke}) pada tanggal {tanggal}. Status: Alfa.",
+        "ambang_alfa" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda telah tercatat tidak hadir tanpa keterangan (Alfa) sebanyak {total_alfa} kali dalam {hari} hari terakhir. Mohon perhatian dan konfirmasi dari Bapak/Ibu Wali Murid.",
+        "koreksi_admin" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} telah dikoreksi oleh admin sekolah menjadi: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
+        "import_manual" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} dimasukkan secara manual oleh admin sekolah dengan status: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
+        _ => return None,
+    })
+}
+
+/// Isian yang tersedia untuk sebuah jenis. Isian lain ditolak saat disimpan.
+pub fn wa_template_placeholders(jenis: &str) -> &'static [&'static str] {
+    match jenis {
+        "scan_masuk" => &["nama", "rombel", "jam", "tanggal", "status"],
+        "scan_pulang" => &["nama", "rombel", "jam", "tanggal"],
+        "bolos" => &["nama", "rombel", "mapel", "jam_ke", "tanggal"],
+        "ambang_alfa" => &["nama", "rombel", "total_alfa", "hari"],
+        "koreksi_admin" | "import_manual" => &["nama", "rombel", "tanggal", "status", "keterangan"],
+        _ => &[],
+    }
+}
+
+/// Isi `{isian}` dalam SATU lintasan: nilai yang kebetulan memuat `{rombel}`
+/// tidak diisi ulang. Isian tak dikenal dibiarkan apa adanya.
+pub fn render_wa_template(template: &str, vars: &[(&str, String)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('}') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let name = &after[..end];
+        match vars.iter().find(|(key, _)| *key == name) {
+            Some((_, value)) => out.push_str(value),
+            None => {
+                out.push('{');
+                out.push_str(name);
+                out.push('}');
+            }
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Nilai template yang boleh disimpan, atau pesan galat yang dieja sama
+/// dengan `validateWaTemplate` di TypeScript. Kosong = pakai teks bawaan.
+pub fn validate_wa_template(jenis: &str, raw: &str) -> Result<String, String> {
+    if default_wa_template(jenis).is_none() {
+        return Err("Jenis notifikasi tidak dikenal.".to_owned());
+    }
+    let text = raw.trim();
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    if text.chars().count() > MAX_WA_TEMPLATE_CHARS {
+        return Err(format!("Teks pesan maksimal {MAX_WA_TEMPLATE_CHARS} karakter."));
+    }
+    let allowed = wa_template_placeholders(jenis);
+    let mut rest = text;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('}') else {
+            return Err("Ada tanda { yang tidak ditutup dengan }.".to_owned());
+        };
+        let name = &after[..end];
+        if !allowed.contains(&name) {
+            return Err(format!("Isian {{{name}}} tidak dikenal untuk pesan ini."));
+        }
+        rest = &after[end + 1..];
+    }
+    if !text.contains("{nama}") {
+        return Err("Teks pesan wajib memuat isian {nama}.".to_owned());
+    }
+    Ok(text.to_owned())
+}
+
+/// Susun isi pesan dari template tersimpan, atau teks bawaan bila kosong.
+///
+/// Template yang tersimpan tetapi tidak lolos validasi (misalnya ditulis versi
+/// aplikasi lain) jatuh ke teks bawaan: wali tidak boleh menerima `{nmaa}`.
+pub fn compose_wa_message(connection: &Connection, jenis: &str, vars: &[(&str, String)]) -> String {
+    let tersimpan: Option<String> = wa_template_key(jenis).and_then(|key| {
+        connection
+            .query_row(
+                "SELECT value FROM setting_gex_system WHERE key = ?1 LIMIT 1;",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+    });
+    let template = tersimpan
+        .and_then(|value| validate_wa_template(jenis, &value).ok())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_wa_template(jenis).unwrap_or_default().to_owned());
+    render_wa_template(&template, vars)
+}
+
+/// Template tersimpan per jenis; string kosong berarti teks bawaan.
+pub fn get_wa_templates(state: &DesktopState) -> Result<Value, CommandError> {
+    let connection = storage::database(&state.data_dir)?;
+    let mut hasil = serde_json::Map::new();
+    for jenis in WA_TEMPLATE_KINDS {
+        let key = format!("{WA_TEMPLATE_KEY_PREFIX}{jenis}");
+        let value: Option<String> = connection
+            .query_row(
+                "SELECT value FROM setting_gex_system WHERE key = ?1 LIMIT 1;",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| CommandError::internal())?;
+        hasil.insert(jenis.to_owned(), Value::String(value.unwrap_or_default()));
+    }
+    Ok(Value::Object(hasil))
+}
+
+/// Simpan keenam template sekaligus lewat rute kanonik `setting/update`.
+///
+/// Semuanya divalidasi dulu; satu yang salah membatalkan seluruh penyimpanan
+/// supaya tidak ada setengah-tersimpan yang membingungkan.
+pub fn save_wa_templates(state: &DesktopState, templates: &Value) -> Result<Value, CommandError> {
+    let invalid = |pesan: String| CommandError::new("VALIDATION_ERROR", pesan);
+    let object = templates
+        .as_object()
+        .ok_or_else(|| invalid("Format template tidak valid.".to_owned()))?;
+    if let Some(asing) = object.keys().find(|key| !WA_TEMPLATE_KINDS.contains(&key.as_str())) {
+        return Err(invalid(format!("Jenis notifikasi tidak dikenal: {asing}.")));
+    }
+    let mut rows = Vec::with_capacity(WA_TEMPLATE_KINDS.len());
+    for jenis in WA_TEMPLATE_KINDS {
+        let raw = object.get(jenis).and_then(Value::as_str).unwrap_or("");
+        let value = validate_wa_template(jenis, raw)
+            .map_err(|pesan| invalid(format!("{}: {pesan}", wa_template_label(jenis))))?;
+        rows.push((jenis, format!("{WA_TEMPLATE_KEY_PREFIX}{jenis}"), value));
+    }
+
+    let client_id = sync::ensure_client_id(state)?;
+    let mut connection = storage::database(&state.data_dir)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| CommandError::internal())?;
+    let mut hasil = serde_json::Map::new();
+    for (jenis, key, value) in rows {
+        transaction
+            .execute(
+                "INSERT INTO setting_gex_system (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+                params![key, value],
+            )
+            .map_err(|_| CommandError::internal())?;
+        transaction
+            .execute(
+                "DELETE FROM desktop_sync_outbox WHERE domain = 'setting' AND entity_key = ?1 AND status IN ('pending', 'failed', 'conflict');",
+                params![key],
+            )
+            .map_err(|_| CommandError::internal())?;
+        sync::enqueue(
+            &transaction,
+            &client_id,
+            "setting",
+            "update",
+            &key,
+            &json!({ "key": key, "value": value }),
+            None,
+        )?;
+        hasil.insert(jenis.to_owned(), Value::String(value));
+    }
+    transaction.commit().map_err(|_| CommandError::internal())?;
+    Ok(Value::Object(hasil))
+}
+
 /// Pangkas baris antrean lokal yang sudah selesai dan melewati masa retensi.
 ///
 /// Dijalankan di akhir siklus sinkronisasi. Baris yang masih punya event outbox
@@ -352,6 +569,15 @@ pub struct WaliSiswa {
     pub rombel: String,
 }
 
+impl WaliSiswa {
+    /// Isian `{nama}` dan `{rombel}` ditambah isian khusus jenisnya.
+    pub fn isian(&self, lain: Vec<(&'static str, String)>) -> Vec<(&'static str, String)> {
+        let mut vars = vec![("nama", self.nama.clone()), ("rombel", self.rombel.clone())];
+        vars.extend(lain);
+        vars
+    }
+}
+
 /// Antrekan notifikasi ke wali BILA personilnya siswa dan jenisnya dinyalakan.
 ///
 /// Mengembalikan `true` hanya bila sebuah baris benar-benar diantrekan. Semua
@@ -373,7 +599,7 @@ pub fn queue_wali_notification_tx(
     jenis: &str,
     id_personil: &str,
     dedupe_key: &str,
-    pesan: impl FnOnce(&WaliSiswa) -> String,
+    isian: impl FnOnce(&WaliSiswa) -> Vec<(&'static str, String)>,
 ) -> Result<bool, CommandError> {
     let Some(key) = wa_notify_setting_key(jenis) else {
         return Ok(false);
@@ -447,7 +673,7 @@ pub fn queue_wali_notification_tx(
             "jenis": jenis,
             "id_siswa": id_personil,
             "tujuan_nomor": canon,
-            "isi_pesan": pesan(&wali),
+            "isi_pesan": compose_wa_message(tx, jenis, &isian(&wali)),
         }),
     )?;
     Ok(true)
@@ -929,7 +1155,7 @@ mod tests {
             "koreksi_admin",
             "P001",
             "koreksi_admin:P001:Hadir",
-            |_| "tidak boleh terkirim".to_owned(),
+            |_| Vec::new(),
         )
         .expect("evaluasi pegawai");
         assert!(!pegawai, "pegawai tidak boleh diberi notifikasi wali");
@@ -940,7 +1166,7 @@ mod tests {
             "koreksi_admin",
             "S001",
             "koreksi_admin:S001:Hadir",
-            |wali| format!("Halo wali dari {}", wali.nama),
+            |wali| wali.isian(vec![("tanggal", "2026-09-17".to_owned())]),
         )
         .expect("evaluasi siswa");
         assert!(siswa, "siswa dengan nomor wali valid harus diantrekan");
@@ -966,7 +1192,7 @@ mod tests {
             "import_manual",
             "S001",
             "import_manual:S001:2026-09-17:Hadir",
-            |_| "tidak boleh terkirim".to_owned(),
+            |_| Vec::new(),
         )
         .expect("evaluasi");
         assert!(!hasil);
@@ -988,18 +1214,90 @@ mod tests {
         let tx = connection.transaction().expect("transaksi");
         let kunci = "import_manual:S001:2026-09-17:Hadir";
         let pertama =
-            queue_wali_notification_tx(&tx, "cli_1", "import_manual", "S001", kunci, |_| {
-                "pesan".to_owned()
-            })
+            queue_wali_notification_tx(&tx, "cli_1", "import_manual", "S001", kunci, |_| Vec::new())
             .expect("antrean pertama");
         let kedua =
-            queue_wali_notification_tx(&tx, "cli_1", "import_manual", "S001", kunci, |_| {
-                "pesan".to_owned()
-            })
+            queue_wali_notification_tx(&tx, "cli_1", "import_manual", "S001", kunci, |_| Vec::new())
             .expect("antrean kedua");
 
         assert!(pertama);
         assert!(!kedua, "kunci yang sama tidak boleh mengantre dua kali");
+    }
+
+    /// Vektor kembar dengan `wa-notification.test.ts` (`renderWaTemplate`).
+    #[test]
+    fn render_template_sesuai_vektor() {
+        let isian = |pairs: &[(&'static str, &str)]| {
+            pairs.iter().map(|(k, v)| (*k, (*v).to_owned())).collect::<Vec<_>>()
+        };
+        let vektor: [(&str, Vec<(&'static str, String)>, &str); 5] = [
+            ("Halo {nama} ({rombel})", isian(&[("nama", "Budi"), ("rombel", "7A")]), "Halo Budi (7A)"),
+            ("{nama} {tidak_ada}", isian(&[("nama", "Ani")]), "Ani {tidak_ada}"),
+            ("{nama}", isian(&[("nama", "{rombel}"), ("rombel", "X")]), "{rombel}"),
+            ("Kurung {nama", isian(&[("nama", "A")]), "Kurung {nama"),
+            ("Émoji 🎉 {nama}!", isian(&[("nama", "Çağ")]), "Émoji 🎉 Çağ!"),
+        ];
+        for (template, vars, harapan) in vektor {
+            assert_eq!(render_wa_template(template, &vars), harapan, "template {template}");
+        }
+    }
+
+    /// Vektor kembar dengan `wa-notification.test.ts` (`validateWaTemplate`).
+    #[test]
+    fn validasi_template_sesuai_vektor() {
+        let panjang = format!("{{nama}}{}", "a".repeat(995));
+        let vektor: [(&str, &str, Result<&str, &str>); 8] = [
+            ("scan_masuk", "", Ok("")),
+            ("scan_masuk", "   ", Ok("")),
+            ("scan_masuk", "  Halo {nama}  ", Ok("Halo {nama}")),
+            ("scan_masuk", "Halo {rombel}", Err("Teks pesan wajib memuat isian {nama}.")),
+            ("scan_masuk", "Halo {nama} {mapel}", Err("Isian {mapel} tidak dikenal untuk pesan ini.")),
+            ("scan_masuk", "Halo {nama", Err("Ada tanda { yang tidak ditutup dengan }.")),
+            ("scan_masuk", &panjang, Err("Teks pesan maksimal 1000 karakter.")),
+            ("asing", "Halo {nama}", Err("Jenis notifikasi tidak dikenal.")),
+        ];
+        for (jenis, teks, harapan) in vektor {
+            let harapan = harapan.map(str::to_owned).map_err(str::to_owned);
+            assert_eq!(validate_wa_template(jenis, teks), harapan, "{jenis}: {teks}");
+        }
+        for jenis in WA_TEMPLATE_KINDS {
+            let bawaan = default_wa_template(jenis).expect("bawaan");
+            assert_eq!(validate_wa_template(jenis, bawaan), Ok(bawaan.to_owned()), "bawaan {jenis} harus lolos");
+        }
+    }
+
+    /// Tanpa template tersimpan, teksnya sama persis dengan sebelum fitur ini;
+    /// template tersimpan dipakai; template rusak jatuh ke bawaan.
+    #[test]
+    fn susun_pesan_memakai_template_tersimpan() {
+        let (_dir, state) = setup_test_state();
+        let connection = storage::database(&state.data_dir).expect("database lokal");
+        let vars = [
+            ("nama", "Budi".to_owned()),
+            ("rombel", "7A".to_owned()),
+            ("jam", "07:05".to_owned()),
+            ("tanggal", "2026-09-24".to_owned()),
+            ("status", "Tepat Waktu".to_owned()),
+        ];
+        assert_eq!(
+            compose_wa_message(&connection, "scan_masuk", &vars),
+            "Yth. Wali Murid dari Budi (7A). Kami informasikan bahwa ananda telah hadir dan melakukan scan masuk di sekolah pada pukul 07:05 WIB (2026-09-24). Status: Tepat Waktu."
+        );
+
+        let simpan = |nilai: &str| {
+            connection
+                .execute(
+                    "INSERT INTO setting_gex_system (key, value) VALUES ('wa_template_scan_masuk', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+                    params![nilai],
+                )
+                .expect("simpan template");
+        };
+        simpan("{nama} tiba pukul {jam}.");
+        assert_eq!(compose_wa_message(&connection, "scan_masuk", &vars), "Budi tiba pukul 07:05.");
+
+        simpan("{nmaa} tiba.");
+        assert!(compose_wa_message(&connection, "scan_masuk", &vars).starts_with("Yth. Wali Murid dari Budi"));
     }
 
     /// Vektor kembar dengan `wa-notification.test.ts`. Keduanya WAJIB memetakan

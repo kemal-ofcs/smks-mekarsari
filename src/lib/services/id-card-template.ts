@@ -190,7 +190,7 @@ export async function getIdCardTemplate(
         INSERT OR IGNORE INTO id_card_template (
           id, name, orientation, front_bg_url, back_bg_url, elements_json, is_active, created_at, updated_at
         ) VALUES (
-          ?, 'Template Default SPPG', 'landscape', NULL, NULL, ?, 1, ?, ?
+          ?, 'Template Standar ID Card', 'landscape', NULL, NULL, ?, 1, ?, ?
         );
       `,
       args: [id, defaultElementsJson, now, now],
@@ -198,7 +198,7 @@ export async function getIdCardTemplate(
 
     return {
       id,
-      name: "Template Default SPPG",
+      name: "Template Standar ID Card",
       orientation: "landscape",
       frontBgUrl: undefined,
       backBgUrl: undefined,
@@ -221,7 +221,7 @@ export async function getIdCardTemplate(
 
   return {
     id: String(row?.id || id),
-    name: String(row?.name || "Template Default SPPG"),
+    name: String(row?.name || "Template Standar ID Card"),
     orientation: (row?.orientation === "portrait" ? "portrait" : "landscape") as
       | "portrait"
       | "landscape",
@@ -259,7 +259,7 @@ export async function saveIdCardTemplate(
     `,
     args: [
       id,
-      template.name || "Template Default SPPG",
+      template.name || "Template Standar ID Card",
       template.orientation || "landscape",
       template.frontBgUrl || null,
       template.backBgUrl || null,

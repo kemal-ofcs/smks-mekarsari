@@ -179,3 +179,150 @@ export function parseAmbangAlfaDays(input: unknown): number {
     ? parsed
     : DEFAULT_AMBANG_ALFA_DAYS;
 }
+
+/**
+ * Teks pesan per jenis yang bisa disunting pemegang izin `notification.template`
+ * — cerminan `WA_TEMPLATE_*`, `render_wa_template`, dan `validate_wa_template`
+ * di `wa_notification.rs`, diuji dengan vektor yang sama.
+ *
+ * Disimpan di `setting_gex_system` (`wa_template_<jenis>`) karena pesan disusun
+ * SAAT MENGANTRE, di dalam transaksi SQLite lokal terminal yang mungkin tanpa
+ * jaringan. Nilai kosong berarti teks bawaan di bawah.
+ */
+export const WA_TEMPLATE_KEY_PREFIX = "wa_template_";
+export const MAX_WA_TEMPLATE_CHARS = 1000;
+
+export type WaTemplateMap = Record<WaNotificationKind, string>;
+
+export function waTemplateKey(jenis: WaNotificationKind): string {
+  return `${WA_TEMPLATE_KEY_PREFIX}${jenis}`;
+}
+
+export const WA_TEMPLATE_LABELS: Record<WaNotificationKind, string> = {
+  scan_masuk: "Scan masuk",
+  scan_pulang: "Scan pulang",
+  bolos: "Tidak ikut pelajaran",
+  ambang_alfa: "Ambang alfa",
+  koreksi_admin: "Koreksi admin",
+  import_manual: "Input manual",
+};
+
+/** Teks bawaan, sama persis dengan pesan sebelum template bisa disunting. */
+export const DEFAULT_WA_TEMPLATES: WaTemplateMap = {
+  scan_masuk:
+    "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda telah hadir dan melakukan scan masuk di sekolah pada pukul {jam} WIB ({tanggal}). Status: {status}.",
+  scan_pulang:
+    "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda telah selesai KBM dan melakukan scan pulang pada pukul {jam} WIB ({tanggal}).",
+  bolos:
+    "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda tercatat hadir di sekolah namun tidak mengikuti KBM {mapel} (Jam ke-{jam_ke}) pada tanggal {tanggal}. Status: Alfa.",
+  ambang_alfa:
+    "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda telah tercatat tidak hadir tanpa keterangan (Alfa) sebanyak {total_alfa} kali dalam {hari} hari terakhir. Mohon perhatian dan konfirmasi dari Bapak/Ibu Wali Murid.",
+  koreksi_admin:
+    "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} telah dikoreksi oleh admin sekolah menjadi: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
+  import_manual:
+    "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} dimasukkan secara manual oleh admin sekolah dengan status: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
+};
+
+/** Isian yang tersedia untuk sebuah jenis. Isian lain ditolak saat disimpan. */
+export const WA_TEMPLATE_PLACEHOLDERS: Record<
+  WaNotificationKind,
+  readonly string[]
+> = {
+  scan_masuk: ["nama", "rombel", "jam", "tanggal", "status"],
+  scan_pulang: ["nama", "rombel", "jam", "tanggal"],
+  bolos: ["nama", "rombel", "mapel", "jam_ke", "tanggal"],
+  ambang_alfa: ["nama", "rombel", "total_alfa", "hari"],
+  koreksi_admin: ["nama", "rombel", "tanggal", "status", "keterangan"],
+  import_manual: ["nama", "rombel", "tanggal", "status", "keterangan"],
+};
+
+export function isWaNotificationKind(
+  value: string,
+): value is WaNotificationKind {
+  return (WA_NOTIFICATION_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * Isi `{isian}` dalam SATU lintasan: nilai yang kebetulan memuat `{rombel}`
+ * tidak diisi ulang. Isian tak dikenal dibiarkan apa adanya.
+ */
+export function renderWaTemplate(
+  template: string,
+  vars: Record<string, string>,
+): string {
+  let out = "";
+  let rest = template;
+  for (;;) {
+    const start = rest.indexOf("{");
+    if (start < 0) break;
+    out += rest.slice(0, start);
+    const after = rest.slice(start + 1);
+    const end = after.indexOf("}");
+    if (end < 0) return out + rest.slice(start);
+    const name = after.slice(0, end);
+    out += Object.hasOwn(vars, name) ? vars[name] : `{${name}}`;
+    rest = after.slice(end + 1);
+  }
+  return out + rest;
+}
+
+export type WaTemplateCheck =
+  | { ok: true; value: string }
+  | { ok: false; pesan: string };
+
+/** Nilai template yang boleh disimpan. Kosong = pakai teks bawaan. */
+export function validateWaTemplate(
+  jenis: string,
+  raw: string,
+): WaTemplateCheck {
+  if (!isWaNotificationKind(jenis)) {
+    return { ok: false, pesan: "Jenis notifikasi tidak dikenal." };
+  }
+  const text = raw.trim();
+  if (!text) return { ok: true, value: "" };
+  if ([...text].length > MAX_WA_TEMPLATE_CHARS) {
+    return {
+      ok: false,
+      pesan: `Teks pesan maksimal ${MAX_WA_TEMPLATE_CHARS} karakter.`,
+    };
+  }
+  const allowed = WA_TEMPLATE_PLACEHOLDERS[jenis];
+  let rest = text;
+  for (;;) {
+    const start = rest.indexOf("{");
+    if (start < 0) break;
+    const after = rest.slice(start + 1);
+    const end = after.indexOf("}");
+    if (end < 0) {
+      return { ok: false, pesan: "Ada tanda { yang tidak ditutup dengan }." };
+    }
+    const name = after.slice(0, end);
+    if (!allowed.includes(name)) {
+      return {
+        ok: false,
+        pesan: `Isian {${name}} tidak dikenal untuk pesan ini.`,
+      };
+    }
+    rest = after.slice(end + 1);
+  }
+  if (!text.includes("{nama}")) {
+    return { ok: false, pesan: "Teks pesan wajib memuat isian {nama}." };
+  }
+  return { ok: true, value: text };
+}
+
+/**
+ * Susun isi pesan dari template tersimpan, atau teks bawaan bila kosong.
+ * Template tersimpan yang tidak lolos validasi jatuh ke bawaan: wali tidak
+ * boleh menerima `{nmaa}`.
+ */
+export function composeWaMessage(
+  jenis: WaNotificationKind,
+  stored: string | null | undefined,
+  vars: Record<string, string>,
+): string {
+  const check = validateWaTemplate(jenis, String(stored ?? ""));
+  const template =
+    check.ok && check.value ? check.value : DEFAULT_WA_TEMPLATES[jenis];
+  return renderWaTemplate(template, vars);
+}

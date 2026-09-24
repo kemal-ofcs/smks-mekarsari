@@ -102,7 +102,7 @@ impl DesktopState {
         let http = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(15))
             .timeout(std::time::Duration::from_secs(DESKTOP_HTTP_TIMEOUT_SECONDS))
-            .user_agent("Absensi-SPPG-Desktop/0.1")
+            .user_agent("Manajemen-Sekolah-Desktop/0.1")
             .build()
             .map_err(|_| "HTTP client Desktop tidak dapat dibuat.")?;
 
