@@ -682,7 +682,7 @@ pub async fn desktop_password_reset_approve(
     let actor = require_permission(&state, "password_reset.approve")?;
     let hasil = state
         .get_turso_client()?
-        .password_reset_approve(actor.id, request_id.trim())
+        .password_reset_approve(actor.id, actor.is_superadmin, request_id.trim())
         .await?;
     storage::audit(
         &state.data_dir,
@@ -954,12 +954,12 @@ pub async fn desktop_get_two_factor_status(
 #[tauri::command]
 pub async fn desktop_issue_recovery_codes(
     state: State<'_, DesktopState>,
+    current_password: String,
 ) -> Result<Value, CommandError> {
     let actor = require_session(&state)?;
-    let codes = state
-        .get_turso_client()?
-        .issue_password_recovery_codes(actor.id)
-        .await?;
+    let turso = state.get_turso_client()?;
+    assert_password_saat_ini(&turso, actor.id, &current_password).await?;
+    let codes = turso.issue_password_recovery_codes(actor.id).await?;
     storage::audit(
         &state.data_dir,
         Some(actor.id),
@@ -969,15 +969,44 @@ pub async fn desktop_issue_recovery_codes(
     Ok(json!({ "codes": codes }))
 }
 
+/// Bukti bahwa pemegang sesi memang pemilik akunnya, sebelum mendaftarkan
+/// autentikator atau mencetak kode pemulihan. Sesi saja tidak cukup: siapa pun
+/// di depan komputer yang ditinggal dalam keadaan login akan mendapat kunci
+/// cadangan permanen ke akun itu. Cerminan `assertPasswordSaatIni` di
+/// `/api/auth/two-factor`.
+async fn assert_password_saat_ini(
+    turso: &super::turso::TursoClient,
+    operator_id: i64,
+    password: &str,
+) -> Result<(), CommandError> {
+    let hash = turso
+        .query_one(
+            "SELECT password_hash FROM master_operator WHERE id = ? LIMIT 1;",
+            vec![json!(operator_id)],
+        )
+        .await?
+        .to_objects()
+        .first()
+        .and_then(|row| row.get("password_hash").and_then(Value::as_str).map(str::to_owned))
+        .unwrap_or_default();
+    if password.is_empty() || !super::turso::verify_password(password, &hash) {
+        return Err(CommandError::new(
+            "PASSWORD_MISMATCH",
+            "Password akun Anda tidak cocok.",
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn desktop_begin_two_factor_setup(
     state: State<'_, DesktopState>,
+    current_password: String,
 ) -> Result<Value, CommandError> {
     let actor = require_session(&state)?;
-    state
-        .get_turso_client()?
-        .begin_two_factor_setup(actor.id)
-        .await
+    let turso = state.get_turso_client()?;
+    assert_password_saat_ini(&turso, actor.id, &current_password).await?;
+    turso.begin_two_factor_setup(actor.id).await
 }
 
 #[tauri::command]
@@ -1011,11 +1040,30 @@ pub async fn desktop_admin_disable_two_factor(
     state: State<'_, DesktopState>,
     operator_id: i64,
 ) -> Result<Value, CommandError> {
-    require_permission(&state, "two_factor.reset")?;
-    state
-        .get_turso_client()?
-        .disable_two_factor(operator_id, false, "")
-        .await
+    let actor = require_permission(&state, "two_factor.reset")?;
+    let turso = state.get_turso_client()?;
+    // Izin ini bisa diberikan ke role selain Superadmin; tanpa penjaga ini
+    // pemegangnya bisa melepas lapisan terakhir akun tertinggi. Cerminan
+    // langkah `admin-disable` di `/api/auth/two-factor`.
+    if !actor.is_superadmin {
+        let target_superadmin = turso
+            .query_one(
+                "SELECT COALESCE(r.is_superadmin, 0) AS superadmin FROM master_operator m JOIN app_role r ON r.id = m.role_id WHERE m.id = ? LIMIT 1;",
+                vec![json!(operator_id)],
+            )
+            .await?
+            .to_objects()
+            .first()
+            .and_then(|row| row.get("superadmin").and_then(Value::as_i64))
+            == Some(1);
+        if target_superadmin {
+            return Err(CommandError::new(
+                "FORBIDDEN",
+                "Hanya Superadmin yang boleh mematikan verifikasi dua langkah akun Superadmin.",
+            ));
+        }
+    }
+    turso.disable_two_factor(operator_id, false, "").await
 }
 
 #[tauri::command]
@@ -3691,23 +3739,49 @@ pub async fn desktop_save_page_content(
     state.get_turso_client()?.save_page_content(&halaman, &items).await
 }
 
-/// Membuka URL eksternal di browser default sistem (Chrome/Edge).
+/// Membuka URL eksternal lewat sistem operasi: browser/WhatsApp di Desktop,
+/// `Intent.ACTION_VIEW` (tauri-plugin-opener) di Android.
+///
+/// Cabang Android WAJIB tinggal di berkas kanonik ini, bukan di salinan Mobile:
+/// ia pernah ditambahkan langsung ke `mobile/.../commands.rs`, lalu hilang saat
+/// `sync-rust-modules.ts` menimpa salinan itu. Tanpa cabang ini seluruh badan
+/// fungsi menguap di Android dan command mengembalikan `Ok(())` tanpa membuka
+/// apa pun, sehingga tombol "Buka di WhatsApp" diam tanpa pesan galat.
 #[tauri::command]
-pub fn desktop_open_external_url(url: String) -> Result<(), CommandError> {
+pub fn desktop_open_external_url(
+    #[allow(unused_variables)] app: tauri::AppHandle,
+    url: String,
+) -> Result<(), CommandError> {
     let trimmed = url.trim();
     // `tel:` ikut diizinkan supaya tombol telepon bisa menyerahkan nomornya ke
     // aplikasi panggilan bawaan sistem, bukan ditolak di gerbang ini.
     let diizinkan = ["https://", "http://", "whatsapp://", "tel:"]
         .iter()
         .any(|awalan| trimmed.starts_with(awalan));
-    if !diizinkan {
+    if !diizinkan || trimmed.chars().any(char::is_control) {
         return Err(CommandError::new("INVALID_URL", "Skema URL tidak diizinkan."));
     }
 
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(trimmed, None::<&str>)
+            .map_err(|e| {
+                CommandError::new(
+                    "OPEN_FAILED",
+                    format!("Tidak ada aplikasi yang bisa membuka tautan ini: {e}"),
+                )
+            })?;
+    }
+
+    // BUKAN `cmd /C start`: cmd.exe menafsirkan `&`, `|`, `^`, dan `%` di URL
+    // sebagai perintah, jadi `https://x/&calc` menjalankan program. Handler URL
+    // milik shell membuka tautan tanpa melewati parser cmd.
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", trimmed])
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", trimmed])
             .spawn()
             .map_err(|e| CommandError::new("OPEN_FAILED", format!("Gagal membuka browser: {e}")))?;
     }

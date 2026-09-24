@@ -115,12 +115,21 @@ export async function POST(request: NextRequest) {
   const database = getServerDatabase();
   const clientAddress = getClientAddress(request);
 
-  // Kunci rate limit dibedakan per langkah supaya percobaan tebak-token tidak
-  // bersembunyi di balik kuota langkah pencarian akun.
-  const rateIdentity = `reset:${step}:${text(
-    body.identifier ?? body.requestId ?? body.token,
-    64,
-  )}`;
+  // Dibaca layar "Lupa Password" sebelum ia menjanjikan email apa pun. Hanya
+  // membaca setelan, tidak menyentuh akun, jadi sengaja di luar rate limit:
+  // memuat ulang halaman tidak boleh menghabiskan kuota, dan langkah yang selalu
+  // sukses tidak boleh bisa dipakai untuk mengosongkan kuota IP.
+  if (step === "route") {
+    return okResponse({ route: await resolvePasswordResetRoute(database) });
+  }
+
+  // Kunci rate limit dibedakan per langkah. Hanya langkah yang membawa
+  // identitas akun yang dikunci per identitas; langkah bertoken dikunci per
+  // langkah saja, karena memakai nilai tebakan sebagai kunci membuat setiap
+  // tebakan mendapat kuota baru.
+  const rateIdentity = ["lookup", "confirm", "recover-with-code"].includes(step)
+    ? `reset:${step}:${text(body.identifier, 64)}`
+    : `reset:${step}`;
   const rateLimit = await consumeLoginAttempt(
     database,
     clientAddress,
@@ -137,12 +146,16 @@ export async function POST(request: NextRequest) {
 
   try {
     switch (step) {
+      // `lookup` dan `confirm` TIDAK membersihkan kuota: keduanya hanya butuh
+      // username yang benar, bukan bukti apa pun. Bila keberhasilannya
+      // mengosongkan kuota IP, pencarian yang kena akan menghapus hitungan
+      // tebakan yang meleset, dan seluruh daftar akun bisa dipetakan dari satu
+      // alamat.
       case "lookup": {
         const account = await lookupResetAccount(
           database,
           text(body.identifier),
         );
-        await clearLoginFailures(database, clientAddress, rateIdentity);
         return okResponse({ account });
       }
       case "confirm": {
@@ -157,7 +170,6 @@ export async function POST(request: NextRequest) {
             ),
           },
         );
-        await clearLoginFailures(database, clientAddress, rateIdentity);
         return okResponse({ challenge: issued });
       }
       case "verify": {
@@ -186,15 +198,6 @@ export async function POST(request: NextRequest) {
         const info = await inspectResetToken(database, text(body.token, 256));
         await clearLoginFailures(database, clientAddress, rateIdentity);
         return okResponse({ token: info });
-      }
-      // Dibaca layar "Lupa Password" sebelum ia menjanjikan email apa pun.
-      // Tidak menyentuh akun mana pun, jadi tidak ada yang bisa dipetakan
-      // darinya — tetapi tetap melewati rate limit yang sama seperti langkah
-      // lain di berkas ini.
-      case "route": {
-        const route = await resolvePasswordResetRoute(database);
-        await clearLoginFailures(database, clientAddress, rateIdentity);
-        return okResponse({ route });
       }
       // Jalur kode cetak: tanpa sesi, karena yang memakainya justru orang yang
       // sedang terkunci di luar. Yang menjaganya adalah kode sekali pakai itu

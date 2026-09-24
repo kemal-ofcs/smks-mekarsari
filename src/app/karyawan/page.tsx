@@ -20,6 +20,7 @@ import {
   exportEmployees,
   readEmployeeWorkbook,
 } from "@/lib/client/employee-workbook";
+import { describeImportReport } from "@/lib/client/personnel-workbook";
 import { createQrPng, employeeQrPayload } from "@/lib/client/qr-code";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarUnit } from "@/lib/gateways/academic";
@@ -110,6 +111,7 @@ export default function KaryawanPage() {
             search: appliedSearch,
             divisi: filterDivisi || undefined,
             status_aktif: filterStatus || undefined,
+            hanya_pegawai: true,
           }),
           getDaftarShift(),
           getDaftarUnit(),
@@ -333,11 +335,20 @@ export default function KaryawanPage() {
     setBulkWorking(true);
     isSubmittingRef.current = true;
     try {
-      const drafts = await readEmployeeWorkbook(file);
-      const result = await importKaryawanMassal(drafts);
-      setAlertMsg(
-        `Import selesai: ${result.berhasil} berhasil, ${result.dilewati} dilewati karena sudah ada/gagal.`,
+      const baris = await readEmployeeWorkbook(file, shiftList);
+      const result = await importKaryawanMassal(baris.map((b) => b.draft));
+      const laporan = describeImportReport(
+        {
+          berhasil: result.berhasil,
+          gagal: result.gagal.map((g) => ({
+            baris: baris[g.index]?.baris ?? 0,
+            pesan: g.pesan,
+          })),
+        },
+        "karyawan",
       );
+      if (result.gagal.length > 0) setErrorMsg(laporan);
+      else setAlertMsg(laporan);
       await loadData();
     } catch (cause) {
       setErrorMsg(
@@ -352,7 +363,7 @@ export default function KaryawanPage() {
 
   const handleDownloadTemplate = async () => {
     try {
-      const res = await downloadEmployeeTemplate();
+      const res = await downloadEmployeeTemplate(shiftList);
       if (res.cancelled) return;
       if (res.path) {
         setAlertMsg(`Template Excel berhasil disimpan di: ${res.path}`);
@@ -368,7 +379,7 @@ export default function KaryawanPage() {
 
   const handleExportEmployees = async () => {
     try {
-      const res = await exportEmployees(karyawanTampil);
+      const res = await exportEmployees(karyawanTampil, shiftList);
       if (res.cancelled) return;
       if (res.path) {
         setAlertMsg(`Data karyawan berhasil diekspor ke: ${res.path}`);

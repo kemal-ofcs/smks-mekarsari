@@ -4,6 +4,8 @@ import {
   parseTeacherRows,
   STUDENT_WORKBOOK_HEADERS,
   shiftCodeOf,
+  tanggalExcel,
+  teksIdentitas,
 } from "./personnel-import";
 
 const lookups = {
@@ -164,4 +166,52 @@ describe("parseTeacherRows", () => {
 test("shiftCodeOf menerjemahkan id perangkat kembali ke kode yang stabil", () => {
   expect(shiftCodeOf(8, lookups.shifts)).toBe("2");
   expect(shiftCodeOf(99, lookups.shifts)).toBe("");
+});
+
+describe("perbaikan impor Excel", () => {
+  test("angka yang sudah dirusak Excel ditolak, bukan disimpan", () => {
+    expect(() => teksIdentitas("1.98701012010011E+17", "nip", 5)).toThrow(
+      "Baris 5",
+    );
+    expect(teksIdentitas("198701012010011001", "nip", 5)).toBe(
+      "198701012010011001",
+    );
+  });
+
+  test("tanggal dari sel Excel diterjemahkan dari nomor seri", () => {
+    expect(tanggalExcel("2026-07-15", "tanggal_daftar", 2)).toBe("2026-07-15");
+    expect(tanggalExcel("46218", "tanggal_daftar", 2)).toBe("2026-07-15");
+    expect(tanggalExcel("", "tanggal_daftar", 2)).toBeUndefined();
+    expect(() => tanggalExcel("15/07/2026", "tanggal_daftar", 2)).toThrow(
+      "YYYY-MM-DD",
+    );
+  });
+
+  test("kode personil peserta didik dibaca dari header baru maupun lama", () => {
+    const [baru] = parseStudentRows(
+      sheet({ nama_lengkap: "Ani", nama_rombel: "X-A", kode_personil: "P-1" }),
+      lookups,
+      2026,
+    );
+    expect(baru.draft.kode_karyawan).toBe("P-1");
+
+    const headerLama = ["nama_lengkap", "nama_rombel", "kode_karyawan"];
+    const [lama] = parseStudentRows(
+      [headerLama, ["Ani", "X-A", "P-2"]],
+      lookups,
+      2026,
+    );
+    expect(lama.draft.kode_karyawan).toBe("P-2");
+  });
+
+  test("unit guru ikut terbaca, tidak hilang saat impor ulang", () => {
+    const [hasil] = parseTeacherRows(
+      [
+        ["nama", "unit"],
+        ["Pak Budi", "SMK"],
+      ],
+      lookups,
+    );
+    expect(hasil.draft.unit).toBe("SMK");
+  });
 });

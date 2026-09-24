@@ -59,6 +59,17 @@ export async function saveTeacher(draft: {
   // acak dari tengah ID-nya. `kode_karyawan` UNIQUE, dan ID sudah primary key,
   // jadi memakainya utuh sekaligus menjamin keunikan yang tidak dijamin irisan.
   const kode = draft.kode_karyawan || draft.nip || id;
+  // NIP diperiksa sendiri: bila kode personil diisi terpisah, pemeriksaan kode
+  // di bawah tidak lagi menyentuh NIP, dan dua guru bisa memegang NIP yang
+  // sama. Cerminan `save_teacher` di `academic.rs`.
+  await assertUniqueValue({
+    table: "guru_data",
+    column: "nip",
+    idColumn: "id_guru",
+    value: draft.nip,
+    exceptId: id,
+    message: "NIP sudah dipakai guru lain.",
+  });
   // `master_data.kode_karyawan` MASIH UNIQUE (skema lama, tidak diubah).
   await assertUniqueValue({
     table: "master_data",

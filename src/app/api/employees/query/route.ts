@@ -15,6 +15,7 @@ interface EmployeeQueryBody {
   search?: unknown;
   divisi?: unknown;
   status_aktif?: unknown;
+  hanya_pegawai?: unknown;
 }
 
 export async function POST(request: NextRequest) {
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
         search: value(body.search, 100),
         divisi: value(body.divisi, 100),
         status_aktif: value(body.status_aktif, 16),
+        hanya_pegawai: body.hanya_pegawai === true,
       }),
     });
   } catch (error) {

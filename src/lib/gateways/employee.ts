@@ -11,6 +11,8 @@ interface EmployeeFilter {
   search?: string;
   divisi?: string;
   status_aktif?: string;
+  /** Tanpa siswa dan guru; hanya dipakai halaman Karyawan. */
+  hanya_pegawai?: boolean;
 }
 
 export async function getDaftarKaryawan(filter?: EmployeeFilter) {
@@ -99,23 +101,29 @@ export async function generateTokenMassal() {
   );
 }
 
+/** Draft yang tidak tersimpan, dengan indeks di array `drafts` yang dikirim. */
+export interface ImportKaryawanGagal {
+  index: number;
+  pesan: string;
+}
+
 export async function importKaryawanMassal(drafts: KaryawanInput[]) {
   if (isDesktopRuntime()) {
     const result = await invokeDesktop<{
       sukses: boolean;
       berhasil: number;
-      dilewati: number;
+      gagal: ImportKaryawanGagal[];
     }>("desktop_import_employees", { drafts });
     kickDesktopSync();
     return {
       sukses: true as const,
       berhasil: result.berhasil,
-      dilewati: result.dilewati,
+      gagal: result.gagal,
     };
   }
   return requestWebApi<{
     sukses: true;
     berhasil: number;
-    dilewati: number;
+    gagal: ImportKaryawanGagal[];
   }>("/api/employees", "PUT", { action: "import", drafts });
 }

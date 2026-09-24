@@ -147,11 +147,9 @@ export async function POST(request: NextRequest) {
     );
     return response;
   } catch (error) {
+    // Galat tak terduga di jalur login tidak pernah diteruskan ke klien: layar
+    // login terbuka untuk siapa pun, dan pesan mentahnya bisa membocorkan skema.
     console.error("Login route error:", error);
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Terjadi kesalahan internal server.";
-    return errorResponse(message, 500);
+    return errorResponse("Terjadi kesalahan internal server.", 500);
   }
 }

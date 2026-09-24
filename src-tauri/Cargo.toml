@@ -53,6 +53,12 @@ ring = "0.17"
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6"
 
+# Kunci vault token database di Credential Manager / Keychain (lihat
+# `secrets.rs`). Feature platform WAJIB eksplisit: tanpa itu keyring v3 memakai
+# penyimpanan tiruan di memori, dan vault tidak terbaca lagi setelah restart.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+keyring = { version = "3.6", features = ["windows-native", "apple-native"] }
+
 [dev-dependencies]
 # Hanya untuk tes: `ensure_schema` bersifat async, dan menguji provisioning
 # mode lokal secara utuh menuntut sebuah runtime. Fitur `macros` sengaja tidak

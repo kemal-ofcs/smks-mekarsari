@@ -60,6 +60,23 @@ export function toApiErrorResponse(error: unknown) {
       409,
     );
   }
+  // Galat mentah dari SQLite/libSQL membocorkan nama tabel dan kolom ke klien
+  // ("no such table: riwayat_identitas_karyawan"). Pesan domain berbahasa
+  // Indonesia tetap diteruskan; hanya bentuk galat database yang disamarkan.
+  if (
+    /SQLITE_|SQLite error|LibsqlError|no such (table|column)|constraint failed/i.test(
+      message,
+    )
+  ) {
+    console.error("[api] galat database:", error);
+    return noStoreJson(
+      {
+        sukses: false,
+        pesan: "Operasi gagal karena kesalahan database. Hubungi admin.",
+      },
+      500,
+    );
+  }
   const isConflict =
     message.includes("terakhir") ||
     message.includes("masih dipakai") ||

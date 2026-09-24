@@ -86,7 +86,7 @@ const NAVIGATION: NavigationItem[] = [
     area: "siswa",
     href: "/siswa",
     icon: "users",
-    label: "Siswa",
+    label: "Peserta Didik",
   },
   {
     area: "dasbor_kehadiran",

@@ -11210,6 +11210,27 @@ fn random_reset_token() -> String {
     BASE64_URL_SAFE_NO_PAD.encode(bytes)
 }
 
+/// Alasan persetujuan pemulihan DITOLAK, atau `None` bila boleh.
+///
+/// Tanpa aturan ini pemegang `password_reset.approve` bisa mengajukan "Lupa
+/// Password" atas nama Superadmin dengan wajahnya sendiri, menyetujuinya
+/// sendiri, lalu memegang akun tertinggi. Cerminan `resetApprovalRejection`
+/// di `password-reset.ts`; keduanya diuji dengan vektor yang sama.
+pub(crate) fn reset_approval_rejection(
+    actor_id: i64,
+    actor_is_superadmin: bool,
+    target_operator_id: Option<i64>,
+    target_is_superadmin: bool,
+) -> Option<&'static str> {
+    if target_operator_id == Some(actor_id) {
+        return Some("Pengajuan untuk akun Anda sendiri harus disetujui peninjau lain.");
+    }
+    if target_is_superadmin && !actor_is_superadmin {
+        return Some("Hanya Superadmin yang boleh menyetujui pemulihan akun Superadmin.");
+    }
+    None
+}
+
 fn random_request_id() -> String {
     use rand_core::{OsRng, RngCore};
     let mut bytes = [0u8; 16];
@@ -12186,14 +12207,22 @@ impl TursoClient {
         }
 
         let remaining: Vec<&String> = stored.iter().filter(|item| **item != hashed).collect();
-        self.query_one(
-            "UPDATE master_operator SET password_recovery_codes = ? WHERE id = ?;",
-            vec![
-                json!(serde_json::to_string(&remaining).unwrap_or_else(|_| "[]".to_string())),
-                json!(operator_id),
-            ],
-        )
-        .await?;
+        // Compare-and-swap: hanya berhasil bila daftar kodenya masih persis yang
+        // tadi dibaca, supaya dua permintaan paralel dengan kode yang sama tidak
+        // sama-sama lolos. Cerminan `recoverWithRecoveryCode` di TS.
+        let consumed = self
+            .query_one(
+                "UPDATE master_operator SET password_recovery_codes = ? WHERE id = ? AND COALESCE(password_recovery_codes, '[]') = ?;",
+                vec![
+                    json!(serde_json::to_string(&remaining).unwrap_or_else(|_| "[]".to_string())),
+                    json!(operator_id),
+                    json!(row.get("kode").and_then(Value::as_str).unwrap_or("[]")),
+                ],
+            )
+            .await?;
+        if consumed.rows_affected != 1 {
+            return Err(ditolak());
+        }
 
         let password_hash = hash_password_pbkdf2(new_password);
         self.query_one(
@@ -12276,15 +12305,18 @@ impl TursoClient {
     pub async fn password_reset_approve(
         &self,
         actor_id: i64,
+        actor_is_superadmin: bool,
         request_id: &str,
     ) -> Result<Value, CommandError> {
         let existing = self
             .query_one(
                 r#"SELECT p.id, p.status, p.delivery_status, p.identifier_used,
+                          p.operator_id, COALESCE(r.is_superadmin, 0) AS target_superadmin,
                           COALESCE(m.nama_operator, '') AS nama_operator,
                           CASE WHEN p.expires_at <= datetime('now') THEN 1 ELSE 0 END AS kedaluwarsa
                    FROM password_reset_request p
                    LEFT JOIN master_operator m ON m.id = p.operator_id
+                   LEFT JOIN app_role r ON r.id = m.role_id
                    WHERE p.id = ? LIMIT 1;"#,
                 vec![json!(request_id)],
             )
@@ -12299,6 +12331,14 @@ impl TursoClient {
                 )
             })?;
 
+        if let Some(alasan) = reset_approval_rejection(
+            actor_id,
+            actor_is_superadmin,
+            existing.get("operator_id").and_then(Value::as_i64),
+            existing.get("target_superadmin").and_then(Value::as_i64) == Some(1),
+        ) {
+            return Err(CommandError::new("RESET_APPROVAL_FORBIDDEN", alasan));
+        }
         if existing.get("status").and_then(Value::as_str) != Some("Menunggu Verifikasi") {
             return Err(CommandError::new(
                 "RESET_REQUEST_NOT_PENDING",
@@ -13833,6 +13873,73 @@ mod tests {
         assert_eq!(sha256_hex(&first).len(), 64);
         assert_ne!(sha256_hex(&first), sha256_hex(&second));
         assert_eq!(sha256_hex(&first), sha256_hex(&first));
+    }
+
+    /// Vektor yang sama diuji `resetApprovalRejection` di `password-reset.test.ts`.
+    #[test]
+    fn reset_approval_rejection_matches_web_vectors() {
+        // (actor_id, actor_super, target_id, target_super, ditolak)
+        let kasus = [
+            (5, false, Some(7), false, false),
+            (5, false, Some(5), false, true),
+            (5, true, Some(5), true, true),
+            (5, false, Some(7), true, true),
+            (5, true, Some(7), true, false),
+            (5, false, None, false, false),
+        ];
+        for (actor, actor_super, target, target_super, ditolak) in kasus {
+            assert_eq!(
+                reset_approval_rejection(actor, actor_super, target, target_super).is_some(),
+                ditolak,
+                "aktor {actor}/{actor_super} → target {target:?}/{target_super}"
+            );
+        }
+    }
+
+    /// Aturan di atas benar-benar terpasang pada query persetujuan: id pemohon
+    /// dan role-nya dibaca dari database, bukan dari pemanggil.
+    #[test]
+    fn persetujuan_reset_menolak_diri_sendiri_dan_non_superadmin() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime uji");
+        runtime.block_on(async {
+            let dir = tempfile::tempdir().expect("direktori sementara");
+            let hub = dir.path().join("sppg-hub.db");
+            let client = TursoClient::local_file(
+                Url::parse("https://reset-approve.sppg.invalid").expect("origin uji"),
+                &hub,
+                Client::new(),
+            );
+            client.ensure_schema().await.expect("provisioning lokal");
+            rusqlite::Connection::open(&hub)
+                .expect("buka hub")
+                .execute_batch(
+                    "INSERT INTO master_operator (id, kode_operator, nama_operator, username, password_hash, role, role_id)
+                       VALUES (900, 'SA900', 'Kepala', 'kepala', 'x', 'Admin',
+                               (SELECT id FROM app_role WHERE is_superadmin = 1 LIMIT 1));
+                     INSERT INTO password_reset_request (id, operator_id, identifier_used, contact_target,
+                         challenge_hash, challenge_sequence, delivery_status, requested_at, expires_at)
+                       VALUES ('req-sa', 900, 'kepala', '-', 'h', '[]', 'Menunggu Persetujuan',
+                               datetime('now'), datetime('now', '+10 minutes'));",
+                )
+                .expect("siapkan permintaan");
+
+            let diri = client
+                .password_reset_approve(900, true, "req-sa")
+                .await
+                .expect_err("pemohon tidak boleh menyetujui dirinya");
+            assert_eq!(diri.code, "RESET_APPROVAL_FORBIDDEN");
+            let bukan_superadmin = client
+                .password_reset_approve(901, false, "req-sa")
+                .await
+                .expect_err("non-Superadmin tidak boleh memulihkan Superadmin");
+            assert_eq!(bukan_superadmin.code, "RESET_APPROVAL_FORBIDDEN");
+            client
+                .password_reset_approve(901, true, "req-sa")
+                .await
+                .expect("Superadmin lain boleh menyetujui");
+        });
     }
 
     #[test]

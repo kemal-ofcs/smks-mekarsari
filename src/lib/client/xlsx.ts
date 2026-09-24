@@ -321,9 +321,17 @@ export async function readWorkbookRows(file: File): Promise<string[][]> {
 
   const rows: string[][] = [];
 
-  if (file.name.endsWith(".csv")) {
-    const text = await file.text();
+  if (file.name.toLowerCase().endsWith(".csv")) {
+    // "CSV UTF-8" dari Excel diawali BOM: tanpa dibuang, judul kolom pertama
+    // menjadi "﻿id_unik" dan kolom wajib dilaporkan tidak ditemukan.
+    const text = (await file.text()).replace(/^﻿/, "");
     const lines = text.split(/\r?\n/);
+    // Excel dengan regional Indonesia menyimpan CSV berpemisah titik koma.
+    const pertama = lines.find((line) => line.trim()) ?? "";
+    const pemisah =
+      (pertama.match(/;/g)?.length ?? 0) > (pertama.match(/,/g)?.length ?? 0)
+        ? ";"
+        : ",";
     for (const line of lines) {
       if (!line.trim()) continue;
       const row: string[] = [];
@@ -331,9 +339,12 @@ export async function readWorkbookRows(file: File): Promise<string[][]> {
       let cell = "";
       for (let i = 0; i < line.length; i++) {
         const ch = line[i];
-        if (ch === '"') {
+        if (ch === '"' && inQuote && line[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else if (ch === '"') {
           inQuote = !inQuote;
-        } else if (ch === "," && !inQuote) {
+        } else if (ch === pemisah && !inQuote) {
           row.push(cell.trim());
           cell = "";
         } else {

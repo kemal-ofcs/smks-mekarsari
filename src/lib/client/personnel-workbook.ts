@@ -93,6 +93,7 @@ export function exportStudents(
     headers: STUDENT_WORKBOOK_HEADERS,
     rows: rows.map((row) => ({
       ...row,
+      kode_personil: row.kode_karyawan,
       kode_shift: shiftCodeOf(row.id_shift, shifts),
     })),
     filename: `peserta-didik-${tanggal()}.xlsx`,

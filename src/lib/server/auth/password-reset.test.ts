@@ -28,6 +28,7 @@ mock.module("server-only", () => ({}));
 
 const {
   approvePasswordReset,
+  resetApprovalRejection,
   completePasswordReset,
   confirmResetAccount,
   inspectResetToken,
@@ -197,7 +198,8 @@ beforeEach(async () => {
     sql: `
       UPDATE master_operator
       SET status = 'Aktif', email = 'operator01@sppg.id',
-          no_hp = '+6281200000001', password_hash = ?
+          no_hp = '+6281200000001', password_hash = ?,
+          role_id = (SELECT id FROM app_role WHERE role_key = 'operator' LIMIT 1)
       WHERE id = ?;
     `,
     args: [baselinePasswordHash, operatorId],
@@ -694,7 +696,34 @@ describe("resolvePasswordResetRoute", () => {
   });
 });
 
+// Vektor yang sama diuji `reset_approval_rejection` di `turso.rs`.
+describe("resetApprovalRejection", () => {
+  const kasus: Array<[number, boolean, number | null, boolean, boolean]> = [
+    // actorId, actorSuper, targetId, targetSuper, ditolak
+    [5, false, 7, false, false],
+    [5, false, 5, false, true],
+    [5, true, 5, true, true],
+    [5, false, 7, true, true],
+    [5, true, 7, true, false],
+    [5, false, null, false, false],
+  ];
+  for (const [actorId, actorSuper, targetId, targetSuper, ditolak] of kasus) {
+    test(`aktor ${actorId}/${actorSuper} → target ${targetId}/${targetSuper}`, () => {
+      const hasil = resetApprovalRejection({
+        actorId,
+        actorIsSuperadmin: actorSuper,
+        targetOperatorId: targetId,
+        targetIsSuperadmin: targetSuper,
+      });
+      expect(hasil !== null).toBe(ditolak);
+    });
+  }
+});
+
 describe("approvePasswordReset", () => {
+  // Peninjau sengaja BUKAN pemohon: menyetujui pengajuan sendiri ditolak.
+  const peninjau = { id: 999_001, isSuperadmin: false };
+
   /** Bawa satu permintaan sampai ke status menunggu persetujuan. */
   async function pendingApproval() {
     const issued = await confirmResetAccount(
@@ -714,7 +743,7 @@ describe("approvePasswordReset", () => {
 
   test("token yang diserahkan peninjau benar-benar dapat dipakai", async () => {
     const requestId = await pendingApproval();
-    const hasil = await approvePasswordReset(client, operatorId, requestId);
+    const hasil = await approvePasswordReset(client, peninjau, requestId);
 
     expect(hasil.token.length).toBeGreaterThan(16);
     expect(hasil.namaOperator).toBe("Operator Satu");
@@ -740,7 +769,7 @@ describe("approvePasswordReset", () => {
 
   test("hanya hash tokennya yang tersimpan", async () => {
     const requestId = await pendingApproval();
-    const hasil = await approvePasswordReset(client, operatorId, requestId);
+    const hasil = await approvePasswordReset(client, peninjau, requestId);
     const row = await client.execute(
       "SELECT token_hash, delivery_status, status FROM password_reset_request;",
     );
@@ -752,9 +781,9 @@ describe("approvePasswordReset", () => {
 
   test("persetujuan kedua ditolak, sehingga tidak ada dua token hidup", async () => {
     const requestId = await pendingApproval();
-    await approvePasswordReset(client, operatorId, requestId);
+    await approvePasswordReset(client, peninjau, requestId);
     await expect(
-      approvePasswordReset(client, operatorId, requestId),
+      approvePasswordReset(client, peninjau, requestId),
     ).rejects.toThrow(PasswordResetError);
   });
 
@@ -765,7 +794,7 @@ describe("approvePasswordReset", () => {
       args: [requestId],
     });
     await expect(
-      approvePasswordReset(client, operatorId, requestId),
+      approvePasswordReset(client, peninjau, requestId),
     ).rejects.toThrow("kedaluwarsa");
     const row = await client.execute(
       "SELECT status FROM password_reset_request;",
@@ -775,8 +804,41 @@ describe("approvePasswordReset", () => {
 
   test("permintaan yang tidak ada ditolak", async () => {
     await expect(
-      approvePasswordReset(client, operatorId, "req-tidak-ada"),
+      approvePasswordReset(client, peninjau, "req-tidak-ada"),
     ).rejects.toThrow("tidak ditemukan");
+  });
+
+  test("pemohon tidak bisa menyetujui pengajuannya sendiri", async () => {
+    const requestId = await pendingApproval();
+    await expect(
+      approvePasswordReset(
+        client,
+        { id: operatorId, isSuperadmin: true },
+        requestId,
+      ),
+    ).rejects.toThrow("peninjau lain");
+    const row = await client.execute(
+      "SELECT status, token_hash FROM password_reset_request;",
+    );
+    expect(row.rows[0]?.status).toBe("Menunggu Verifikasi");
+    expect(row.rows[0]?.token_hash ?? null).toBeNull();
+  });
+
+  test("akun Superadmin hanya bisa dipulihkan atas persetujuan Superadmin", async () => {
+    const requestId = await pendingApproval();
+    await client.execute({
+      sql: "UPDATE master_operator SET role_id = (SELECT id FROM app_role WHERE is_superadmin = 1 LIMIT 1) WHERE id = ?;",
+      args: [operatorId],
+    });
+    await expect(
+      approvePasswordReset(client, peninjau, requestId),
+    ).rejects.toThrow("Hanya Superadmin");
+    const hasil = await approvePasswordReset(
+      client,
+      { id: peninjau.id, isSuperadmin: true },
+      requestId,
+    );
+    expect(hasil.token.length).toBeGreaterThan(16);
   });
 });
 
@@ -795,6 +857,20 @@ describe("issuePasswordRecoveryCodes & recoverWithRecoveryCode", () => {
     }
     expect(JSON.parse(stored)).toHaveLength(8);
     expect(row.rows[0]?.password_recovery_created_at).toBeTruthy();
+  });
+
+  test("satu kode tidak bisa dipakai dua permintaan paralel", async () => {
+    const codes = await issuePasswordRecoveryCodes(client, operatorId);
+    const hasil = await Promise.allSettled(
+      ["PasswordPulihKuat7", "PasswordLainKuat8"].map((newPassword) =>
+        recoverWithRecoveryCode(client, {
+          identifier: "operator01",
+          code: codes[0],
+          newPassword,
+        }),
+      ),
+    );
+    expect(hasil.filter((r) => r.status === "fulfilled")).toHaveLength(1);
   });
 
   test("kode yang sah mengganti password dan mencabut sesi lama", async () => {

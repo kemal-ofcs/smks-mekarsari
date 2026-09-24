@@ -23,7 +23,9 @@ export const MAX_PERSONNEL_IMPORT_ROWS = 1000;
 
 export const STUDENT_WORKBOOK_HEADERS = [
   "id_siswa",
-  "kode_karyawan",
+  // Kode personil di data induk; kosong = memakai NIS. Berkas lama yang masih
+  // berjudul `kode_karyawan` tetap diterima saat impor.
+  "kode_personil",
   "nis",
   "nisn",
   "nama_lengkap",
@@ -101,8 +103,47 @@ function key(value: unknown) {
     .toLowerCase();
 }
 
+/**
+ * Tolak angka yang sudah dirusak Excel. Sel yang diketik tanpa format Teks
+ * disimpan sebagai angka: NIP 18 digit menjadi `1.98701012010011E+17`, dan
+ * digit di luar presisi 15 digit itu hilang permanen, jadi tidak bisa
+ * dipulihkan, hanya ditolak.
+ */
+export function teksIdentitas(
+  value: string,
+  kolom: string,
+  baris: number,
+): string {
+  if (/^[\d.]+e[+-]?\d+$/i.test(value)) {
+    throw new Error(
+      `Baris ${baris}: ${kolom} '${value}' sudah diubah Excel menjadi angka. Format kolom ${kolom} sebagai Teks, ketik ulang, lalu impor lagi.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Tanggal dari sel Excel: `YYYY-MM-DD` apa adanya, atau nomor seri tanggal
+ * Excel (hari sejak 1899-12-30) yang muncul bila sel diformat Tanggal.
+ */
+export function tanggalExcel(
+  value: string,
+  kolom: string,
+  baris: number,
+): string | undefined {
+  if (!value) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (/^\d{4,6}(\.\d+)?$/.test(value)) {
+    const ms = Date.UTC(1899, 11, 30) + Math.floor(Number(value)) * 86_400_000;
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+  throw new Error(
+    `Baris ${baris}: ${kolom} '${value}' harus berformat YYYY-MM-DD, misalnya 2026-07-15.`,
+  );
+}
+
 /** `kode_shift` → `id_shift` perangkat ini. Kosong = biarkan backend memilih. */
-function resolveShift(
+export function resolveShift(
   kode: string,
   shifts: ImportLookups["shifts"],
   baris: number,
@@ -144,7 +185,7 @@ function resolveRombel(
   return String(cocok[0].id_rombel);
 }
 
-function jenisKelamin(raw: string, baris: number): "L" | "P" {
+export function jenisKelamin(raw: string, baris: number): "L" | "P" {
   const value = key(raw);
   if (!value || value === "l" || value === "laki-laki") return "L";
   if (value === "p" || value === "perempuan") return "P";
@@ -194,8 +235,13 @@ export function parseStudentRows(
     if (!nama && !val(row, "nis") && !val(row, "id_siswa")) continue;
     if (!nama) throw new Error(`Baris ${baris}: nama_lengkap wajib diisi.`);
 
-    const nis = val(row, "nis");
-    const nisn = val(row, "nisn");
+    const nis = teksIdentitas(val(row, "nis"), "nis", baris);
+    const nisn = teksIdentitas(val(row, "nisn"), "nisn", baris);
+    const kodePersonil = teksIdentitas(
+      val(row, "kode_personil") || val(row, "kode_karyawan"),
+      "kode_personil",
+      baris,
+    );
     assertUniqueInFile(nisTerpakai, nis, "NIS", baris);
     assertUniqueInFile(nisnTerpakai, nisn, "NISN", baris);
 
@@ -215,7 +261,11 @@ export function parseStudentRows(
       );
     }
 
-    const waMentah = val(row, "no_whatsapp_wali");
+    const waMentah = teksIdentitas(
+      val(row, "no_whatsapp_wali"),
+      "no_whatsapp_wali",
+      baris,
+    );
     if (waMentah && !normalizeOperatorPhone(waMentah)) {
       throw new Error(
         `Baris ${baris}: nomor WhatsApp wali '${waMentah}' tidak valid. Gunakan 08xxxxxxxxxx atau +62xxxxxxxxxx.`,
@@ -226,7 +276,7 @@ export function parseStudentRows(
       baris,
       draft: {
         id_siswa: val(row, "id_siswa") || undefined,
-        kode_karyawan: val(row, "kode_karyawan") || undefined,
+        kode_karyawan: kodePersonil || undefined,
         nama_lengkap: nama,
         nis: nis || null,
         nisn: nisn || null,
@@ -272,8 +322,12 @@ export function parseTeacherRows(
     if (!nama && !val(row, "nip") && !val(row, "id_guru")) continue;
     if (!nama) throw new Error(`Baris ${baris}: nama wajib diisi.`);
 
-    const nip = val(row, "nip");
-    const kode = val(row, "kode_karyawan");
+    const nip = teksIdentitas(val(row, "nip"), "nip", baris);
+    const kode = teksIdentitas(
+      val(row, "kode_karyawan"),
+      "kode_karyawan",
+      baris,
+    );
     assertUniqueInFile(nipTerpakai, nip, "NIP", baris);
     assertUniqueInFile(kodeTerpakai, kode, "kode_karyawan", baris);
 
@@ -305,13 +359,16 @@ export function parseTeacherRows(
         kode_karyawan: kode || undefined,
         gelar: val(row, "gelar") || null,
         nip: nip || null,
-        nuptk: val(row, "nuptk") || null,
+        nuptk: teksIdentitas(val(row, "nuptk"), "nuptk", baris) || null,
         spesialisasi_mapel: val(row, "spesialisasi_mapel") || null,
         status_kepegawaian: statusPeg,
         lp: jenisKelamin(val(row, "lp"), baris),
-        no_hp: val(row, "no_hp") || null,
+        no_hp: teksIdentitas(val(row, "no_hp"), "no_hp", baris) || null,
         id_shift: resolveShift(val(row, "kode_shift"), lookups.shifts, baris),
         status_aktif: statusAktifMentah === "nonaktif" ? "Nonaktif" : "Aktif",
+        // Kolom `unit` sudah ikut diekspor; tanpa ini unit guru hilang pada
+        // setiap siklus ekspor → sunting → impor ulang.
+        unit: val(row, "unit") || undefined,
       },
     });
   }

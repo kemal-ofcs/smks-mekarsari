@@ -11,6 +11,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
+import { openWhatsAppChat } from "@/lib/client/open-url";
 import {
   describeImportReport,
   downloadStudentTemplate,
@@ -113,6 +114,8 @@ export default function SiswaPage() {
     statusInfo: WaliCredentialStatus | null;
     loading: boolean;
     resetting: boolean;
+    /** Password sementara hasil reset; hanya ada sampai modal ditutup. */
+    passwordBaru: string | null;
   } | null>(null);
 
   // Bulk Slips Modal State
@@ -139,7 +142,9 @@ export default function SiswaPage() {
       setFeedback({
         tone: "error",
         message:
-          err instanceof Error ? err.message : "Gagal memuat data siswa.",
+          err instanceof Error
+            ? err.message
+            : "Gagal memuat data peserta didik.",
       });
     } finally {
       setLoading(false);
@@ -265,9 +270,9 @@ export default function SiswaPage() {
   const handleDelete = async (id: string) => {
     if (!canManage) return;
     const ok = await konfirmasi({
-      title: "Hapus profil siswa ini?",
+      title: "Hapus profil peserta didik ini?",
       description:
-        "Profil siswa dinonaktifkan dan hilang dari daftar rombel. Penghapusannya ikut tersinkronisasi ke seluruh perangkat.",
+        "Profil peserta didik dinonaktifkan dan hilang dari daftar rombel. Penghapusannya ikut tersinkronisasi ke seluruh perangkat.",
       preserved:
         "Riwayat absensi gerbang, presensi kelas, dan leger kehadirannya tetap tersimpan.",
       confirmLabel: "Ya, hapus",
@@ -283,13 +288,14 @@ export default function SiswaPage() {
       await hapusSiswa(id);
       setFeedback({
         tone: "success",
-        message: "Profil siswa berhasil dihapus.",
+        message: "Profil peserta didik berhasil dihapus.",
       });
       void loadData();
     } catch (err) {
       setFeedback({
         tone: "error",
-        message: err instanceof Error ? err.message : "Gagal menghapus siswa.",
+        message:
+          err instanceof Error ? err.message : "Gagal menghapus peserta didik.",
       });
     } finally {
       isSubmittingRef.current = false;
@@ -315,7 +321,7 @@ export default function SiswaPage() {
     } catch {
       setFeedback({
         tone: "error",
-        message: "Gagal membuat barcode QR absensi siswa.",
+        message: "Gagal membuat barcode QR absensi peserta didik.",
       });
     }
   };
@@ -336,7 +342,7 @@ export default function SiswaPage() {
           ? { tone: "warning", message: peringatanFoto }
           : {
               tone: "success",
-              message: "Data profil siswa berhasil disimpan.",
+              message: "Data profil peserta didik berhasil disimpan.",
             },
       );
       setShowModal(false);
@@ -346,7 +352,9 @@ export default function SiswaPage() {
       setFeedback({
         tone: "error",
         message:
-          err instanceof Error ? err.message : "Gagal menyimpan data siswa.",
+          err instanceof Error
+            ? err.message
+            : "Gagal menyimpan data peserta didik.",
       });
     } finally {
       isSubmittingRef.current = false;
@@ -458,6 +466,7 @@ export default function SiswaPage() {
       statusInfo: null,
       loading: true,
       resetting: false,
+      passwordBaru: null,
     });
     try {
       const status = await getWaliCredentialStatus(idSiswa);
@@ -485,9 +494,9 @@ export default function SiswaPage() {
     const ok = await konfirmasi({
       title: `Reset kata sandi akun wali untuk ${nama}?`,
       description:
-        "Kata sandi wali akan dikembalikan ke formula bawaan (NISN/NIS + Unit), dan seluruh sesi login wali murid yang sedang aktif akan seketika dicabut/dikeluarkan.",
+        "Sistem membuat kata sandi sementara yang acak, dan seluruh sesi login wali murid yang sedang aktif langsung dicabut. Kata sandi itu hanya tampil sekali di jendela ini.",
       preserved:
-        "Data riwayat kehadiran, rekap, dan nilai siswa tidak terpengaruh.",
+        "Data riwayat kehadiran, rekap, dan nilai peserta didik tidak terpengaruh.",
       confirmLabel: "Ya, reset kata sandi",
     });
     if (!ok) return;
@@ -498,14 +507,21 @@ export default function SiswaPage() {
 
     try {
       const res = await resetWaliPassword(idSiswa);
+      // Password-nya TIDAK ditaruh di pesan sukses: pesan itu hilang sendiri
+      // dalam beberapa detik, sementara password ini tidak bisa dibaca ulang.
       setFeedback({
         tone: "success",
-        message: `Kata sandi akun wali untuk ${nama} berhasil direset ke sandi bawaan: ${res.defaultPassword}`,
+        message: `Kata sandi sementara untuk wali ${nama} sudah dibuat.`,
       });
       const updatedStatus = await getWaliCredentialStatus(idSiswa);
       setWaliModalData((prev) =>
         prev && String(prev.student.id_siswa) === idSiswa
-          ? { ...prev, statusInfo: updatedStatus, resetting: false }
+          ? {
+              ...prev,
+              statusInfo: updatedStatus,
+              resetting: false,
+              passwordBaru: res.password,
+            }
           : prev,
       );
     } catch (err) {
@@ -519,6 +535,21 @@ export default function SiswaPage() {
       setWaliModalData((prev) => (prev ? { ...prev, resetting: false } : null));
     } finally {
       isSubmittingRef.current = false;
+    }
+  };
+
+  const kirimPasswordKeWali = async (
+    student: Record<string, unknown>,
+    password: string,
+  ) => {
+    const nomor = String(student.no_whatsapp_wali || "");
+    const pesan = `Kata sandi sementara portal wali untuk ${String(student.nama_lengkap || "ananda")}: ${password}\n\nMasuk dengan NIS/NISN anak dan kata sandi ini, lalu buat kata sandi Anda sendiri.`;
+    if (!nomor || !(await openWhatsAppChat(nomor, pesan))) {
+      setFeedback({
+        tone: "error",
+        message:
+          "WhatsApp tidak bisa dibuka. Periksa nomor WhatsApp wali di data peserta didik.",
+      });
     }
   };
 
@@ -550,7 +581,9 @@ export default function SiswaPage() {
     const ok = await konfirmasi({
       title: "Terbitkan Kredensial Wali Massal?",
       description:
-        "Sistem akan menginisialisasi kata sandi bawaan bagi semua siswa terpilih yang belum memiliki catatan kredensial. Akun wali yang sudah pernah mengganti kata sandi tidak akan diubah.",
+        "Sistem membuat kata sandi sementara yang acak bagi setiap peserta didik terpilih yang walinya belum mengganti kata sandi sendiri. Kata sandi hanya bisa dicetak sekarang; slip lama tidak berlaku lagi.",
+      preserved:
+        "Akun wali yang sudah mengganti kata sandi sendiri tidak diubah.",
       confirmLabel: "Ya, terbitkan massal",
     });
     if (!ok) return;
@@ -566,12 +599,11 @@ export default function SiswaPage() {
       );
       setFeedback({
         tone: "success",
-        message: `Berhasil menerbitkan kredensial untuk ${res.count} akun wali murid.`,
+        message: `Kata sandi sementara dibuat untuk ${res.count} akun wali murid. Cetak slipnya sekarang.`,
       });
-      const slips = await getWaliCredentialsForPrinting(
-        ids.length > 0 ? ids : undefined,
-      );
-      setBulkSlips(slips);
+      // Hanya balasan penerbitan yang membawa password; daftar cetak biasa
+      // tidak bisa, karena database memegang hash-nya saja.
+      setBulkSlips(res.credentials);
     } catch (err) {
       setFeedback({
         tone: "error",
@@ -596,7 +628,7 @@ export default function SiswaPage() {
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-sky-500 border-t-transparent rounded-full animate-spin"></div>
           <p className="text-xs text-slate-400 font-mono animate-pulse">
-            Memuat Data Siswa...
+            Memuat Data Peserta Didik...
           </p>
         </div>
       </div>
@@ -610,8 +642,8 @@ export default function SiswaPage() {
       <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6">
         <PageHeader
           eyebrow="Kesiswaan"
-          title="PD (Peserta Didik)"
-          description="Direktori siswa, rombel/kelas, kontak wali, dan penerbitan token QR."
+          title="Peserta Didik"
+          description="Direktori peserta didik, rombel/kelas, kontak wali, dan penerbitan token QR."
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -680,7 +712,7 @@ export default function SiswaPage() {
                   className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-sky-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-sky-500/20 transition hover:bg-sky-400"
                 >
                   <Icon name="add" className="size-4" />
-                  <span>Tambah Siswa</span>
+                  <span>Tambah Peserta Didik</span>
                 </button>
               ) : null}
             </div>
@@ -700,9 +732,9 @@ export default function SiswaPage() {
         <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 shadow-xl backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
           <div className="relative flex-1">
             <input
-              aria-label="Cari siswa"
+              aria-label="Cari peserta didik"
               type="text"
-              placeholder="Cari siswa berdasarkan nama, NIS, NISN, atau nama orang tua/wali..."
+              placeholder="Cari peserta didik berdasarkan nama, NIS, NISN, atau nama orang tua/wali..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 pl-10 text-sm text-slate-100 placeholder-slate-500 shadow-inner focus:border-sky-500 focus:outline-none"
@@ -759,7 +791,7 @@ export default function SiswaPage() {
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              aria-label="Filter status siswa"
+              aria-label="Filter status peserta didik"
               className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
             >
               <option value="" className="bg-slate-900 text-slate-100">
@@ -801,7 +833,7 @@ export default function SiswaPage() {
                       colSpan={8}
                       className="px-6 py-8 text-center text-slate-400"
                     >
-                      Memuat direktori siswa...
+                      Memuat direktori peserta didik...
                     </td>
                   </tr>
                 ) : filteredStudents.length === 0 ? (
@@ -810,7 +842,8 @@ export default function SiswaPage() {
                       colSpan={8}
                       className="px-6 py-8 text-center text-slate-400"
                     >
-                      Tidak ada data siswa yang cocok dengan filter pencarian.
+                      Tidak ada data peserta didik yang cocok dengan filter
+                      pencarian.
                     </td>
                   </tr>
                 ) : (
@@ -948,7 +981,7 @@ export default function SiswaPage() {
                                   type="button"
                                   onClick={() => void handleDelete(id)}
                                   className="rounded-lg bg-rose-500/10 p-2 text-rose-400 hover:bg-rose-500/20"
-                                  title="Hapus Siswa"
+                                  title="Hapus Peserta Didik"
                                 >
                                   <Icon name="trash" className="size-4" />
                                 </button>
@@ -970,7 +1003,11 @@ export default function SiswaPage() {
           <Modal
             isOpen={true}
             onClose={() => setShowModal(false)}
-            title={isEditing ? "Edit Data Peserta Didik" : "Tambah Siswa Baru"}
+            title={
+              isEditing
+                ? "Edit Data Peserta Didik"
+                : "Tambah Peserta Didik Baru"
+            }
             maxWidth="max-w-xl"
           >
             <form
@@ -1039,7 +1076,7 @@ export default function SiswaPage() {
                   htmlFor="siswa-nama"
                   className="block text-xs font-semibold text-slate-300"
                 >
-                  Nama Lengkap Siswa
+                  Nama Lengkap Peserta Didik
                 </label>
                 <input
                   id="siswa-nama"
@@ -1215,7 +1252,7 @@ export default function SiswaPage() {
                     htmlFor="siswa-status"
                     className="block text-xs font-semibold text-slate-300"
                   >
-                    Status Siswa
+                    Status Peserta Didik
                   </label>
                   <select
                     id="siswa-status"
@@ -1279,7 +1316,7 @@ export default function SiswaPage() {
                 <p className="mt-1 text-[11px] text-slate-400">
                   {shiftError ??
                     (shiftList.length === 0
-                      ? "Belum ada shift. Buat shift khusus siswa di menu Shift agar jam scan-nya sesuai jadwal sekolah."
+                      ? "Belum ada shift. Buat shift khusus peserta didik di menu Shift agar jam scan-nya sesuai jadwal sekolah."
                       : "Scan masuk hanya diterima di sekitar jam masuk shift ini. Jam dan toleransinya diatur di menu Shift.")}
                 </p>
               </div>
@@ -1324,7 +1361,7 @@ export default function SiswaPage() {
                   disabled={saving}
                   className="rounded-xl bg-sky-500 px-5 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-sky-500/20 hover:bg-sky-400 disabled:opacity-50"
                 >
-                  {saving ? "Menyimpan..." : "Simpan Siswa"}
+                  {saving ? "Menyimpan..." : "Simpan Peserta Didik"}
                 </button>
               </div>
             </form>
@@ -1336,7 +1373,7 @@ export default function SiswaPage() {
           <Modal
             isOpen={true}
             onClose={() => setQrModalData(null)}
-            title="Kartu Barcode QR Siswa"
+            title="Kartu Barcode QR Peserta Didik"
             maxWidth="max-w-sm"
           >
             <div className="flex flex-col items-center gap-4 py-4 text-center">
@@ -1402,12 +1439,12 @@ export default function SiswaPage() {
                       ) : waliModalData.statusInfo.status === "bawaan" ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-400">
                           <span className="size-1.5 rounded-full bg-amber-400" />
-                          Masih Menggunakan Sandi Bawaan
+                          Masih Kata Sandi Sementara
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-400/10 px-2.5 py-1 text-xs font-semibold text-sky-400">
                           <span className="size-1.5 rounded-full bg-sky-400" />
-                          Belum Ada Kredensial (Otomatis Bawaan)
+                          Belum Diterbitkan
                         </span>
                       )}
                     </div>
@@ -1418,34 +1455,53 @@ export default function SiswaPage() {
                     ) : null}
                   </div>
 
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-400">
-                        Kata Sandi Bawaan
-                      </span>
+                  {waliModalData.passwordBaru ? (
+                    <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400">
+                          Kata Sandi Sementara
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleCopyPassword(
+                              waliModalData.passwordBaru || "",
+                              "single",
+                            )
+                          }
+                          className="min-h-11 px-2 text-xs font-medium text-sky-400 hover:underline"
+                        >
+                          {copiedId === "single" ? "Tersalin!" : "Salin"}
+                        </button>
+                      </div>
+                      <div className="mt-2 rounded-xl border border-white/5 bg-slate-900 px-3 py-2 font-mono text-base font-bold text-sky-300 select-all">
+                        {waliModalData.passwordBaru}
+                      </div>
                       <button
                         type="button"
                         onClick={() =>
-                          void handleCopyPassword(
-                            waliModalData.statusInfo?.defaultPassword || "",
-                            "single",
+                          void kirimPasswordKeWali(
+                            waliModalData.student,
+                            waliModalData.passwordBaru || "",
                           )
                         }
-                        className="text-xs font-medium text-sky-400 hover:underline"
+                        className="mt-3 min-h-11 w-full rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white transition hover:bg-emerald-500"
                       >
-                        {copiedId === "single" ? "Tersalin!" : "Salin"}
+                        Kirim ke WhatsApp wali
                       </button>
+                      <p className="mt-2 text-[11px] text-slate-400">
+                        Kata sandi ini hanya tampil sampai jendela ditutup. Wali
+                        wajib menggantinya saat pertama kali masuk portal.
+                      </p>
                     </div>
-                    <div className="mt-2 rounded-xl border border-white/5 bg-slate-900 px-3 py-2 font-mono text-base font-bold text-sky-300 select-all">
-                      {waliModalData.statusInfo.defaultPassword}
-                    </div>
-                    <p className="mt-2 text-[11px] text-slate-400">
-                      Formula bawaan:{" "}
-                      <code className="text-slate-300">NISN/NIS + UNIT</code>{" "}
-                      (huruf besar). Wali wajib mengganti kata sandi saat
-                      pertama kali masuk portal jika masih berstatus bawaan.
+                  ) : (
+                    <p className="rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-xs text-slate-400">
+                      Kata sandi wali tidak bisa dilihat, karena sistem hanya
+                      menyimpan sidik kriptografisnya. Bila wali lupa dan tidak
+                      bisa masuk dengan kode WhatsApp, buat kata sandi sementara
+                      dengan tombol di bawah.
                     </p>
-                  </div>
+                  )}
 
                   <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-200/90">
                     <div className="flex items-start gap-2">
@@ -1457,8 +1513,7 @@ export default function SiswaPage() {
                         <span className="font-bold text-amber-300">
                           Peringatan Reset:
                         </span>{" "}
-                        Mereset kata sandi akan mengembalikan sandi ke nilai
-                        bawaan di atas dan{" "}
+                        Mereset membuat kata sandi sementara baru dan{" "}
                         <strong>
                           seketika mengeluarkan (revoke) semua sesi login wali
                           murid
@@ -1486,7 +1541,7 @@ export default function SiswaPage() {
                       <span>
                         {waliModalData.resetting
                           ? "Mereset..."
-                          : "Reset ke Sandi Bawaan"}
+                          : "Buat Kata Sandi Sementara"}
                       </span>
                     </button>
                   </div>
@@ -1502,7 +1557,7 @@ export default function SiswaPage() {
             isOpen={true}
             onClose={() => setShowBulkSlipModal(false)}
             title="Slip Kredensial Portal Wali Murid"
-            subtitle={`${bulkSlips.length} siswa siap dicetak`}
+            subtitle={`${bulkSlips.length} peserta didik siap dicetak`}
             maxWidth="max-w-4xl"
           >
             <div className="flex flex-col gap-4 py-2">
@@ -1511,7 +1566,7 @@ export default function SiswaPage() {
                 <div className="text-xs text-slate-300">
                   Menampilkan{" "}
                   <strong className="text-white">{bulkSlips.length}</strong>{" "}
-                  siswa sesuai filter yang aktif.
+                  peserta didik sesuai filter yang aktif.
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -1519,7 +1574,7 @@ export default function SiswaPage() {
                     disabled={bulkIssuing || bulkSlipLoading}
                     onClick={() => void handleExecuteBulkIssue()}
                     className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-950/40 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-900/50 disabled:opacity-50"
-                    title="Buatkan baris kredensial awal bagi siswa yang belum punya"
+                    title="Buatkan baris kredensial awal bagi peserta didik yang belum punya"
                   >
                     <Icon name="add" className="size-3.5" />
                     <span>
@@ -1528,7 +1583,11 @@ export default function SiswaPage() {
                   </button>
                   <button
                     type="button"
-                    disabled={bulkSlips.length === 0 || bulkSlipLoading}
+                    disabled={
+                      !bulkSlips.some((slip) => slip.password) ||
+                      bulkSlipLoading
+                    }
+                    title="Slip hanya bisa dicetak tepat setelah Terbitkan Massal"
                     onClick={() => window.print()}
                     className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-3.5 py-1.5 text-xs font-bold text-slate-950 shadow-md shadow-sky-500/20 transition hover:bg-sky-400 disabled:opacity-50"
                   >
@@ -1543,13 +1602,13 @@ export default function SiswaPage() {
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                   <div className="size-8 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
                   <p className="mt-2 text-xs">
-                    Memuat daftar kredensial siswa...
+                    Memuat daftar kredensial peserta didik...
                   </p>
                 </div>
               ) : bulkSlips.length === 0 ? (
                 <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-8 text-center text-sm text-slate-400">
-                  Tidak ada data siswa untuk dicetak. Sesuaikan filter rombel
-                  atau pencarian.
+                  Tidak ada data peserta didik untuk dicetak. Sesuaikan filter
+                  rombel atau pencarian.
                 </div>
               ) : (
                 <>
@@ -1619,13 +1678,21 @@ export default function SiswaPage() {
                                 </span>
                                 <span className="text-[10px] text-amber-400">
                                   {slip.status === "diubah"
-                                    ? "(Pernah diubah)"
-                                    : "(Sandi Bawaan)"}
+                                    ? "(Sudah diganti wali)"
+                                    : "(Sementara)"}
                                 </span>
                               </div>
-                              <div className="mt-1 font-mono text-sm font-black text-amber-300 select-all tracking-wider">
-                                {slip.defaultPassword}
-                              </div>
+                              {slip.password ? (
+                                <div className="mt-1 font-mono text-sm font-black text-amber-300 select-all tracking-wider">
+                                  {slip.password}
+                                </div>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-slate-400">
+                                  {slip.status === "diubah"
+                                    ? "Wali sudah memakai kata sandinya sendiri."
+                                    : "Tekan Terbitkan Massal untuk membuat kata sandi yang bisa dicetak."}
+                                </p>
+                              )}
                             </div>
                           </div>
 

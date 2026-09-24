@@ -121,7 +121,11 @@ impl DesktopState {
             Ok(config) => config,
             Err(err)
                 if err.code == "TURSO_VAULT_DEVICE_MISMATCH"
-                    || err.code == "TURSO_VAULT_INVALID" =>
+                    || err.code == "TURSO_VAULT_INVALID"
+                    // Kunci di Credential Manager hilang (profil Windows
+                    // dipulihkan, entri dihapus): vault tidak bisa dibuka lagi,
+                    // jadi perlakukan seperti vault rusak, bukan gagal start.
+                    || err.code == "TURSO_VAULT_KEY_MISSING" =>
             {
                 let credentials_dir = data_dir.join("credentials");
                 let _ = std::fs::remove_file(credentials_dir.join("turso_config.vault"));

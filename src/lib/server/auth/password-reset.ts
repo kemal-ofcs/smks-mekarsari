@@ -38,7 +38,7 @@ const MAX_PHOTO_BASE64_LENGTH = 900_000;
 export class PasswordResetError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 | 409 | 429 = 400,
+    readonly status: 400 | 403 | 404 | 409 | 429 = 400,
   ) {
     super(message);
     this.name = "PasswordResetError";
@@ -443,6 +443,30 @@ export interface ResetApprovalResult {
 }
 
 /**
+ * Alasan persetujuan pemulihan DITOLAK, atau `null` bila boleh.
+ *
+ * Tanpa aturan ini pemegang `password_reset.approve` bisa mengajukan "Lupa
+ * Password" atas nama Superadmin dengan wajahnya sendiri, menyetujuinya
+ * sendiri, lalu memegang akun tertinggi. Cerminan
+ * `reset_approval_rejection` di `turso.rs`; keduanya diuji dengan vektor yang
+ * sama.
+ */
+export function resetApprovalRejection(input: {
+  actorId: number;
+  actorIsSuperadmin: boolean;
+  targetOperatorId: number | null;
+  targetIsSuperadmin: boolean;
+}): string | null {
+  if (input.targetOperatorId === input.actorId) {
+    return "Pengajuan untuk akun Anda sendiri harus disetujui peninjau lain.";
+  }
+  if (input.targetIsSuperadmin && !input.actorIsSuperadmin) {
+    return "Hanya Superadmin yang boleh menyetujui pemulihan akun Superadmin.";
+  }
+  return null;
+}
+
+/**
  * Setujui permintaan pemulihan, lalu serahkan tokennya SEKALI.
  *
  * Token baru dibuat di sini, bukan saat verifikasi wajah. Itu disengaja: kalau
@@ -457,16 +481,18 @@ export interface ResetApprovalResult {
  */
 export async function approvePasswordReset(
   client: Client,
-  actorId: number,
+  actor: { id: number; isSuperadmin: boolean },
   requestId: string,
 ): Promise<ResetApprovalResult> {
   const found = await client.execute({
     sql: `
       SELECT p.id, p.status, p.delivery_status, p.identifier_used,
+             p.operator_id, COALESCE(r.is_superadmin, 0) AS target_superadmin,
              COALESCE(m.nama_operator, '') AS nama_operator,
              CASE WHEN p.expires_at <= ${NOW_SQL} THEN 1 ELSE 0 END AS kedaluwarsa
       FROM password_reset_request p
       LEFT JOIN master_operator m ON m.id = p.operator_id
+      LEFT JOIN app_role r ON r.id = m.role_id
       WHERE p.id = ? LIMIT 1;
     `,
     args: [requestId.trim()],
@@ -475,6 +501,13 @@ export async function approvePasswordReset(
   if (!row) {
     throw new PasswordResetError("Permintaan pemulihan tidak ditemukan.", 404);
   }
+  const penolakan = resetApprovalRejection({
+    actorId: actor.id,
+    actorIsSuperadmin: actor.isSuperadmin,
+    targetOperatorId: row.operator_id == null ? null : Number(row.operator_id),
+    targetIsSuperadmin: Number(row.target_superadmin) === 1,
+  });
+  if (penolakan) throw new PasswordResetError(penolakan, 403);
   if (String(row.status ?? "") !== "Menunggu Verifikasi") {
     throw new PasswordResetError(
       "Permintaan ini sudah diproses sebelumnya.",
@@ -514,7 +547,7 @@ export async function approvePasswordReset(
           expires_at = ${expirySql(RESET_TOKEN_TTL_MINUTES)}
       WHERE id = ? AND status = 'Menunggu Verifikasi';
     `,
-    args: [await hashSessionToken(resetToken), actorId, requestId.trim()],
+    args: [await hashSessionToken(resetToken), actor.id, requestId.trim()],
   });
   if (Number(applied.rowsAffected ?? 0) === 0) {
     throw new PasswordResetError(
@@ -617,10 +650,14 @@ export async function recoverWithRecoveryCode(
 
   const operatorId = Number(row.id);
   const remaining = stored.filter((item) => item !== hashed);
-  await client.execute({
-    sql: "UPDATE master_operator SET password_recovery_codes = ? WHERE id = ?;",
-    args: [JSON.stringify(remaining), operatorId],
+  // Compare-and-swap: hanya berhasil bila daftar kodenya masih persis yang
+  // tadi dibaca. Dua permintaan paralel dengan kode yang sama tidak boleh
+  // sama-sama lolos. Cerminan `password_recovery_with_code` di `turso.rs`.
+  const consumed = await client.execute({
+    sql: "UPDATE master_operator SET password_recovery_codes = ? WHERE id = ? AND COALESCE(password_recovery_codes, '[]') = ?;",
+    args: [JSON.stringify(remaining), operatorId, String(row.kode ?? "[]")],
   });
+  if (Number(consumed.rowsAffected ?? 0) !== 1) throw ditolak();
 
   await client.execute({
     sql: `UPDATE master_operator SET password_hash = ?, updated_at = ${NOW_SQL} WHERE id = ?;`,

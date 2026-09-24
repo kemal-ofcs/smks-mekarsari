@@ -66,24 +66,32 @@ export async function getTwoFactorStatus() {
  * tercetak di kertas lama tidak boleh tetap berlaku bersamaan dengan yang baru.
  * Hasilnya hanya bisa dibaca sekali — database memegang hash-nya saja.
  */
-export async function issueRecoveryCodes(): Promise<string[]> {
+export async function issueRecoveryCodes(
+  currentPassword: string,
+): Promise<string[]> {
   const response = isDesktopRuntime()
-    ? await invokeDesktop<{ codes?: unknown }>(
-        "desktop_issue_recovery_codes",
-        {},
-      )
+    ? await invokeDesktop<{ codes?: unknown }>("desktop_issue_recovery_codes", {
+        currentPassword,
+      })
     : await requestWebApi<{ codes?: unknown }>("/api/auth/two-factor", "POST", {
         step: "recovery-codes",
+        currentPassword,
       });
   return Array.isArray(response.codes)
     ? response.codes.map((code) => String(code))
     : [];
 }
 
-export async function beginTwoFactorSetup() {
+/**
+ * `currentPassword` wajib: tanpa bukti password, siapa pun di depan komputer
+ * yang ditinggal dalam keadaan login bisa mendaftarkan autentikatornya sendiri
+ * dan mengunci pemilik akun keluar.
+ */
+export async function beginTwoFactorSetup(currentPassword: string) {
   if (isDesktopRuntime()) {
     const payload = await invokeDesktop<JsonRecord>(
       "desktop_begin_two_factor_setup",
+      { currentPassword },
     );
     const setup = record(payload.setup ?? payload);
     return {
@@ -94,7 +102,7 @@ export async function beginTwoFactorSetup() {
   const response = await requestWebApi<{ setup: TwoFactorSetup }>(
     "/api/auth/two-factor",
     "POST",
-    { step: "begin" },
+    { step: "begin", currentPassword },
   );
   return response.setup;
 }

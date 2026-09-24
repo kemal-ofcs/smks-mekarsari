@@ -10,7 +10,6 @@ export interface WaliCredentialStatus {
   idSiswa: string;
   status: WaliCredentialStatusKind;
   changedAt: string | null;
-  defaultPassword: string;
 }
 
 export interface WaliSlipCredential {
@@ -20,7 +19,8 @@ export interface WaliSlipCredential {
   nisn: string | null;
   rombel: string | null;
   unit: string | null;
-  defaultPassword: string;
+  /** Hanya terisi pada balasan penerbitan; database memegang hash-nya saja. */
+  password: string | null;
   status: WaliCredentialStatusKind;
 }
 
@@ -45,14 +45,14 @@ export async function getWaliCredentialStatus(
 
 export async function resetWaliPassword(
   idSiswa: string,
-): Promise<{ sukses: boolean; defaultPassword: string }> {
+): Promise<{ sukses: boolean; password: string }> {
   if (isDesktopRuntime()) {
-    return invokeDesktop<{ sukses: boolean; defaultPassword: string }>(
+    return invokeDesktop<{ sukses: boolean; password: string }>(
       "desktop_reset_wali_password",
       { idSiswa },
     );
   }
-  return requestWebApi<{ sukses: boolean; defaultPassword: string }>(
+  return requestWebApi<{ sukses: boolean; password: string }>(
     "/api/academic/wali-credentials",
     "POST",
     {

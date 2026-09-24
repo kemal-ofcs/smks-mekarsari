@@ -111,6 +111,14 @@ pub fn list_employees(state: &DesktopState, filter: &Value) -> Result<Value, Com
       FROM master_data m
       LEFT JOIN tbl_shift s ON m.id_shift = s.id_shift
       LEFT JOIN id_card c ON m.id_unik = c.id_unik
+      -- `hanya_pegawai`: halaman Karyawan tidak menampilkan siswa dan guru
+      -- (dikelola di halamannya sendiri). Halaman lain memanggil tanpa filter
+      -- ini karena butuh seluruh personil. Cerminan `getDaftarKaryawan` (TS).
+      WHERE ?1 = 0 OR (
+        LOWER(TRIM(COALESCE(m.jenis_personil, ''))) NOT IN ('siswa', 'guru')
+        AND NOT EXISTS (SELECT 1 FROM siswa_data sd WHERE sd.id_siswa = m.id_unik)
+        AND NOT EXISTS (SELECT 1 FROM guru_data gd WHERE gd.id_guru = m.id_unik)
+      )
       ORDER BY m.nama ASC;
       "#,
         )
@@ -118,8 +126,9 @@ pub fn list_employees(state: &DesktopState, filter: &Value) -> Result<Value, Com
     let search = text(filter, "search").to_lowercase();
     let division = text(filter, "divisi");
     let status = text(filter, "status_aktif");
+    let hanya_pegawai = i64::from(filter.get("hanya_pegawai").and_then(Value::as_bool) == Some(true));
     let rows = statement
-        .query_map([], |row| {
+        .query_map([hanya_pegawai], |row| {
             Ok(json!({
                 "id_unik": row.get::<_, String>(0)?,
                 "kode_karyawan": row.get::<_, Option<String>>(1)?,
@@ -275,7 +284,7 @@ pub fn create_employee(state: &DesktopState, draft: &Value) -> Result<Value, Com
 
 pub fn import_employees(state: &DesktopState, drafts: &[Value]) -> Result<Value, CommandError> {
     if drafts.is_empty() {
-        return Ok(json!({ "sukses": true, "berhasil": 0, "dilewati": 0 }));
+        return Ok(json!({ "sukses": true, "berhasil": 0, "gagal": [] }));
     }
     if drafts.len() > 500 {
         return Err(CommandError::new(
@@ -295,10 +304,13 @@ pub fn import_employees(state: &DesktopState, drafts: &[Value]) -> Result<Value,
         .map_err(|_| CommandError::internal())?;
 
     let mut berhasil = 0_i64;
-    let mut dilewati = 0_i64;
+    // Baris yang ID atau kodenya sudah ada TIDAK ditimpa dan tidak dilewati
+    // diam-diam: indeks draft dan alasannya dikembalikan supaya operator tahu
+    // baris Excel mana yang harus diperbaiki. Cerminan `importKaryawanMassal`.
+    let mut gagal: Vec<Value> = Vec::new();
     let now = storage::now_epoch_seconds();
 
-    for draft in drafts {
+    for (index, draft) in drafts.iter().enumerate() {
         let id = text(draft, "id_unik");
         let code = text(draft, "kode_karyawan");
         let name = text(draft, "nama");
@@ -311,20 +323,25 @@ pub fn import_employees(state: &DesktopState, drafts: &[Value]) -> Result<Value,
             || division.is_empty()
             || shift_id == 0
         {
-            dilewati += 1;
+            gagal.push(json!({ "index": index, "pesan": "Data karyawan belum lengkap atau tidak valid." }));
             continue;
         }
 
-        let exists: bool = transaction
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM master_data WHERE id_unik = ? OR kode_karyawan = ?);",
-                params![id, code],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        if exists {
-            dilewati += 1;
+        let ada = |kolom: &str, nilai: &str| -> bool {
+            transaction
+                .query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM master_data WHERE {kolom} = ?);"),
+                    params![nilai],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false)
+        };
+        if ada("id_unik", &id) {
+            gagal.push(json!({ "index": index, "pesan": format!("ID '{id}' sudah ada.") }));
+            continue;
+        }
+        if ada("kode_karyawan", &code) {
+            gagal.push(json!({ "index": index, "pesan": format!("Kode karyawan '{code}' sudah dipakai.") }));
             continue;
         }
 
@@ -398,7 +415,7 @@ pub fn import_employees(state: &DesktopState, drafts: &[Value]) -> Result<Value,
         );
 
         if insert_res.is_err() {
-            dilewati += 1;
+            gagal.push(json!({ "index": index, "pesan": "Gagal disimpan ke database lokal." }));
             continue;
         }
 
@@ -425,7 +442,7 @@ pub fn import_employees(state: &DesktopState, drafts: &[Value]) -> Result<Value,
     Ok(json!({
         "sukses": true,
         "berhasil": berhasil,
-        "dilewati": dilewati,
+        "gagal": gagal,
     }))
 }
 
@@ -4363,5 +4380,55 @@ mod tests_identitas_karyawan {
             edit_ganda.message,
             "Kode Karyawan '001' sudah dipakai Ani (K-01). Kode Karyawan harus unik."
         );
+    }
+
+    /// Baris yang ID atau kodenya sudah ada tidak ditimpa dan tidak dilewati
+    /// diam-diam: indeksnya dilaporkan supaya layar bisa menyebut baris Excel.
+    #[test]
+    fn impor_melaporkan_indeks_baris_yang_bentrok() {
+        let (_dir, state) = fixture();
+        create_employee(&state, &karyawan("K-01", "001", "Ani")).expect("karyawan lama");
+
+        let hasil = import_employees(
+            &state,
+            &[
+                karyawan("K-02", "002", "Budi"),
+                karyawan("K-01", "003", "Cici"),
+                karyawan("K-03", "001", "Dedi"),
+            ],
+        )
+        .expect("impor");
+        assert_eq!(hasil["berhasil"], 1);
+        let gagal = hasil["gagal"].as_array().expect("daftar gagal");
+        assert_eq!(gagal.len(), 2);
+        assert_eq!(gagal[0]["index"], 1);
+        assert_eq!(gagal[1]["index"], 2);
+    }
+
+    /// Halaman Karyawan tidak menampilkan siswa dan guru, tetapi halaman lain
+    /// (payroll, operasional) tetap mendapat seluruh personil.
+    #[test]
+    fn filter_hanya_pegawai_menyaring_siswa_dan_guru() {
+        let (_dir, state) = fixture();
+        create_employee(&state, &karyawan("K-01", "001", "Ani")).expect("pegawai");
+        let conn = storage::database(&state.data_dir).expect("db");
+        conn.execute_batch(
+            "UPDATE master_data SET jenis_personil = 'Pegawai';
+             INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift, jenis_personil)
+               VALUES ('S-1', 'S-1', 'Siswa', 'X-A', 1, 'SISWA'),
+                      ('G-1', 'G-1', 'Guru', 'Guru', 1, 'GURU');",
+        )
+        .expect("seed personil");
+
+        let semua = list_employees(&state, &json!({})).expect("semua");
+        assert_eq!(semua.as_array().map(Vec::len), Some(3));
+        let pegawai = list_employees(&state, &json!({ "hanya_pegawai": true })).expect("pegawai");
+        let ids: Vec<&str> = pegawai
+            .as_array()
+            .expect("array")
+            .iter()
+            .filter_map(|row| row["id_unik"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["K-01"]);
     }
 }

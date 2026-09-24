@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { hashPasswordValue, verifyPassword } from "@/lib/auth/password";
 import {
+  buatPasswordWaliAcak,
+  WALI_PASSWORD_ALPHABET,
+  WALI_PASSWORD_LENGTH,
+} from "@/lib/auth/wali-password";
+import {
   PERMISSION_CATALOG,
   SENSITIVE_MUTATION_PERMISSIONS,
 } from "@/lib/rbac/catalog";
@@ -22,36 +27,21 @@ describe("Tahap B: Kredensial & Password Portal Wali", () => {
     ).toBe(true);
   });
 
-  test("Formula kata sandi default wali: NISN/NIS + UNIT (uppercase)", () => {
-    function computeDefaultPassword(
-      nis: string | null,
-      nisn: string | null,
-      unit: string | null,
-    ): string {
-      const base = (nisn || nis || "").trim();
-      const u = (unit || "").trim().toUpperCase();
-      return `${base}${u}`;
-    }
-
-    // Kasus 1: Ada NISN dan Unit
-    expect(computeDefaultPassword("12345", "0012345678", "smk")).toBe(
-      "0012345678SMK",
+  // Alfabet dan panjang yang sama diuji
+  // `password_wali_acak_memakai_alfabet_yang_sama_dengan_web` di `academic.rs`.
+  test("Password sementara wali acak dari alfabet tanpa karakter kembar-rupa", () => {
+    expect(WALI_PASSWORD_ALPHABET).toBe("ABCDEFGHJKMNPQRSTUVWXYZ23456789");
+    expect(WALI_PASSWORD_LENGTH).toBe(10);
+    const pertama = buatPasswordWaliAcak();
+    expect(pertama).toHaveLength(WALI_PASSWORD_LENGTH);
+    expect([...pertama].every((c) => WALI_PASSWORD_ALPHABET.includes(c))).toBe(
+      true,
     );
-
-    // Kasus 2: Hanya NIS dan Unit
-    expect(computeDefaultPassword("12345", "", "sma")).toBe("12345SMA");
-
-    // Kasus 3: Ada NISN tanpa Unit
-    expect(computeDefaultPassword("12345", "0012345678", null)).toBe(
-      "0012345678",
-    );
-
-    // Kasus 4: Unit dengan spasi atau huruf kecil
-    expect(computeDefaultPassword("54321", null, " smk ")).toBe("54321SMK");
+    expect(buatPasswordWaliAcak()).not.toBe(pertama);
   });
 
   test("Paritas hashing PBKDF2 600k iterasi kompatibel antara helper TS dan verifikasi", async () => {
-    const rawPassword = "0012345678SMK";
+    const rawPassword = "K7PQ2MXH9A";
     const hashed = await hashPasswordValue(rawPassword);
 
     expect(hashed.startsWith("pbkdf2-sha256$600000$")).toBe(true);
@@ -68,7 +58,6 @@ describe("Tahap B: Kredensial & Password Portal Wali", () => {
       idSiswa: "sis-001",
       status: "bawaan",
       changedAt: null,
-      defaultPassword: "0012345678SMK",
     };
 
     expect(mockStatus.status).toBe("bawaan");
@@ -81,7 +70,7 @@ describe("Tahap B: Kredensial & Password Portal Wali", () => {
       nisn: "0012345678",
       rombel: "X RPL 1",
       unit: "SMK",
-      defaultPassword: "0012345678SMK",
+      password: null,
       status: "bawaan",
     };
 

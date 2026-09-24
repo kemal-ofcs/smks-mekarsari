@@ -1610,6 +1610,21 @@ pub fn save_teacher(state: &DesktopState, draft: &Value) -> Result<Value, Comman
         kode.to_owned()
     };
 
+    // NIP diperiksa sendiri: bila kode personil diisi terpisah, pemeriksaan
+    // kode di bawah tidak lagi menyentuh NIP, dan dua guru bisa memegang NIP
+    // yang sama. Cerminan `saveTeacher` di `personnel.ts`.
+    if let Some(nip) = nip.as_deref() {
+        assert_unique_value(
+            &tx,
+            "guru_data",
+            "nip",
+            "id_guru",
+            nip,
+            &id,
+            "NIP sudah dipakai guru lain.",
+        )?;
+    }
+
     // `master_data.kode_karyawan` masih UNIQUE (skema lama, tidak diubah).
     // Diperiksa lebih dulu supaya NIP yang bentrok memberi pesan yang jelas,
     // bukan galat constraint mentah dari SQLite.
@@ -2080,19 +2095,35 @@ pub fn backfill_missing_id_cards(state: &DesktopState) -> Result<Value, CommandE
 // perubahan kredensialnya sampai. Hasilnya sama untuk terminal online, dan
 // benar untuk yang offline: sesinya dicabut saat sinkronisasi menyusul.
 
-/// Password bawaan wali: `NISN + unit`, huruf besar, tanpa pemisah.
+/// Alfabet password sementara wali, tanpa karakter kembar-rupa (0/O, 1/I/L)
+/// karena password ini dibacakan atau diketik ulang dari slip cetak. Cerminan
+/// `WALI_PASSWORD_ALPHABET` di `src/lib/auth/wali-password.ts`.
+const WALI_PASSWORD_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+/// Cerminan `WALI_PASSWORD_LENGTH` di `src/lib/auth/wali-password.ts`.
+const WALI_PASSWORD_LENGTH: usize = 10;
+
+/// Password awal/sementara wali yang acak.
 ///
-/// Dieja SATU kali di Rust dan dicerminkan `hitungPasswordDefaultWali` di
-/// `web-public/src/lib/services/wali-auth.ts`. Kedua sisi menghitung nilai yang
-/// sama untuk siswa yang sama: yang satu menerbitkannya, yang lain
-/// memverifikasi ketikan wali terhadapnya.
-fn wali_default_password(nis: &str, nisn: &str, unit: &str) -> String {
-    let nomor = if !nisn.trim().is_empty() {
-        nisn.trim()
-    } else {
-        nis.trim()
-    };
-    format!("{}{}", nomor, unit.trim().to_uppercase())
+/// Menggantikan formula lama `NISN + UNIT`, yang bisa dihitung siapa pun yang
+/// memegang kartu pelajar seorang anak: wali yang belum pernah masuk bisa
+/// diambil alih, dan justru penyerang yang menetapkan password barunya.
+/// Database hanya memegang hash-nya, jadi nilai ini dikembalikan SEKALI.
+fn password_wali_acak() -> String {
+    use rand_core::{OsRng, RngCore};
+    let n = WALI_PASSWORD_ALPHABET.len();
+    // Byte di atas kelipatan terakhir dibuang supaya tiap karakter berpeluang sama.
+    let batas = 256 - (256 % n);
+    let mut hasil = String::with_capacity(WALI_PASSWORD_LENGTH);
+    while hasil.len() < WALI_PASSWORD_LENGTH {
+        let mut bytes = [0u8; 16];
+        OsRng.fill_bytes(&mut bytes);
+        for byte in bytes {
+            if (byte as usize) < batas && hasil.len() < WALI_PASSWORD_LENGTH {
+                hasil.push(WALI_PASSWORD_ALPHABET[byte as usize % n] as char);
+            }
+        }
+    }
+    hasil
 }
 
 /// `belum_ada` (tidak pernah diterbitkan), `bawaan` (masih password sistem),
@@ -2107,36 +2138,20 @@ fn wali_credential_status(has_hash: bool, changed_at: Option<&str>) -> &'static 
     }
 }
 
-/// Satu baris identitas siswa yang dibutuhkan untuk menghitung password bawaan.
-struct WaliIdentitas {
-    nis: String,
-    nisn: String,
-    unit: String,
-    has_hash: bool,
-    changed_at: Option<String>,
-}
-
-fn baca_wali_identitas(
+/// Status kredensial wali satu siswa: `(ada_hash, changed_at)`.
+fn baca_wali_kredensial(
     conn: &rusqlite::Connection,
     id_siswa: &str,
-) -> Result<WaliIdentitas, CommandError> {
+) -> Result<(bool, Option<String>), CommandError> {
     conn.query_row(
-        r#"SELECT COALESCE(s.nis, ''), COALESCE(s.nisn, ''), COALESCE(m.unit, ''),
-                  k.password_hash, k.changed_at
+        r#"SELECT k.password_hash, k.changed_at
              FROM siswa_data s
-             LEFT JOIN master_data m ON m.id_unik = s.id_siswa
              LEFT JOIN wali_kredensial k ON k.id_siswa = s.id_siswa
             WHERE s.id_siswa = ?1 LIMIT 1;"#,
         params![id_siswa],
         |row| {
-            let hash: Option<String> = row.get(3)?;
-            Ok(WaliIdentitas {
-                nis: row.get(0)?,
-                nisn: row.get(1)?,
-                unit: row.get(2)?,
-                has_hash: hash.is_some(),
-                changed_at: row.get(4)?,
-            })
+            let hash: Option<String> = row.get(0)?;
+            Ok((hash.is_some(), row.get(1)?))
         },
     )
     .optional()
@@ -2149,17 +2164,16 @@ pub fn get_wali_credential_status(
     id_siswa: &str,
 ) -> Result<Value, CommandError> {
     let conn = storage::database(&state.data_dir)?;
-    let identitas = baca_wali_identitas(&conn, id_siswa)?;
+    let (has_hash, changed_at) = baca_wali_kredensial(&conn, id_siswa)?;
 
     Ok(json!({
         "idSiswa": id_siswa,
-        "status": wali_credential_status(identitas.has_hash, identitas.changed_at.as_deref()),
-        "changedAt": identitas.changed_at,
-        "defaultPassword": wali_default_password(&identitas.nis, &identitas.nisn, &identitas.unit),
+        "status": wali_credential_status(has_hash, changed_at.as_deref()),
+        "changedAt": changed_at,
     }))
 }
 
-/// Tulis kredensial bawaan untuk satu siswa, di dalam transaksi pemanggil.
+/// Tulis kredensial sementara untuk satu siswa, di dalam transaksi pemanggil.
 fn terbitkan_kredensial_wali(
     tx: &rusqlite::Transaction<'_>,
     client_id: &str,
@@ -2179,7 +2193,7 @@ fn terbitkan_kredensial_wali(
     .map_err(|e| CommandError::new("DB_ERROR", format!("Gagal menyimpan kredensial: {e}")))?;
 
     // `changed_at` dikirim eksplisit sebagai null: itu penanda "masih password
-    // bawaan" yang menahan wali di layar ganti password, dan menghilangkannya
+    // sementara" yang menahan wali di layar ganti password, dan menghilangkannya
     // dari payload akan membuat cloud mempertahankan nilai lamanya.
     sync::enqueue(
         tx,
@@ -2203,20 +2217,22 @@ pub fn reset_wali_password(
 ) -> Result<Value, CommandError> {
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
-    let identitas = baca_wali_identitas(&tx, id_siswa)?;
+    baca_wali_kredensial(&tx, id_siswa)?;
 
-    let default_password =
-        wali_default_password(&identitas.nis, &identitas.nisn, &identitas.unit);
-    let password_hash = super::turso::hash_password_pbkdf2(&default_password);
+    let password = password_wali_acak();
+    let password_hash = super::turso::hash_password_pbkdf2(&password);
 
     let client_id = sync::ensure_client_id(state)?;
     terbitkan_kredensial_wali(&tx, &client_id, id_siswa, &password_hash)?;
     tx.commit().map_err(|_| CommandError::internal())?;
 
-    Ok(json!({ "sukses": true, "defaultPassword": default_password }))
+    Ok(json!({ "sukses": true, "password": password }))
 }
 
 /// Daftar siswa aktif beserta identitas dan status kredensialnya.
+///
+/// `password` selalu `null` di sini: database hanya memegang hash-nya, jadi
+/// password hanya bisa dibaca pada balasan yang baru saja menerbitkannya.
 fn daftar_wali_kredensial(
     conn: &rusqlite::Connection,
     id_siswa_list: Option<&[String]>,
@@ -2270,7 +2286,7 @@ fn daftar_wali_kredensial(
                 } else {
                     json!(unit.trim().to_uppercase())
                 },
-                "defaultPassword": wali_default_password(&nis, &nisn, &unit),
+                "password": Value::Null,
                 "status": wali_credential_status(hash.is_some(), changed_at.as_deref()),
             }))
         })
@@ -2281,41 +2297,51 @@ fn daftar_wali_kredensial(
     Ok(rows)
 }
 
+/// Terbitkan password sementara massal.
+///
+/// Wali yang sudah mengganti password sendiri (`diubah`) TIDAK ikut
+/// diterbitkan ulang: dialog penerbitan menjanjikan itu, dan menimpanya
+/// diam-diam mengunci wali yang sudah aktif keluar dari portal. Yang
+/// dikembalikan hanya baris yang baru saja diterbitkan, lengkap dengan
+/// password-nya, karena setelah balasan ini password itu tidak bisa dibaca
+/// lagi.
 pub fn bulk_issue_wali_passwords(
     state: &DesktopState,
     id_siswa_list: Option<Vec<String>>,
 ) -> Result<Value, CommandError> {
     let mut conn = storage::database(&state.data_dir)?;
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
-    let daftar = daftar_wali_kredensial(&tx, id_siswa_list.as_deref())?;
+    let mut terbit: Vec<Value> = daftar_wali_kredensial(&tx, id_siswa_list.as_deref())?
+        .into_iter()
+        .filter(|baris| baris.get("status").and_then(Value::as_str) != Some("diubah"))
+        .collect();
 
-    if daftar.is_empty() {
+    if terbit.is_empty() {
         return Ok(json!({ "sukses": true, "count": 0, "credentials": [] }));
     }
 
     let client_id = sync::ensure_client_id(state)?;
-    for baris in &daftar {
-        let id_siswa = baris.get("idSiswa").and_then(Value::as_str).unwrap_or("");
-        let password = baris
-            .get("defaultPassword")
+    for baris in &mut terbit {
+        let id_siswa = baris
+            .get("idSiswa")
             .and_then(Value::as_str)
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_owned();
         if id_siswa.is_empty() {
             continue;
         }
-        let hash = super::turso::hash_password_pbkdf2(password);
-        terbitkan_kredensial_wali(&tx, &client_id, id_siswa, &hash)?;
+        let password = password_wali_acak();
+        let hash = super::turso::hash_password_pbkdf2(&password);
+        terbitkan_kredensial_wali(&tx, &client_id, &id_siswa, &hash)?;
+        baris["password"] = json!(password);
+        baris["status"] = json!("bawaan");
     }
-
-    // Status dibaca ULANG setelah penerbitan supaya yang dikembalikan adalah
-    // keadaan sesudahnya (`bawaan`), bukan keadaan sebelum tombol ditekan.
-    let hasil = daftar_wali_kredensial(&tx, id_siswa_list.as_deref())?;
     tx.commit().map_err(|_| CommandError::internal())?;
 
     Ok(json!({
         "sukses": true,
-        "count": hasil.len(),
-        "credentials": hasil,
+        "count": terbit.len(),
+        "credentials": terbit,
     }))
 }
 
@@ -2903,6 +2929,53 @@ mod tests {
         assert_eq!(personnel_kind(&state, "K-1").expect("jenis"), PersonnelKind::Karyawan);
         assert_eq!(personnel_kind(&state, "S-2").expect("jenis"), PersonnelKind::Siswa);
         assert_eq!(personnel_kind(&state, "TIDAK-ADA").expect("jenis"), PersonnelKind::Karyawan);
+    }
+
+    /// Alfabet dan panjangnya WAJIB sama dengan `wali-password.ts`; tes TS
+    /// memeriksa string yang sama.
+    #[test]
+    fn password_wali_acak_memakai_alfabet_yang_sama_dengan_web() {
+        assert_eq!(WALI_PASSWORD_ALPHABET, b"ABCDEFGHJKMNPQRSTUVWXYZ23456789");
+        assert_eq!(WALI_PASSWORD_LENGTH, 10);
+        let pertama = password_wali_acak();
+        assert_eq!(pertama.len(), WALI_PASSWORD_LENGTH);
+        assert!(pertama.bytes().all(|b| WALI_PASSWORD_ALPHABET.contains(&b)));
+        assert_ne!(pertama, password_wali_acak());
+    }
+
+    /// Wali yang sudah mengganti password sendiri tidak boleh ikut diterbitkan
+    /// ulang oleh penerbitan massal, dan password yang dikembalikan benar-benar
+    /// cocok dengan hash yang disimpan.
+    #[test]
+    fn terbit_massal_melewati_wali_yang_sudah_mengganti_password() {
+        let (_directory, state) = fixture();
+        storage::database(&state.data_dir)
+            .expect("database lokal")
+            .execute_batch(
+                "INSERT INTO siswa_data (id_siswa, nama_lengkap, id_rombel, angkatan, status, created_at, updated_at) VALUES
+                    ('W-1', 'Belum Punya', 'rom-1', 2026, 'Aktif', '2026-01-01', '2026-01-01'),
+                    ('W-2', 'Sudah Ganti', 'rom-1', 2026, 'Aktif', '2026-01-01', '2026-01-01');
+                 INSERT INTO wali_kredensial (id_siswa, password_hash, changed_at, created_at, updated_at)
+                    VALUES ('W-2', 'hash-milik-wali', '2026-09-01 08:00:00', '2026-01-01', '2026-01-01');",
+            )
+            .expect("seed siswa");
+
+        let hasil = bulk_issue_wali_passwords(&state, None).expect("terbit massal");
+        let credentials = hasil["credentials"].as_array().expect("daftar");
+        assert_eq!(credentials.len(), 1);
+        assert_eq!(credentials[0]["idSiswa"], "W-1");
+        let password = credentials[0]["password"].as_str().expect("password");
+        assert_eq!(password.len(), WALI_PASSWORD_LENGTH);
+
+        let conn = storage::database(&state.data_dir).expect("database lokal");
+        let hash_wali_2: String = conn
+            .query_row("SELECT password_hash FROM wali_kredensial WHERE id_siswa = 'W-2';", [], |row| row.get(0))
+            .expect("kredensial W-2");
+        assert_eq!(hash_wali_2, "hash-milik-wali");
+        let hash_wali_1: String = conn
+            .query_row("SELECT password_hash FROM wali_kredensial WHERE id_siswa = 'W-1';", [], |row| row.get(0))
+            .expect("kredensial W-1");
+        assert!(super::super::turso::verify_password(password, &hash_wali_1));
     }
 
     /// Salinan lokal hasil cache dulu tidak pernah diperiksa ulang: foto yang

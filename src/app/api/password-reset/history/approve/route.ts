@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     const body = await readJsonBody<ApproveBody>(request);
     const hasil = await approvePasswordReset(
       getServerDatabase(),
-      actor.id,
+      actor,
       typeof body.requestId === "string" ? body.requestId : "",
     );
     // Tokennya hanya bisa dibaca SEKALI: database memegang hash-nya saja.

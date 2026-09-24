@@ -268,36 +268,82 @@ async function getOrGenerateQrImage(
   return img;
 }
 
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  maxWidth: number,
-  lineHeight: number,
-): void {
-  const lines = text.split("\n");
-  let currentY = y;
+/** Jarak antarbaris teks kartu, relatif terhadap ukuran font. */
+export const ID_CARD_LINE_HEIGHT = 1.35;
+/** Batas pengecilan otomatis: di bawah ini teks sulit dibaca di kartu cetak. */
+export const ID_CARD_MIN_FONT_RATIO = 0.5;
 
-  for (const paragraph of lines) {
-    const words = paragraph.split(" ");
-    let line = "";
+type UkurTeks = (teks: string, fontPx: number) => number;
 
-    for (let n = 0; n < words.length; n++) {
-      const testLine = `${line + words[n]} `;
-      const metrics = ctx.measureText(testLine);
-      const testWidth = metrics.width;
-      if (testWidth > maxWidth && n > 0) {
-        ctx.fillText(line, x, currentY);
-        line = `${words[n]} `;
-        currentY += lineHeight;
-      } else {
-        line = testLine;
+/** Bungkus per kata; kata yang lebih lebar dari kotak dipecah per huruf. */
+function bungkusTeks(
+  teks: string,
+  lebar: number,
+  fontPx: number,
+  ukur: UkurTeks,
+): string[] {
+  const baris: string[] = [];
+  for (const paragraf of teks.split("\n")) {
+    let sekarang = "";
+    for (const kata of paragraf.split(" ")) {
+      const calon = sekarang ? `${sekarang} ${kata}` : kata;
+      if (ukur(calon, fontPx) <= lebar) {
+        sekarang = calon;
+        continue;
+      }
+      if (sekarang) baris.push(sekarang);
+      sekarang = "";
+      // Nama tanpa spasi atau kode panjang: pecah per huruf supaya tidak
+      // pernah keluar ke samping kotak.
+      for (const huruf of kata) {
+        if (sekarang && ukur(sekarang + huruf, fontPx) > lebar) {
+          baris.push(sekarang);
+          sekarang = "";
+        }
+        sekarang += huruf;
       }
     }
-    ctx.fillText(line, x, currentY);
-    currentY += lineHeight;
+    baris.push(sekarang);
   }
+  return baris;
+}
+
+/**
+ * Tata letak teks di dalam kotak Lebar × Tinggi.
+ *
+ * Teks yang sudah muat tidak berubah sama sekali. Yang tidak muat dibungkus,
+ * lalu fontnya dikecilkan setahap demi setahap sampai muat (paling kecil
+ * `ID_CARD_MIN_FONT_RATIO` dari ukuran asal), dan bila di ukuran itu masih
+ * terlalu panjang, baris terakhir dipotong dengan "…". `tinggi` 0 berarti
+ * kotak tanpa batas tinggi: teks hanya dibungkus.
+ */
+export function tataTeksDalamKotak(
+  ukur: UkurTeks,
+  teks: string,
+  lebar: number,
+  tinggi: number,
+  fontPx: number,
+): { fontPx: number; baris: string[] } {
+  const minimum = Math.max(1, Math.ceil(fontPx * ID_CARD_MIN_FONT_RATIO));
+  for (let ukuran = fontPx; ukuran >= minimum; ukuran -= 1) {
+    const baris = bungkusTeks(teks, lebar, ukuran, ukur);
+    if (tinggi <= 0 || baris.length * ukuran * ID_CARD_LINE_HEIGHT <= tinggi) {
+      return { fontPx: ukuran, baris };
+    }
+  }
+
+  const baris = bungkusTeks(teks, lebar, minimum, ukur);
+  const muat = Math.max(
+    1,
+    Math.floor(tinggi / (minimum * ID_CARD_LINE_HEIGHT)),
+  );
+  const terpotong = baris.slice(0, muat);
+  let akhir = terpotong[muat - 1] ?? "";
+  while (akhir && ukur(`${akhir}…`, minimum) > lebar) {
+    akhir = akhir.slice(0, -1);
+  }
+  terpotong[muat - 1] = `${akhir.trimEnd()}…`;
+  return { fontPx: minimum, baris: terpotong };
 }
 
 export interface RenderCardParams {
@@ -656,17 +702,42 @@ async function renderSingleElement(
       val = val.toUpperCase();
     }
 
+    const font = (px: number) =>
+      `${fontWeight} ${px}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     ctx.fillStyle = el.color || "#ffffff";
-    ctx.font = `${fontWeight} ${fontSizePx}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.font = font(fontSizePx);
     ctx.textAlign = el.textAlign || "left";
     ctx.textBaseline = "top";
 
-    if (w > 0 && val.includes("\n")) {
-      const lineHeight = fontSizePx * 1.35;
-      wrapText(ctx, val, x, y, w, lineHeight);
-    } else if (w > 0 && ctx.measureText(val).width > w) {
-      const lineHeight = fontSizePx * 1.35;
-      wrapText(ctx, val, x, y, w, lineHeight);
+    if (w > 0) {
+      // Teks tidak boleh keluar dari kotak Lebar × Tinggi yang diatur di
+      // Desain Template: dibungkus, dikecilkan, lalu dipotong "…" bila perlu.
+      const tata = tataTeksDalamKotak(
+        (teks, px) => {
+          ctx.font = font(px);
+          return ctx.measureText(teks).width;
+        },
+        val,
+        w,
+        h,
+        fontSizePx,
+      );
+      ctx.font = font(tata.fontPx);
+      // Kotak mengikuti titik jangkar perataan, sama seperti garis panduan
+      // editor: kiri = x, tengah = x − w/2, kanan = x − w.
+      const kiri =
+        el.textAlign === "center"
+          ? x - w / 2
+          : el.textAlign === "right"
+            ? x - w
+            : x;
+      ctx.beginPath();
+      ctx.rect(kiri, y, w, h > 0 ? h : canvasHeight - y);
+      ctx.clip();
+      const jarak = tata.fontPx * ID_CARD_LINE_HEIGHT;
+      tata.baris.forEach((baris, i) => {
+        ctx.fillText(baris, x, y + i * jarak);
+      });
     } else {
       ctx.fillText(val, x, y);
     }
@@ -703,6 +774,21 @@ function getCardDimensionsMm(
     cardWMm: baseW + bleedMm * 2,
     cardHMm: baseH + bleedMm * 2,
   };
+}
+
+/**
+ * Nama personil diketik operator (atau datang dari impor Excel) lalu disisipkan
+ * ke `innerHTML` cetak. Tanpa escape, nama `"><img src=x onerror=…>` menjalankan
+ * script di sesi siapa pun yang mencetak ID card di Web.
+ */
+export function escapeAttr(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ] ?? c,
+  );
 }
 
 /** CSS @page dan grid positioning untuk satu halaman cetak kustom. */
@@ -854,7 +940,7 @@ function buildCustomSlotHtml(
 
     html += `
       <div class="card-slot" style="left:${colMm}mm;top:${rowMm}mm;">
-        <img src="${imgSrc}" alt="${altText}" />
+        <img src="${imgSrc}" alt="${escapeAttr(altText)}" />
       </div>
       ${buildCustomCropMarkHtml(colMm, rowMm, layout, orientation)}
     `;
@@ -1033,10 +1119,10 @@ export function printCardsDirectly(
           .map((c) => {
             let html = "";
             if (mode === "front_only" || mode === "duplex") {
-              html += `<div class="cr80-card-page"><img src="${c.frontPng}" alt="${c.name} Front" /></div>`;
+              html += `<div class="cr80-card-page"><img src="${c.frontPng}" alt="${escapeAttr(c.name)} Front" /></div>`;
             }
             if ((mode === "back_only" || mode === "duplex") && c.backPng) {
-              html += `<div class="cr80-card-page"><img src="${c.backPng}" alt="${c.name} Back" /></div>`;
+              html += `<div class="cr80-card-page"><img src="${c.backPng}" alt="${escapeAttr(c.name)} Back" /></div>`;
             }
             return html;
           })
@@ -1061,7 +1147,7 @@ export function printCardsDirectly(
                 <div class="crop-mark top-right"></div>
                 <div class="crop-mark bottom-left"></div>
                 <div class="crop-mark bottom-right"></div>
-                <img src="${c.frontPng}" alt="${c.name}" class="card-img" />
+                <img src="${c.frontPng}" alt="${escapeAttr(c.name)}" class="card-img" />
               </div>
             `,
               )
@@ -1081,7 +1167,7 @@ export function printCardsDirectly(
                 <div class="crop-mark top-right"></div>
                 <div class="crop-mark bottom-left"></div>
                 <div class="crop-mark bottom-right"></div>
-                <img src="${c.backPng || c.frontPng}" alt="${c.name}" class="card-img" />
+                <img src="${c.backPng || c.frontPng}" alt="${escapeAttr(c.name)}" class="card-img" />
               </div>
             `,
               )
@@ -1101,7 +1187,7 @@ export function printCardsDirectly(
                 <div class="crop-mark top-right"></div>
                 <div class="crop-mark bottom-left"></div>
                 <div class="crop-mark bottom-right"></div>
-                <img src="${c.frontPng}" alt="${c.name}" class="card-img" />
+                <img src="${c.frontPng}" alt="${escapeAttr(c.name)}" class="card-img" />
               </div>
             `,
               )
@@ -1118,7 +1204,7 @@ export function printCardsDirectly(
                 <div class="crop-mark top-right"></div>
                 <div class="crop-mark bottom-left"></div>
                 <div class="crop-mark bottom-right"></div>
-                <img src="${c.backPng || c.frontPng}" alt="${c.name}" class="card-img" />
+                <img src="${c.backPng || c.frontPng}" alt="${escapeAttr(c.name)}" class="card-img" />
               </div>
             `,
               )

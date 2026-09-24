@@ -13,8 +13,35 @@ const zxingLibraryEntry = path.resolve(
   "node_modules/@zxing/library/es2015/index.js",
 );
 
+/**
+ * Header keamanan build Web. Tanpa CSP apa pun, nama personil berisi
+ * `<img onerror>` yang lolos ke `innerHTML` langsung berjalan di sesi admin;
+ * aturan ini sengaja minimal (tanpa `script-src`) supaya script tema inline dan
+ * chunk Next.js tidak ikut terblokir.
+ */
+const SECURITY_HEADERS = [
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(self), geolocation=(self), microphone=()",
+  },
+  {
+    key: "Content-Security-Policy",
+    value: "frame-ancestors 'none'; object-src 'none'; base-uri 'none'",
+  },
+];
+
 const nextConfig: NextConfig = {
-  ...(isDesktopBuild ? { output: "export" as const } : {}),
+  // Static export Desktop tidak melayani header; di sana CSP Tauri yang berlaku.
+  ...(isDesktopBuild
+    ? { output: "export" as const }
+    : {
+        async headers() {
+          return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+        },
+      }),
   devIndicators: false,
   turbopack: {
     root: process.cwd(),

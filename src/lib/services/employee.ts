@@ -35,7 +35,7 @@ export function generateRandomToken(length = 8): string {
 
 export async function importKaryawanMassal(drafts: KaryawanInput[]) {
   await ensureDbInitialized();
-  if (drafts.length === 0) return { sukses: true, berhasil: 0, dilewati: 0 };
+  if (drafts.length === 0) return { sukses: true, berhasil: 0, gagal: [] };
 
   const ids = drafts.map((draft) => draft.id_unik);
   const codes = drafts.map((draft) => draft.kode_karyawan);
@@ -49,11 +49,24 @@ export async function importKaryawanMassal(drafts: KaryawanInput[]) {
   const existingCodes = new Set(
     existing.rows.map((row) => String(row.kode_karyawan)),
   );
-  const accepted = drafts.filter(
-    (draft) =>
-      !existingIds.has(draft.id_unik) &&
-      !existingCodes.has(draft.kode_karyawan),
-  );
+  // Baris yang ID atau kodenya sudah ada TIDAK ditimpa dan tidak dilewati
+  // diam-diam: indeks draft dan alasannya dikembalikan supaya operator tahu
+  // baris Excel mana yang harus diperbaiki. Cerminan `import_employees` (Rust).
+  const gagal: { index: number; pesan: string }[] = [];
+  const accepted = drafts.filter((draft, index) => {
+    if (existingIds.has(draft.id_unik)) {
+      gagal.push({ index, pesan: `ID '${draft.id_unik}' sudah ada.` });
+      return false;
+    }
+    if (existingCodes.has(draft.kode_karyawan)) {
+      gagal.push({
+        index,
+        pesan: `Kode karyawan '${draft.kode_karyawan}' sudah dipakai.`,
+      });
+      return false;
+    }
+    return true;
+  });
   const requestedShiftIds = [
     ...new Set(accepted.map((draft) => draft.id_shift)),
   ];
@@ -120,7 +133,7 @@ export async function importKaryawanMassal(drafts: KaryawanInput[]) {
   return {
     sukses: true,
     berhasil: accepted.length,
-    dilewati: drafts.length - accepted.length,
+    gagal,
   };
 }
 
@@ -128,6 +141,7 @@ export async function getDaftarKaryawan(filter?: {
   search?: string;
   divisi?: string;
   status_aktif?: string;
+  hanya_pegawai?: boolean;
 }) {
   await ensureDbInitialized();
 
@@ -144,6 +158,16 @@ export async function getDaftarKaryawan(filter?: {
     WHERE 1=1
   `;
   const params: (string | number | boolean | null)[] = [];
+
+  // Halaman Karyawan tidak menampilkan siswa dan guru (dikelola di halamannya
+  // sendiri); halaman lain memanggil tanpa filter ini karena butuh seluruh
+  // personil. Cerminan `list_employees` di `operational.rs`.
+  if (filter?.hanya_pegawai) {
+    query += `
+      AND LOWER(TRIM(COALESCE(m.jenis_personil, ''))) NOT IN ('siswa', 'guru')
+      AND NOT EXISTS (SELECT 1 FROM siswa_data sd WHERE sd.id_siswa = m.id_unik)
+      AND NOT EXISTS (SELECT 1 FROM guru_data gd WHERE gd.id_guru = m.id_unik)`;
+  }
 
   if (filter?.search) {
     query +=

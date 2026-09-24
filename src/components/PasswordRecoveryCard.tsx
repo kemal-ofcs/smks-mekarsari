@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { issueRecoveryCodes } from "@/lib/gateways/two-factor";
 
@@ -20,13 +20,16 @@ export function PasswordRecoveryCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [password, setPassword] = useState("");
+  const passwordId = useId();
 
   const issue = async () => {
     setBusy(true);
     setError(null);
     try {
-      setCodes(await issueRecoveryCodes());
+      setCodes(await issueRecoveryCodes(password));
       setConfirming(false);
+      setPassword("");
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -88,18 +91,37 @@ export function PasswordRecoveryCard() {
             termasuk yang sudah tercetak. Lanjutkan hanya bila kertas lamanya
             hilang, habis, atau pernah dilihat orang lain.
           </p>
+          <div>
+            <label
+              htmlFor={passwordId}
+              className="text-[11px] font-bold text-slate-400"
+            >
+              Password akun Anda
+            </label>
+            <input
+              id={passwordId}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="mt-1 min-h-11 w-full rounded-xl border border-white/15 bg-slate-950/60 px-3 text-sm text-white"
+            />
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => void issue()}
-              disabled={busy}
+              disabled={busy || password.length === 0}
               className="min-h-11 rounded-xl bg-amber-400 px-5 text-xs font-black text-slate-950 transition hover:bg-amber-300 disabled:opacity-50"
             >
               {busy ? "Menerbitkan..." : "Ya, terbitkan kode baru"}
             </button>
             <button
               type="button"
-              onClick={() => setConfirming(false)}
+              onClick={() => {
+                setConfirming(false);
+                setPassword("");
+              }}
               disabled={busy}
               className="min-h-11 rounded-xl border border-white/15 px-4 text-xs font-bold text-slate-300 transition hover:bg-white/5 disabled:opacity-50"
             >
