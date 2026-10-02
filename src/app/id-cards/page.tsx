@@ -22,6 +22,7 @@ import { formatBytes, optimizeImageFile } from "@/lib/client/image-optimizer";
 import {
   DEFAULT_PRINT_LAYOUT_PRESETS,
   getActivePrintLayout,
+  getCardsPerPage,
   loadPrintLayoutPresets,
   setActivePrintLayoutId,
 } from "@/lib/client/print-layout-store";
@@ -40,6 +41,12 @@ import { ambilFotoPersonil } from "@/lib/gateways/personnel-photo";
 import { backfillKartuPelajar } from "@/lib/gateways/student";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import { useHydrated } from "@/lib/hooks/useHydrated";
+import {
+  cocokFilterUnit,
+  opsiFilterKelas,
+  opsiFilterUnit,
+  TANPA_UNIT,
+} from "@/lib/validations/personnel";
 import type {
   CardSide,
   ElementType,
@@ -237,6 +244,8 @@ export default function IdCardsPage() {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [unitFilter, setUnitFilter] = useState("");
+  const [kelasFilter, setKelasFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(
     null,
@@ -415,6 +424,23 @@ export default function IdCardsPage() {
   const KARTU_PER_HALAMAN = 60;
   const [halaman, setHalaman] = useState(1);
 
+  // Pilihan filter diturunkan dari baris yang dimuat, jadi tidak pernah
+  // menawarkan unit atau kelas yang hasilnya kosong.
+  const unitOptions = useMemo(() => opsiFilterUnit([], rows), [rows]);
+  const unitAktif =
+    unitFilter === TANPA_UNIT || unitOptions.includes(unitFilter)
+      ? unitFilter
+      : "";
+  const kelasOptions = useMemo(
+    () => opsiFilterKelas(rows, unitAktif),
+    [rows, unitAktif],
+  );
+  // Pilihan yang sudah tidak ada di daftar (data dimuat ulang, unit diganti)
+  // diperlakukan sebagai "semua", bukan menyaring ke hasil kosong.
+  const kelasAktif = kelasOptions.some((kelas) => kelas.id === kelasFilter)
+    ? kelasFilter
+    : "";
+
   // Filtered rows
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
@@ -422,9 +448,11 @@ export default function IdCardsPage() {
         const s = String(r.idcard_status || "Belum");
         if (s !== statusFilter) return false;
       }
+      if (!cocokFilterUnit(r, unitAktif)) return false;
+      if (kelasAktif && String(r.id_rombel ?? "") !== kelasAktif) return false;
       return true;
     });
-  }, [rows, statusFilter]);
+  }, [rows, statusFilter, unitAktif, kelasAktif]);
 
   const totalHalaman = Math.max(
     1,
@@ -1322,6 +1350,36 @@ export default function IdCardsPage() {
                 <option value="Belum">Belum Dicetak</option>
                 <option value="Berhasil">Sudah Dicetak</option>
               </select>
+              <select
+                aria-label="Filter unit"
+                value={unitAktif}
+                onChange={(e) => {
+                  setUnitFilter(e.target.value);
+                  setKelasFilter("");
+                }}
+                className="min-h-10 rounded-xl border border-white/10 bg-slate-950 px-3 text-xs text-white outline-none focus:border-sky-400"
+              >
+                <option value="">Semua Unit</option>
+                <option value={TANPA_UNIT}>(Tanpa unit)</option>
+                {unitOptions.map((nama) => (
+                  <option key={nama} value={nama}>
+                    {nama}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Filter kelas"
+                value={kelasAktif}
+                onChange={(e) => setKelasFilter(e.target.value)}
+                className="min-h-10 rounded-xl border border-white/10 bg-slate-950 px-3 text-xs text-white outline-none focus:border-sky-400"
+              >
+                <option value="">Semua Kelas</option>
+                {kelasOptions.map((kelas) => (
+                  <option key={kelas.id} value={kelas.id}>
+                    {kelas.label}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
                 onClick={() => void handleBackfill()}
@@ -1375,7 +1433,7 @@ export default function IdCardsPage() {
             </div>
           ) : filteredRows.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-12 text-center text-slate-400">
-              Tidak ada data ID Card yang cocok dengan pencarian.
+              Tidak ada data ID Card yang cocok dengan pencarian atau filter.
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1423,7 +1481,10 @@ export default function IdCardsPage() {
                         {String(row.jabatan_status || "-")}
                       </p>
                       <p className="text-xs text-slate-400">
-                        {String(row.divisi || "-")}
+                        {[row.divisi, row.unit, row.nama_rombel]
+                          .map((nilai) => String(nilai ?? "").trim())
+                          .filter(Boolean)
+                          .join(" · ") || "-"}
                       </p>
                     </div>
 
@@ -1741,7 +1802,7 @@ export default function IdCardsPage() {
                   </span>
                   <div className="text-slate-200 font-bold">
                     {activeLayout.gridCols}×{activeLayout.gridRows} (
-                    {activeLayout.gridCols * activeLayout.gridRows} slot)
+                    {getCardsPerPage(activeLayout)} kartu per halaman)
                   </div>
                 </div>
                 <div className="space-y-0.5">
@@ -1831,11 +1892,7 @@ export default function IdCardsPage() {
                 <span>Estimasi Lembar Kertas:</span>
                 <strong className="text-violet-300 font-bold font-mono">
                   {Math.ceil(
-                    printTargetRows.length /
-                      Math.max(
-                        1,
-                        activeLayout.gridCols * activeLayout.gridRows,
-                      ),
+                    printTargetRows.length / getCardsPerPage(activeLayout),
                   )}{" "}
                   lembar
                   {activeLayout.duplexMode === "duplex"

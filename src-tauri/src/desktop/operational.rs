@@ -1019,7 +1019,7 @@ pub fn list_id_cards(state: &DesktopState, filter: &Value) -> Result<Value, Comm
         // langsung ke renderer kartu, dan tanpa kolom itu setiap kartu yang
         // dicetak dari sana berjabatan bawaan "Staff". Sama dengan
         // `getDaftarIdCard` di `lib/services/idcard.ts`.
-        "SELECT c.id_card_id, m.id_unik, m.nama, m.divisi, COALESCE(c.idcard_status, 'Belum'), c.idcard_pdf_url, c.idcard_last_generate, c.idcard_catatan, c.tanggal_generate, c.link_qr_png, m.kode_karyawan, m.status_aktif, m.token_absensi, m.qr_code, m.jabatan_status, m.unit, g.nip, g.nuptk, s.nisn FROM master_data m LEFT JOIN id_card c ON c.id_unik = m.id_unik LEFT JOIN guru_data g ON g.id_guru = m.id_unik LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik ORDER BY m.nama;"
+        "SELECT c.id_card_id, m.id_unik, m.nama, m.divisi, COALESCE(c.idcard_status, 'Belum'), c.idcard_pdf_url, c.idcard_last_generate, c.idcard_catatan, c.tanggal_generate, c.link_qr_png, m.kode_karyawan, m.status_aktif, m.token_absensi, m.qr_code, m.jabatan_status, m.unit, g.nip, g.nuptk, s.nisn, s.id_rombel, r.nama_rombel, CAST(r.tingkat AS TEXT) FROM master_data m LEFT JOIN id_card c ON c.id_unik = m.id_unik LEFT JOIN guru_data g ON g.id_guru = m.id_unik LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel ORDER BY m.nama;"
     ).map_err(|_| CommandError::internal())?;
     let search = text(filter, "search").to_lowercase();
     let status = text(filter, "status");
@@ -1036,6 +1036,11 @@ pub fn list_id_cards(state: &DesktopState, filter: &Value) -> Result<Value, Comm
         "nip": row.get::<_, Option<String>>(16)?,
         "nuptk": row.get::<_, Option<String>>(17)?,
         "nisn": row.get::<_, Option<String>>(18)?,
+        // Kelas siswa, untuk filter Unit lalu Kelas di halaman ID Card.
+        // Guru dan karyawan tidak punya rombel, jadi ketiganya null.
+        "id_rombel": row.get::<_, Option<String>>(19)?,
+        "nama_rombel": row.get::<_, Option<String>>(20)?,
+        "tingkat": row.get::<_, Option<String>>(21)?,
     }))).map_err(|_| CommandError::internal())?;
     let values = rows
         .collect::<Result<Vec<_>, _>>()
@@ -4442,5 +4447,38 @@ mod tests_identitas_karyawan {
             .filter_map(|row| row["id_unik"].as_str())
             .collect();
         assert_eq!(ids, vec!["K-01"]);
+    }
+
+    /// Filter Unit lalu Kelas di halaman ID Card membaca tiga kolom rombel
+    /// dari daftar ini. Yang bukan siswa wajib tetap tampil, dengan null.
+    #[test]
+    fn daftar_id_card_membawa_kelas_siswa() {
+        let (_dir, state) = fixture();
+        create_employee(&state, &karyawan("K-01", "001", "Ani")).expect("pegawai");
+        let conn = storage::database(&state.data_dir).expect("db");
+        conn.execute_batch(
+            "INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift, jenis_personil, unit)
+               VALUES ('S-1', 'S-1', 'Budi', 'Peserta Didik', 1, 'SISWA', 'SMA');
+             INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel)
+               VALUES ('r-10a', 'ta-1', 10, 'X IPA 1');
+             INSERT INTO siswa_data (id_siswa, nama_lengkap, id_rombel, angkatan, created_at, updated_at)
+               VALUES ('S-1', 'Budi', 'r-10a', 2026, datetime('now'), datetime('now'));",
+        )
+        .expect("seed siswa");
+
+        let daftar = list_id_cards(&state, &json!({})).expect("daftar id card");
+        let baris = daftar.as_array().expect("array");
+        assert_eq!(baris.len(), 2);
+        let siswa = baris.iter().find(|row| row["id_unik"] == "S-1").expect("siswa");
+        assert_eq!(siswa["unit"], "SMA");
+        assert_eq!(siswa["id_rombel"], "r-10a");
+        assert_eq!(siswa["nama_rombel"], "X IPA 1");
+        // Teks, bukan angka: sama dengan `CAST(r.tingkat AS TEXT)` di
+        // `getDaftarIdCard` (TS), supaya halaman menerima bentuk yang sama.
+        assert_eq!(siswa["tingkat"], "10");
+        let pegawai = baris.iter().find(|row| row["id_unik"] == "K-01").expect("pegawai");
+        assert!(pegawai["id_rombel"].is_null());
+        assert!(pegawai["nama_rombel"].is_null());
+        assert!(pegawai["tingkat"].is_null());
     }
 }

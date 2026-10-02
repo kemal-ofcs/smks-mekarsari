@@ -6,7 +6,10 @@ import {
   computeMirroredBackLayout,
   deletePrintLayoutPreset,
   generatePresetId,
+  getCardTrimSizeMm,
+  getCropMarkLinesMm,
   getPaperDimensionsMm,
+  getSlotPositionMm,
   loadPrintLayoutPresets,
   setActivePrintLayoutId,
   upsertPrintLayoutPreset,
@@ -106,11 +109,9 @@ export function LayoutPanel({
             const L = activeLayout;
             const pW = L.paperWidthMm;
             const pH = L.paperHeightMm;
-            const isPortrait = template?.orientation === "portrait";
-            const baseW = isPortrait ? 54 : 85.6;
-            const baseH = isPortrait ? 85.6 : 54;
-            const cardWMm = baseW + L.bleedMm * 2;
-            const cardHMm = baseH + L.bleedMm * 2;
+            const orientation = template?.orientation;
+            const { width: cardWMm, height: cardHMm } =
+              getCardTrimSizeMm(orientation);
             const totalSlots = L.gridCols * L.gridRows;
 
             // Scale: fit preview ke max 320px lebar per halaman
@@ -134,12 +135,16 @@ export function LayoutPanel({
               page: "front" | "back",
             ) =>
               slots.map((slot) => {
-                const row = Math.floor(slot.slotIndex / L.gridCols);
-                const col = slot.slotIndex % L.gridCols;
-                const x =
-                  (L.marginLeftMm + col * (cardWMm + L.gapColMm)) * scale;
-                const y =
-                  (L.marginTopMm + row * (cardHMm + L.gapRowMm)) * scale;
+                // Posisi yang sama persis dengan yang dipakai mesin cetak,
+                // termasuk cermin sisi belakang terhadap kertas.
+                const posisi = getSlotPositionMm(
+                  L,
+                  page,
+                  slot.slotIndex,
+                  orientation,
+                );
+                const x = posisi.x * scale;
+                const y = posisi.y * scale;
                 const w = cardWMm * scale;
                 const h = cardHMm * scale;
                 const label = `K${slot.cardIndex + 1}${page === "front" ? "D" : "B"}`;
@@ -167,114 +172,17 @@ export function LayoutPanel({
                     >
                       {label}
                     </text>
-                    {/* Crop marks di sudut jika aktif */}
-                    {L.showCropMarks && (
-                      <>
-                        {/* Kiri-Atas */}
-                        <line
-                          x1={
-                            x -
-                            L.cropMarkOffsetMm * scale -
-                            L.cropMarkLengthMm * scale
-                          }
-                          y1={y - L.cropMarkOffsetMm * scale}
-                          x2={x - L.cropMarkOffsetMm * scale}
-                          y2={y - L.cropMarkOffsetMm * scale}
-                          stroke="#64748b"
-                          strokeWidth={0.5}
+                    {getCropMarkLinesMm(L, posisi.x, posisi.y, orientation).map(
+                      ([lx, ly, lw, lh]) => (
+                        <rect
+                          key={`${lx}-${ly}-${lw}`}
+                          x={lx * scale}
+                          y={ly * scale}
+                          width={Math.max(lw * scale, 0.75)}
+                          height={Math.max(lh * scale, 0.75)}
+                          fill="#94a3b8"
                         />
-                        <line
-                          x1={x - L.cropMarkOffsetMm * scale}
-                          y1={
-                            y -
-                            L.cropMarkOffsetMm * scale -
-                            L.cropMarkLengthMm * scale
-                          }
-                          x2={x - L.cropMarkOffsetMm * scale}
-                          y2={y - L.cropMarkOffsetMm * scale}
-                          stroke="#64748b"
-                          strokeWidth={0.5}
-                        />
-                        {/* Kanan-Atas */}
-                        <line
-                          x1={x + w + L.cropMarkOffsetMm * scale}
-                          y1={y - L.cropMarkOffsetMm * scale}
-                          x2={
-                            x +
-                            w +
-                            L.cropMarkOffsetMm * scale +
-                            L.cropMarkLengthMm * scale
-                          }
-                          y2={y - L.cropMarkOffsetMm * scale}
-                          stroke="#64748b"
-                          strokeWidth={0.5}
-                        />
-                        <line
-                          x1={x + w + L.cropMarkOffsetMm * scale}
-                          y1={
-                            y -
-                            L.cropMarkOffsetMm * scale -
-                            L.cropMarkLengthMm * scale
-                          }
-                          x2={x + w + L.cropMarkOffsetMm * scale}
-                          y2={y - L.cropMarkOffsetMm * scale}
-                          stroke="#64748b"
-                          strokeWidth={0.5}
-                        />
-                        {/* Kiri-Bawah */}
-                        <line
-                          x1={
-                            x -
-                            L.cropMarkOffsetMm * scale -
-                            L.cropMarkLengthMm * scale
-                          }
-                          y1={y + h + L.cropMarkOffsetMm * scale}
-                          x2={x - L.cropMarkOffsetMm * scale}
-                          y2={y + h + L.cropMarkOffsetMm * scale}
-                          stroke="#64748b"
-                          strokeWidth={0.5}
-                        />
-                        <line
-                          x1={x - L.cropMarkOffsetMm * scale}
-                          y1={y + h + L.cropMarkOffsetMm * scale}
-                          x2={x - L.cropMarkOffsetMm * scale}
-                          y2={
-                            y +
-                            h +
-                            L.cropMarkOffsetMm * scale +
-                            L.cropMarkLengthMm * scale
-                          }
-                          stroke="#64748b"
-                          strokeWidth={0.5}
-                        />
-                        {/* Kanan-Bawah */}
-                        <line
-                          x1={x + w + L.cropMarkOffsetMm * scale}
-                          y1={y + h + L.cropMarkOffsetMm * scale}
-                          x2={
-                            x +
-                            w +
-                            L.cropMarkOffsetMm * scale +
-                            L.cropMarkLengthMm * scale
-                          }
-                          y2={y + h + L.cropMarkOffsetMm * scale}
-                          stroke="#64748b"
-                          strokeWidth={0.5}
-                        />
-                        <line
-                          x1={x + w + L.cropMarkOffsetMm * scale}
-                          y1={y + h + L.cropMarkOffsetMm * scale}
-                          x2={x + w + L.cropMarkOffsetMm * scale}
-                          y2={
-                            y +
-                            h +
-                            L.cropMarkOffsetMm * scale +
-                            L.cropMarkLengthMm * scale
-                          }
-                          stroke="#64748b"
-                          strokeWidth={0.5}
-                        />
-                      </>
+                      ),
                     )}
                   </g>
                 );
@@ -333,30 +241,22 @@ export function LayoutPanel({
                           (b) => b.cardIndex === fSlot.cardIndex,
                         );
                         if (!bSlot) return null;
-                        const fRow = Math.floor(fSlot.slotIndex / L.gridCols);
-                        const fCol = fSlot.slotIndex % L.gridCols;
-                        const bRow = Math.floor(bSlot.slotIndex / L.gridCols);
-                        const bCol = bSlot.slotIndex % L.gridCols;
-                        const fx =
-                          (L.marginLeftMm +
-                            fCol * (cardWMm + L.gapColMm) +
-                            cardWMm) *
-                          scale;
-                        const fy =
-                          (L.marginTopMm +
-                            fRow * (cardHMm + L.gapRowMm) +
-                            cardHMm / 2) *
-                          scale;
-                        const bx =
-                          svgW +
-                          gap +
-                          (L.marginLeftMm + bCol * (cardWMm + L.gapColMm)) *
-                            scale;
-                        const by =
-                          (L.marginTopMm +
-                            bRow * (cardHMm + L.gapRowMm) +
-                            cardHMm / 2) *
-                          scale;
+                        const depan = getSlotPositionMm(
+                          L,
+                          "front",
+                          fSlot.slotIndex,
+                          orientation,
+                        );
+                        const belakang = getSlotPositionMm(
+                          L,
+                          "back",
+                          bSlot.slotIndex,
+                          orientation,
+                        );
+                        const fx = (depan.x + cardWMm) * scale;
+                        const fy = (depan.y + cardHMm / 2) * scale;
+                        const bx = svgW + gap + belakang.x * scale;
+                        const by = (belakang.y + cardHMm / 2) * scale;
                         return (
                           <line
                             key={`arrow-${fSlot.cardIndex}`}
@@ -443,11 +343,9 @@ export function LayoutPanel({
         {/* Info Overflow Warning */}
         {(() => {
           const L = activeLayout;
-          const isPortrait = template?.orientation === "portrait";
-          const baseW = isPortrait ? 54 : 85.6;
-          const baseH = isPortrait ? 85.6 : 54;
-          const cardWMm = baseW + L.bleedMm * 2;
-          const cardHMm = baseH + L.bleedMm * 2;
+          const { width: cardWMm, height: cardHMm } = getCardTrimSizeMm(
+            template?.orientation,
+          );
           const usedW =
             L.marginLeftMm +
             L.marginRightMm +

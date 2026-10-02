@@ -2,8 +2,9 @@
 
 import QRCode from "qrcode";
 import {
-  buildDefaultFrontSlots,
-  computeMirroredBackLayout,
+  buildPrintPages,
+  getCardTrimSizeMm,
+  getCropMarkLinesMm,
 } from "@/lib/client/print-layout-store";
 import { BRANDING } from "@/lib/constants/branding";
 import type { CompanyProfile } from "@/types/company-profile";
@@ -12,7 +13,6 @@ import type {
   IdCardElement,
   IdCardPrintLayoutConfig,
   IdCardTemplateConfig,
-  PrintSlotAssignment,
 } from "@/types/id-card";
 
 // Memory caches to eliminate async lag & re-render latency
@@ -773,20 +773,6 @@ export interface PrintOptions {
 // Helper: Custom Layout Print Engine (mm-precise)
 // ===========================================================================
 
-/** Ukuran kartu CR80 standar dalam mm berdasarkan orientasi */
-function getCardDimensionsMm(
-  orientation?: "landscape" | "portrait",
-  bleedMm = 0,
-): { cardWMm: number; cardHMm: number } {
-  const isPortrait = orientation === "portrait";
-  const baseW = isPortrait ? 54 : 85.6;
-  const baseH = isPortrait ? 85.6 : 54;
-  return {
-    cardWMm: baseW + bleedMm * 2,
-    cardHMm: baseH + bleedMm * 2,
-  };
-}
-
 /**
  * Nama personil diketik operator (atau datang dari impor Excel) lalu disisipkan
  * ke `innerHTML` cetak. Tanpa escape, nama `"><img src=x onerror=…>` menjalankan
@@ -802,28 +788,21 @@ export function escapeAttr(value: string): string {
   );
 }
 
-/** CSS @page dan grid positioning untuk satu halaman cetak kustom. */
+/**
+ * CSS halaman cetak kustom. Setiap kartu diposisikan mutlak terhadap sudut
+ * kiri-atas kertas; angkanya datang dari `buildPrintPages`.
+ */
 function buildCustomLayoutCss(
   layout: IdCardPrintLayoutConfig,
-  pageType: "front" | "back",
   orientation?: "landscape" | "portrait",
 ): string {
   const {
     paperWidthMm: pW,
     paperHeightMm: pH,
-    marginTopMm: mT,
-    marginLeftMm: mL,
-    printerOffsetXMm: oX,
-    printerOffsetYMm: oY,
-    cropMarkLengthMm: cmL,
-    cropMarkOffsetMm: cmO,
     bleedMm,
     showCardBorder,
   } = layout;
-
-  const { cardWMm, cardHMm } = getCardDimensionsMm(orientation, bleedMm);
-  const offsetX = (oX ?? 0) + (pageType === "back" ? 0 : 0);
-  const offsetY = oY ?? 0;
+  const { width, height } = getCardTrimSizeMm(orientation);
 
   return `
     @page { size: ${pW}mm ${pH}mm; margin: 0; }
@@ -842,194 +821,79 @@ function buildCustomLayoutCss(
         width: ${pW}mm;
         height: ${pH}mm;
         page-break-after: always;
+        break-after: page;
         overflow: hidden;
         box-sizing: border-box;
       }
-      .print-page:last-child { page-break-after: auto; }
-      .card-slot {
+      .print-page:last-child { page-break-after: auto; break-after: auto; }
+      .card-bleed {
         position: absolute;
-        width: ${cardWMm}mm;
-        height: ${cardHMm}mm;
+        width: ${width + bleedMm * 2}mm;
+        height: ${height + bleedMm * 2}mm;
         overflow: hidden;
-        box-sizing: border-box;
-        ${showCardBorder ? `outline: 0.2mm solid #94a3b8;` : ""}
       }
-      .card-slot img {
+      .card-bleed img {
         width: 100%; height: 100%;
         object-fit: cover; display: block;
+      }
+      .card-trim {
+        position: absolute;
+        width: ${width}mm;
+        height: ${height}mm;
+        object-fit: cover; display: block;
+        ${showCardBorder ? "outline: 0.2mm solid #94a3b8;" : ""}
       }
       .crop-line {
         position: absolute;
         background: #64748b;
         pointer-events: none;
       }
-      /* Margin + offset kalibrasi */
-      .page-content {
-        position: absolute;
-        top: ${mT + offsetY}mm;
-        left: ${mL + offsetX}mm;
-      }
     }
     #sppg-print-root { display: none; }
-    .card-slot img { width: ${cardWMm}mm; height: ${cardHMm}mm; object-fit: cover; display: block; }
-    @media (max-width: 9999px) {
-      .crop-line { background: #64748b; position: absolute; pointer-events: none; }
-    }
-    /* Dimensi elemen crop mark: ${cmL}mm panjang, ${cmO}mm offset */
   `;
 }
 
-/** Menghasilkan elemen HTML crop marks CSS untuk setiap sudut kartu. */
-function buildCustomCropMarkHtml(
-  colMm: number,
-  rowMm: number,
-  layout: IdCardPrintLayoutConfig,
-  orientation?: "landscape" | "portrait",
-): string {
-  if (!layout.showCropMarks) return "";
-  const cmL = layout.cropMarkLengthMm;
-  const cmO = layout.cropMarkOffsetMm;
-  const { cardWMm: cW, cardHMm: cH } = getCardDimensionsMm(
-    orientation,
-    layout.bleedMm,
-  );
-
-  // 4 sudut × 2 garis per sudut = 8 elemen
-  const corners = [
-    // [x_start_mm, y_start_mm, width_mm, height_mm]
-    // Kiri-Atas: garis atas & garis kiri
-    [colMm - cmO - cmL, rowMm - cmO, cmL, 0.2],
-    [colMm - cmO, rowMm - cmO - cmL, 0.2, cmL],
-    // Kanan-Atas
-    [colMm + cW + cmO, rowMm - cmO, cmL, 0.2],
-    [colMm + cW + cmO, rowMm - cmO - cmL, 0.2, cmL],
-    // Kiri-Bawah
-    [colMm - cmO - cmL, rowMm + cH + cmO, cmL, 0.2],
-    [colMm - cmO, rowMm + cH + cmO, 0.2, cmL],
-    // Kanan-Bawah
-    [colMm + cW + cmO, rowMm + cH + cmO, cmL, 0.2],
-    [colMm + cW + cmO, rowMm + cH + cmO, 0.2, cmL],
-  ];
-
-  return corners
-    .map(
-      ([x, y, w, h]) =>
-        `<div class="crop-line" style="left:${x}mm;top:${y}mm;width:${w}mm;height:${h}mm;"></div>`,
-    )
-    .join("");
-}
-
 /**
- * Menghasilkan HTML semua slot kartu pada satu halaman berdasarkan slot assignment.
- * cards = array renderedCards (frontPng/backPng)
- * slots = array PrintSlotAssignment untuk halaman ini
- */
-function buildCustomSlotHtml(
-  cards: { frontPng: string; backPng?: string; name: string }[],
-  slots: PrintSlotAssignment[],
-  layout: IdCardPrintLayoutConfig,
-  orientation?: "landscape" | "portrait",
-): string {
-  const { gridCols, gapColMm, gapRowMm, bleedMm } = layout;
-  const { cardWMm, cardHMm } = getCardDimensionsMm(orientation, bleedMm);
-
-  let html = "";
-  for (const slot of slots) {
-    if (slot.cardIndex < 0 || slot.cardIndex >= cards.length) continue;
-    const card = cards[slot.cardIndex];
-    if (!card) continue;
-
-    const row = Math.floor(slot.slotIndex / gridCols);
-    const col = slot.slotIndex % gridCols;
-
-    const colMm = col * (cardWMm + gapColMm);
-    const rowMm = row * (cardHMm + gapRowMm);
-
-    const imgSrc =
-      slot.side === "back" ? (card.backPng ?? card.frontPng) : card.frontPng;
-    const altText = `${card.name} ${slot.side === "back" ? "Belakang" : "Depan"}`;
-
-    html += `
-      <div class="card-slot" style="left:${colMm}mm;top:${rowMm}mm;">
-        <img src="${imgSrc}" alt="${escapeAttr(altText)}" />
-      </div>
-      ${buildCustomCropMarkHtml(colMm, rowMm, layout, orientation)}
-    `;
-  }
-  return html;
-}
-
-/**
- * Membangun HTML lengkap dua halaman cetak (depan + belakang) berdasarkan
- * IdCardPrintLayoutConfig dengan duplex position matrix.
+ * HTML seluruh halaman cetak. Pembagian halaman, cermin sisi belakang, dan
+ * posisi tiap kartu diputuskan `buildPrintPages`; di sini hanya digambar.
  */
 function buildCustomPrintHtml(
   cards: { frontPng: string; backPng?: string; name: string }[],
   layout: IdCardPrintLayoutConfig,
   orientation?: "landscape" | "portrait",
 ): string {
-  const { duplexMode, duplexPositionMode, gridCols, gridRows, flipAxis } =
-    layout;
-
-  // Tentukan slot assignments
-  const totalSlots = gridCols * gridRows;
-  const frontSlotsDefault = buildDefaultFrontSlots(gridCols, gridRows);
-
-  // Hanya gunakan slot sebanyak cards tersedia
-  const cappedFrontSlots = frontSlotsDefault
-    .slice(0, Math.min(totalSlots, cards.length))
-    .map((s) => ({ ...s, cardIndex: s.slotIndex }));
-
-  let frontSlots: PrintSlotAssignment[];
-  let backSlots: PrintSlotAssignment[];
-
-  if (duplexPositionMode === "manual_matrix" && layout.frontPageSlots?.length) {
-    frontSlots = layout.frontPageSlots;
-    backSlots =
-      layout.backPageSlots ??
-      computeMirroredBackLayout(frontSlots, gridCols, gridRows, flipAxis);
-  } else {
-    frontSlots = cappedFrontSlots;
-    backSlots = computeMirroredBackLayout(
-      frontSlots,
-      gridCols,
-      gridRows,
-      flipAxis,
-    );
-  }
-
-  const frontHtml = buildCustomSlotHtml(cards, frontSlots, layout, orientation);
-
-  if (duplexMode === "front_only") {
-    return `<div class="print-page"><div class="page-content">${frontHtml}</div></div>`;
-  }
-
-  if (duplexMode === "back_only") {
-    const backHtml = buildCustomSlotHtml(cards, backSlots, layout, orientation);
-    return `<div class="print-page"><div class="page-content">${backHtml}</div></div>`;
-  }
-
-  if (duplexMode === "side_by_side") {
-    // Sisi depan dan belakang di halaman yang sama — slot sudah di-arrange untuk laminasi
-    const sideBySideSlots: PrintSlotAssignment[] = cards.flatMap((_, i) => [
-      { slotIndex: i * 2, cardIndex: i, side: "front" as const },
-      { slotIndex: i * 2 + 1, cardIndex: i, side: "back" as const },
-    ]);
-    const sbsHtml = buildCustomSlotHtml(
-      cards,
-      sideBySideSlots,
-      layout,
-      orientation,
-    );
-    return `<div class="print-page"><div class="page-content">${sbsHtml}</div></div>`;
-  }
-
-  // duplex: dua halaman terpisah
-  const backHtml = buildCustomSlotHtml(cards, backSlots, layout, orientation);
-  return (
-    `<div class="print-page"><div class="page-content">${frontHtml}</div></div>` +
-    `<div class="print-page"><div class="page-content">${backHtml}</div></div>`
-  );
+  const bleed = layout.bleedMm;
+  return buildPrintPages(layout, cards.length, orientation)
+    .map((page) => {
+      // Tiga lapis berurutan: bleed, kartu, tanda potong. Bleed kartu
+      // sebelah tidak boleh menimpa kartu yang sudah digambar.
+      let bleeds = "";
+      let trims = "";
+      let marks = "";
+      for (const item of page) {
+        const card = cards[item.cardIndex];
+        if (!card) continue;
+        const back = item.side === "back";
+        const src = back ? (card.backPng ?? card.frontPng) : card.frontPng;
+        const alt = escapeAttr(`${card.name} ${back ? "Belakang" : "Depan"}`);
+        if (bleed > 0) {
+          // ponytail: gambar yang sama dimuat dua kali saat bleed aktif;
+          // pakai satu sumber bersama bila lembar besar terasa berat.
+          bleeds += `<div class="card-bleed" style="left:${(item.xMm - bleed).toFixed(3)}mm;top:${(item.yMm - bleed).toFixed(3)}mm;"><img src="${src}" alt="" /></div>`;
+        }
+        trims += `<img class="card-trim" style="left:${item.xMm}mm;top:${item.yMm}mm;" src="${src}" alt="${alt}" />`;
+        for (const [x, y, w, h] of getCropMarkLinesMm(
+          layout,
+          item.xMm,
+          item.yMm,
+          orientation,
+        )) {
+          marks += `<div class="crop-line" style="left:${x}mm;top:${y}mm;width:${w}mm;height:${h}mm;"></div>`;
+        }
+      }
+      return `<div class="print-page">${bleeds}${trims}${marks}</div>`;
+    })
+    .join("");
 }
 
 // ===========================================================================
@@ -1050,7 +914,7 @@ export function printCardsDirectly(
     const printRoot = document.createElement("div");
     printRoot.id = "sppg-print-root";
     printRoot.innerHTML = `
-      <style>${buildCustomLayoutCss(layout, "front", orientation)}</style>
+      <style>${buildCustomLayoutCss(layout, orientation)}</style>
       ${buildCustomPrintHtml(cards, layout, orientation)}
     `;
     document.body.appendChild(printRoot);

@@ -86,3 +86,46 @@ export function opsiFilterUnit(
   }
   return [...kumpulan].sort((a, b) => a.localeCompare(b, "id"));
 }
+
+/** Baris lolos filter unit: "" berarti semua, `TANPA_UNIT` yang unitnya kosong. */
+export function cocokFilterUnit(
+  baris: Record<string, unknown>,
+  filterUnit: string,
+): boolean {
+  if (!filterUnit) return true;
+  const unit = String(baris.unit ?? "").trim();
+  return filterUnit === TANPA_UNIT ? unit === "" : unit === filterUnit;
+}
+
+/**
+ * Pilihan dropdown filter kelas: rombel yang benar-benar punya siswa di
+ * `baris` dan lolos `filterUnit`, sehingga memilih unit menyempitkan daftar
+ * kelasnya dan tidak pernah menawarkan kelas yang hasilnya kosong.
+ *
+ * Kuncinya `id_rombel`, bukan nama: "X IPA 1" tahun ajaran ini dan tahun lalu
+ * adalah dua rombel berbeda dengan nama yang sama.
+ */
+export function opsiFilterKelas(
+  baris: Record<string, unknown>[],
+  filterUnit: string,
+): { id: string; label: string }[] {
+  const kelas = new Map<string, { tingkat: string; nama: string }>();
+  for (const item of baris) {
+    const id = String(item.id_rombel ?? "").trim();
+    if (!id || !cocokFilterUnit(item, filterUnit)) continue;
+    kelas.set(id, {
+      tingkat: String(item.tingkat ?? "").trim(),
+      nama: String(item.nama_rombel ?? "").trim() || id,
+    });
+  }
+  return [...kelas]
+    .sort(
+      ([, a], [, b]) =>
+        (Number(a.tingkat) || 0) - (Number(b.tingkat) || 0) ||
+        a.nama.localeCompare(b.nama, "id", { numeric: true }),
+    )
+    .map(([id, { tingkat, nama }]) => ({
+      id,
+      label: tingkat ? `Kelas ${tingkat} - ${nama}` : nama,
+    }));
+}
