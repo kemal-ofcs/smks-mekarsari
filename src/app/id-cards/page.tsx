@@ -1329,16 +1329,19 @@ export default function IdCardsPage() {
       {/* TAB 1: DAFTAR & CETAK KARTU */}
       {activeTab === "cards" ? (
         <div className="space-y-5">
-          {/* Filter & Batch Actions Bar */}
-          <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-900/80 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-1 flex-wrap items-center gap-2">
+          {/* Filter & Batch Actions Bar. Satu baris yang membungkus: tombol
+              aksi ikut dalam barisan kontrol, bukan kolom tersendiri yang
+              ditengahkan terhadap filter. Bentuk lama membuat "Cetak Pilihan"
+              menggantung di antara dua baris begitu filternya terbungkus. */}
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 aria-label="Cari personil"
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Cari nama karyawan, NIK, atau divisi..."
-                className="min-h-10 flex-1 min-w-[200px] rounded-xl border border-white/10 bg-slate-950 px-3 text-xs text-white outline-none focus:border-sky-400"
+                className="min-h-10 min-w-[180px] flex-1 rounded-xl border border-white/10 bg-slate-950 px-3 text-xs text-white outline-none focus:border-sky-400"
               />
               <select
                 aria-label="Filter status kartu"
@@ -1385,45 +1388,46 @@ export default function IdCardsPage() {
                 onClick={() => void handleBackfill()}
                 disabled={loading}
                 className="min-h-10 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 text-xs font-semibold text-sky-300 hover:bg-sky-500/20 disabled:opacity-50 inline-flex items-center gap-1.5"
+                aria-label="Sinkronkan Siswa &amp; Guru ke daftar ID Card"
                 title="Sinkronkan personil baru (siswa dan guru) agar terdaftar di modul ID Card"
               >
                 <Icon name="refresh" className="size-3.5" />
-                Sinkronkan Siswa & Guru
-              </button>
-            </div>
-
-            {selectedIds.size > 0 ? (
-              <div className="flex items-center gap-2 animate-in fade-in">
-                <span className="text-xs font-bold text-sky-300">
-                  {selectedIds.size} dipilih
+                <span>
+                  Sinkronkan
+                  <span className="hidden 2xl:inline"> Siswa & Guru</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={handleOpenPrintBatch}
-                  disabled={printBusy}
-                  className="rounded-xl bg-sky-400 px-4 py-2 text-xs font-black text-slate-950 shadow-md hover:bg-sky-300 disabled:opacity-50 inline-flex items-center gap-2"
-                >
-                  <Icon name="scanner" className="size-3.5" />
-                  <span>Cetak Pilihan ({selectedIds.size})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedIds(new Set())}
-                  className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700"
-                >
-                  Batal
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={toggleSelectAll}
-                className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700 inline-flex items-center gap-2"
-              >
-                <Icon name="check" className="size-3.5" />
-                <span>Pilih Semua ({filteredRows.length})</span>
               </button>
-            )}
+
+              {selectedIds.size > 0 ? (
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenPrintBatch}
+                    disabled={printBusy}
+                    className="min-h-10 rounded-xl bg-sky-400 px-4 text-xs font-black text-slate-950 shadow-md hover:bg-sky-300 disabled:opacity-50 inline-flex items-center gap-2"
+                  >
+                    <Icon name="scanner" className="size-3.5" />
+                    <span>Cetak Pilihan ({selectedIds.size})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds(new Set())}
+                    className="min-h-10 rounded-xl border border-white/10 bg-slate-800 px-3 text-xs font-bold text-slate-300 hover:bg-slate-700"
+                  >
+                    Batal
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={toggleSelectAll}
+                  className="ml-auto min-h-10 rounded-xl border border-white/10 bg-slate-800 px-3 text-xs font-bold text-slate-300 hover:bg-slate-700 inline-flex items-center gap-2"
+                >
+                  <Icon name="check" className="size-3.5" />
+                  <span>Pilih Semua ({filteredRows.length})</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Cards Grid */}

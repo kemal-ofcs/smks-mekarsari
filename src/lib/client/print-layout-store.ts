@@ -133,6 +133,32 @@ export function getGridOriginMm(
   };
 }
 
+/**
+ * Margin yang menaruh grid kartu persis di tengah kertas. Grid yang lebih
+ * besar dari kertas mendapat margin 0; peringatan meluapnya tampil di panel.
+ */
+export function getCenteredMarginsMm(
+  layout: IdCardPrintLayoutConfig,
+  orientation: CardOrientation,
+): Pick<
+  IdCardPrintLayoutConfig,
+  "marginTopMm" | "marginBottomMm" | "marginLeftMm" | "marginRightMm"
+> {
+  const { width, height } = getCardTrimSizeMm(orientation);
+  const cols = Math.max(1, layout.gridCols);
+  const rows = Math.max(1, layout.gridRows);
+  const gridWidth = cols * width + (cols - 1) * layout.gapColMm;
+  const gridHeight = rows * height + (rows - 1) * layout.gapRowMm;
+  const x = Math.max(0, roundMm((layout.paperWidthMm - gridWidth) / 2));
+  const y = Math.max(0, roundMm((layout.paperHeightMm - gridHeight) / 2));
+  return {
+    marginTopMm: y,
+    marginBottomMm: y,
+    marginLeftMm: x,
+    marginRightMm: x,
+  };
+}
+
 /** Posisi kiri-atas garis potong kartu di sebuah slot, terhadap sudut kertas. */
 export function getSlotPositionMm(
   layout: IdCardPrintLayoutConfig,

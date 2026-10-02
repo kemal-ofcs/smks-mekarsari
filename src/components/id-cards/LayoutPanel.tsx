@@ -7,6 +7,7 @@ import {
   deletePrintLayoutPreset,
   generatePresetId,
   getCardTrimSizeMm,
+  getCenteredMarginsMm,
   getCropMarkLinesMm,
   getPaperDimensionsMm,
   getSlotPositionMm,
@@ -622,6 +623,22 @@ export function LayoutPanel({
               </label>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() =>
+              setActiveLayout((prev) => ({
+                ...prev,
+                ...getCenteredMarginsMm(prev, template?.orientation),
+              }))
+            }
+            className="min-h-10 w-full rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 text-xs font-bold text-sky-300 transition hover:bg-sky-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            Tengahkan kartu di kertas
+          </button>
+          <p className="text-[10px] text-slate-400">
+            Mengisi keempat margin supaya grid kartu berada persis di tengah.
+            Tekan lagi setelah mengubah kertas, kolom, baris, atau jarak.
+          </p>
         </div>
 
         {/* Tanda Potong & Finishing */}

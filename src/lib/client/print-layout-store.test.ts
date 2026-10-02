@@ -4,6 +4,7 @@ import {
   buildPrintPages,
   DEFAULT_PRINT_LAYOUT_PRESETS,
   getCardsPerPage,
+  getCenteredMarginsMm,
   getCropMarkLinesMm,
   getGridOriginMm,
 } from "./print-layout-store";
@@ -147,6 +148,29 @@ describe("cermin sisi belakang", () => {
       }
     });
   }
+});
+
+describe("tengahkan kartu di kertas", () => {
+  test("margin kiri-kanan dan atas-bawah membagi rata sisa kertas", () => {
+    // Grid 176,2 × 278 di A4 210 × 297.
+    const margin = getCenteredMarginsMm(A4, "landscape");
+    expect(margin).toEqual({
+      marginTopMm: 9.5,
+      marginBottomMm: 9.5,
+      marginLeftMm: 16.9,
+      marginRightMm: 16.9,
+    });
+    // Setelah ditengahkan, depan dan belakang mulai di titik yang sama.
+    const tengah = { ...A4, ...margin };
+    expect(getGridOriginMm(tengah, "back", "landscape")).toEqual(
+      getGridOriginMm(tengah, "front", "landscape"),
+    );
+  });
+
+  test("grid yang lebih besar dari kertas mendapat margin 0", () => {
+    const margin = getCenteredMarginsMm({ ...A4, gridCols: 3 }, "landscape");
+    expect(margin.marginLeftMm).toBe(0);
+  });
 });
 
 describe("kalibrasi sisi belakang", () => {
