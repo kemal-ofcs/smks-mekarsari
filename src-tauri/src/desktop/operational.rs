@@ -1019,7 +1019,7 @@ pub fn list_id_cards(state: &DesktopState, filter: &Value) -> Result<Value, Comm
         // langsung ke renderer kartu, dan tanpa kolom itu setiap kartu yang
         // dicetak dari sana berjabatan bawaan "Staff". Sama dengan
         // `getDaftarIdCard` di `lib/services/idcard.ts`.
-        "SELECT c.id_card_id, m.id_unik, m.nama, m.divisi, COALESCE(c.idcard_status, 'Belum'), c.idcard_pdf_url, c.idcard_last_generate, c.idcard_catatan, c.tanggal_generate, c.link_qr_png, m.kode_karyawan, m.status_aktif, m.token_absensi, m.qr_code, m.jabatan_status, m.unit, g.nip, g.nuptk, s.nisn, s.id_rombel, r.nama_rombel, CAST(r.tingkat AS TEXT) FROM master_data m LEFT JOIN id_card c ON c.id_unik = m.id_unik LEFT JOIN guru_data g ON g.id_guru = m.id_unik LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel ORDER BY m.nama;"
+        "SELECT c.id_card_id, m.id_unik, m.nama, m.divisi, COALESCE(c.idcard_status, 'Belum'), c.idcard_pdf_url, c.idcard_last_generate, c.idcard_catatan, c.tanggal_generate, c.link_qr_png, m.kode_karyawan, m.status_aktif, m.token_absensi, m.qr_code, m.jabatan_status, m.unit, g.nip, g.nuptk, s.nisn, s.id_rombel, r.nama_rombel, CAST(r.tingkat AS TEXT), s.nis FROM master_data m LEFT JOIN id_card c ON c.id_unik = m.id_unik LEFT JOIN guru_data g ON g.id_guru = m.id_unik LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel ORDER BY m.nama;"
     ).map_err(|_| CommandError::internal())?;
     let search = text(filter, "search").to_lowercase();
     let status = text(filter, "status");
@@ -1041,6 +1041,8 @@ pub fn list_id_cards(state: &DesktopState, filter: &Value) -> Result<Value, Comm
         "id_rombel": row.get::<_, Option<String>>(19)?,
         "nama_rombel": row.get::<_, Option<String>>(20)?,
         "tingkat": row.get::<_, Option<String>>(21)?,
+        // NIPD siswa, untuk elemen `student.nis` di template kartu.
+        "nis": row.get::<_, Option<String>>(22)?,
     }))).map_err(|_| CommandError::internal())?;
     let values = rows
         .collect::<Result<Vec<_>, _>>()
@@ -4461,8 +4463,8 @@ mod tests_identitas_karyawan {
                VALUES ('S-1', 'S-1', 'Budi', 'Peserta Didik', 1, 'SISWA', 'SMA');
              INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel)
                VALUES ('r-10a', 'ta-1', 10, 'X IPA 1');
-             INSERT INTO siswa_data (id_siswa, nama_lengkap, id_rombel, angkatan, created_at, updated_at)
-               VALUES ('S-1', 'Budi', 'r-10a', 2026, datetime('now'), datetime('now'));",
+             INSERT INTO siswa_data (id_siswa, nis, nama_lengkap, id_rombel, angkatan, created_at, updated_at)
+               VALUES ('S-1', '2024017', 'Budi', 'r-10a', 2026, datetime('now'), datetime('now'));",
         )
         .expect("seed siswa");
 
@@ -4476,9 +4478,11 @@ mod tests_identitas_karyawan {
         // Teks, bukan angka: sama dengan `CAST(r.tingkat AS TEXT)` di
         // `getDaftarIdCard` (TS), supaya halaman menerima bentuk yang sama.
         assert_eq!(siswa["tingkat"], "10");
+        assert_eq!(siswa["nis"], "2024017");
         let pegawai = baris.iter().find(|row| row["id_unik"] == "K-01").expect("pegawai");
         assert!(pegawai["id_rombel"].is_null());
         assert!(pegawai["nama_rombel"].is_null());
         assert!(pegawai["tingkat"].is_null());
+        assert!(pegawai["nis"].is_null());
     }
 }

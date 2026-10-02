@@ -423,6 +423,7 @@ export async function drawIdCardToCanvas(
       employee,
       company,
       qrPngOverride,
+      Boolean(showBoundingBoxes || selectedElementId),
     );
   }
 
@@ -589,6 +590,7 @@ async function renderSingleElement(
   employee: Record<string, unknown>,
   company?: CompanyProfile | null,
   qrPngOverride?: string,
+  designMode = false,
 ) {
   if (el.visible === false) return;
 
@@ -697,6 +699,12 @@ async function renderSingleElement(
         break;
       case "student.nisn":
         val = String(employee.nisn || "0012345678");
+        break;
+      case "student.nis":
+        // Contoh hanya tampil di perancang template, supaya elemennya bisa
+        // diposisikan. Di kartu yang dicetak, NIPD kosong tetap kosong:
+        // nomor karangan tidak boleh tercetak di kartu seorang siswa.
+        val = String(employee.nis || (designMode ? "2024001" : ""));
         break;
       case "employee.unit":
         val = String(employee.unit || "UNIT SEKOLAH");

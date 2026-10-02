@@ -26,6 +26,7 @@ export interface IdCardElement {
     | "teacher.nip"
     | "teacher.nuptk"
     | "student.nisn"
+    | "student.nis"
     | "employee.unit"
     | "static_text";
   staticValue?: string;

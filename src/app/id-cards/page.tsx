@@ -1992,6 +1992,8 @@ export default function IdCardsPage() {
                     setNewElementLabel("NUPTK (Guru/PTK)");
                   } else if (s === "student.nisn") {
                     setNewElementLabel("NISN (Peserta Didik)");
+                  } else if (s === "student.nis") {
+                    setNewElementLabel("NIPD (Peserta Didik)");
                   } else if (s === "employee.unit") {
                     setNewElementLabel("Unit Sekolah");
                   }
@@ -2029,6 +2031,9 @@ export default function IdCardsPage() {
                 <option value="text|teacher.nip">NIP Guru / PTK</option>
                 <option value="text|teacher.nuptk">NUPTK Guru / PTK</option>
                 <option value="text|student.nisn">NISN Peserta Didik</option>
+                <option value="text|student.nis">
+                  NIPD / NIS Peserta Didik
+                </option>
                 <option value="text|employee.unit">Unit Sekolah</option>
                 <option value="text|company.name">Nama Instansi</option>
                 <option value="text|company.terms">
