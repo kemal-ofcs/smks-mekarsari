@@ -1038,7 +1038,10 @@ export function LayoutPanel({
           ) : null}
         </div>
 
-        {/* Kalibrasi Printer */}
+        {/* Kalibrasi Printer. Kolom angkanya tidak dikendalikan React: input
+            angka terkendali menghapus tanda minus yang baru diketik, sehingga
+            mengetik -1.5 tersimpan sebagai 5. `key` mengisi ulang kolomnya
+            saat preset berganti. */}
         <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4 space-y-3">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
             Kalibrasi Offset Printer (mm)
@@ -1052,45 +1055,98 @@ export function LayoutPanel({
             <label className="block space-y-1 text-[11px] font-bold text-slate-400">
               Offset Horizontal (X)
               <input
+                key={activeLayout.presetId}
                 type="number"
                 min={-5}
                 max={5}
                 step={0.1}
-                value={activeLayout.printerOffsetXMm}
-                onChange={(e) =>
+                defaultValue={activeLayout.printerOffsetXMm}
+                onChange={(e) => {
+                  const nilai = Number(e.target.value);
+                  if (!Number.isFinite(nilai)) return;
                   setActiveLayout((prev) => ({
                     ...prev,
-                    printerOffsetXMm: Math.max(
-                      -5,
-                      Math.min(5, Number(e.target.value)),
-                    ),
-                  }))
-                }
+                    printerOffsetXMm: Math.max(-5, Math.min(5, nilai)),
+                  }));
+                }}
                 className="min-h-9 w-full rounded-xl border border-white/10 bg-slate-950 px-2 text-xs text-white"
               />
             </label>
             <label className="block space-y-1 text-[11px] font-bold text-slate-400">
               Offset Vertikal (Y)
               <input
+                key={activeLayout.presetId}
                 type="number"
                 min={-5}
                 max={5}
                 step={0.1}
-                value={activeLayout.printerOffsetYMm}
-                onChange={(e) =>
+                defaultValue={activeLayout.printerOffsetYMm}
+                onChange={(e) => {
+                  const nilai = Number(e.target.value);
+                  if (!Number.isFinite(nilai)) return;
                   setActiveLayout((prev) => ({
                     ...prev,
-                    printerOffsetYMm: Math.max(
-                      -5,
-                      Math.min(5, Number(e.target.value)),
-                    ),
-                  }))
-                }
+                    printerOffsetYMm: Math.max(-5, Math.min(5, nilai)),
+                  }));
+                }}
                 className="min-h-9 w-full rounded-xl border border-white/10 bg-slate-950 px-2 text-xs text-white"
               />
             </label>
           </div>
         </div>
+
+        {/* Kalibrasi Sisi Belakang */}
+        {activeLayout.duplexMode === "duplex" ||
+        activeLayout.duplexMode === "back_only" ? (
+          <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4 space-y-3">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Kalibrasi Sisi Belakang (mm)
+            </div>
+            <p className="text-[10px] text-slate-400">
+              Untuk kertas yang sisi belakangnya meleset walau ukurannya sudah
+              benar, biasanya kertas tebal. Cetak satu lembar, terawang dari
+              sisi depan, lalu isi seberapa jauh gambar belakang meleset dari
+              gambar depan di baris teratas dan baris terbawah. Positif =
+              belakang terlalu ke kanan atau terlalu ke bawah. Baris di
+              antaranya dihitung otomatis. Simpan sebagai preset tersendiri per
+              jenis kertas.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["backDriftTopXMm", "Baris atas: ke kanan"],
+                  ["backDriftTopYMm", "Baris atas: ke bawah"],
+                  ["backDriftBottomXMm", "Baris bawah: ke kanan"],
+                  ["backDriftBottomYMm", "Baris bawah: ke bawah"],
+                ] as const
+              ).map(([key, label]) => (
+                <label
+                  key={key}
+                  className="block space-y-1 text-[11px] font-bold text-slate-400"
+                >
+                  {label}
+                  <input
+                    key={activeLayout.presetId}
+                    type="number"
+                    min={-10}
+                    max={10}
+                    step={0.1}
+                    defaultValue={activeLayout[key] ?? 0}
+                    onChange={(e) => {
+                      const nilai = Number(e.target.value);
+                      if (!Number.isFinite(nilai)) return;
+                      setActiveLayout((prev) => ({
+                        ...prev,
+                        [key]: Math.max(-10, Math.min(10, nilai)),
+                      }));
+                    }}
+                    className="min-h-9 w-full rounded-xl border border-white/10 bg-slate-950 px-2 text-xs text-white"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {/* Tombol Simpan */}
         <button

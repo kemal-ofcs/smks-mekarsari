@@ -149,6 +149,47 @@ describe("cermin sisi belakang", () => {
   }
 });
 
+describe("kalibrasi sisi belakang", () => {
+  // Diterawang dari depan: baris atas pas, baris bawah belakangnya 2 mm
+  // terlalu ke kanan dan 1,5 mm terlalu ke bawah (kertas tebal).
+  const terukur = {
+    backDriftTopXMm: 0,
+    backDriftTopYMm: 0,
+    backDriftBottomXMm: 2,
+    backDriftBottomYMm: 1.5,
+  };
+
+  for (const flipAxis of ["long_edge", "short_edge"] as const) {
+    test(`gambar belakang digeser berlawanan dengan selisih terukur (${flipAxis})`, () => {
+      const layout = { ...A4, flipAxis, ...terukur };
+      const [depan, belakang] = buildPrintPages(layout, 10, "landscape");
+      for (const kartu of depan ?? []) {
+        const pasangan = belakang?.find((b) => b.cardIndex === kartu.cardIndex);
+        const fisik = fisikDariBelakang(
+          layout,
+          pasangan?.xMm ?? 0,
+          pasangan?.yMm ?? 0,
+        );
+        // Baris 0..4 pada jarak 56 mm; koreksinya naik rata dari atas ke bawah.
+        const t = (kartu.yMm - 10) / (4 * 56);
+        expect(fisik.x).toBeCloseTo(kartu.xMm - 2 * t, 3);
+        expect(fisik.y).toBeCloseTo(kartu.yMm - 1.5 * t, 3);
+      }
+    });
+  }
+
+  test("sisi depan dan mode berdampingan tidak ikut bergeser", () => {
+    const layout = { ...A4, ...terukur };
+    expect(buildPrintPages(layout, 10, "landscape")[0]).toEqual(
+      buildPrintPages(A4, 10, "landscape")[0],
+    );
+    const berdampingan = { duplexMode: "side_by_side" as const };
+    expect(
+      buildPrintPages({ ...layout, ...berdampingan }, 5, "landscape"),
+    ).toEqual(buildPrintPages({ ...A4, ...berdampingan }, 5, "landscape"));
+  });
+});
+
 describe("bleed dan tanda potong", () => {
   test("bleed tidak mengubah posisi maupun jarak kartu", () => {
     const tanpa = buildPrintPages(A4, 10, "landscape");
