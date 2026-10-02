@@ -1,7 +1,7 @@
 //! Lisensi offline Ed25519 (format `LIS1`) untuk build Desktop dan Mobile.
 //!
-//! Penerbitnya hidup DI LUAR repo ini — alat `E:\Freelance\lisensi` milik
-//! pemilik aplikasi, dipakai lintas produk — dan satu-satunya yang tahu private
+//! Penerbitnya hidup DI LUAR repo ini (folder `lisensi` milik pemilik aplikasi,
+//! dipakai lintas produk) dan satu-satunya yang tahu private
 //! key. Aplikasi hanya memegang PUBLIC key, jadi lisensi bisa diperiksa tanpa
 //! jaringan: janji offline-first tidak berkurang, dan mayoritas pemasangan
 //! (server sendiri / Database Lokal) memang tidak pernah bisa menjangkau server
@@ -9,13 +9,18 @@
 //!
 //! Aturan validasi isi lisensi di sini WAJIB identik dengan `validasiLisensi`
 //! di `lisensi/src/format.ts`; keduanya diuji dengan vektor yang sama
-//! (`VECTOR_V1`/`VECTOR_V2` di bawah = `VEKTOR_V1`/`VEKTOR_V2` di
+//! (`VECTOR_V1`..`VECTOR_V3` di bawah = `VEKTOR_V1`..`VEKTOR_V3` di
 //! `lisensi/test/format.test.ts`).
 //!
 //! Lisensinya disimpan di kunci `app_license` tabel `setting_gex_system` yang
 //! ikut sinkronisasi: dipasang SEKALI per lembaga, perangkat lain menerimanya
-//! lewat pull. Web sengaja tidak menegakkannya — build Web di-host pemilik
-//! aplikasi sendiri.
+//! lewat pull.
+//!
+//! Lisensi yang sama juga bisa mencakup versi Web self-hosted lewat dua kolom
+//! opsional, `instance_web` dan `website`. Yang MENEGAKKAN keduanya adalah
+//! server Web (`src/lib/server/license.ts`); di sini keduanya hanya divalidasi
+//! bentuknya, karena Desktop dan Mobile menarik lisensi yang sama lewat sync dan
+//! akan menolaknya sebagai "kolom tidak dikenal" bila tidak mengenal kolom itu.
 
 use base64::prelude::*;
 use ring::signature::{UnparsedPublicKey, ED25519};
@@ -50,8 +55,9 @@ const LICENSE_PREFIX: &str = "LIS1";
 const MAX_LICENSE_TEXT: usize = 16_384;
 const MAX_DEVICES: usize = 200;
 const MAX_HOLDER_CHARS: usize = 120;
+const MAX_WEBSITES: usize = 10;
 const LICENSE_KINDS: [&str; 2] = ["beli_putus", "sewa"];
-const LICENSE_KEYS: [&str; 10] = [
+const LICENSE_KEYS: [&str; 12] = [
     "v",
     "produk",
     "id",
@@ -62,6 +68,8 @@ const LICENSE_KEYS: [&str; 10] = [
     "berlaku_sampai",
     "perangkat",
     "kunci_mobile",
+    "instance_web",
+    "website",
 ];
 
 /// Izin yang tetap boleh dalam mode baca-saja selain semua `*.view`.
@@ -81,6 +89,11 @@ pub struct LicensePayload {
     pub valid_until: Option<String>,
     pub devices: Vec<String>,
     pub lock_mobile: bool,
+    /// Kode instance server Web yang dicakup; `None` = lisensi tidak berlaku di
+    /// Web. Tidak memengaruhi Desktop/Mobile.
+    pub web_instance: Option<String>,
+    /// Alamat tempat versi Web boleh dilayani; kosong = alamat apa pun.
+    pub websites: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -149,9 +162,13 @@ fn is_license_id(value: &str) -> bool {
 }
 
 pub fn is_device_code(value: &str) -> bool {
+    is_code_shape(value, |prefix| matches!(prefix, b'W' | b'L' | b'A' | b'M'))
+}
+
+fn is_code_shape(value: &str, prefix_ok: impl Fn(u8) -> bool) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 21
-        && matches!(bytes[0], b'W' | b'L' | b'A' | b'M')
+        && prefix_ok(bytes[0])
         && bytes.iter().enumerate().skip(1).all(|(index, byte)| {
             if index % 5 == 1 {
                 *byte == b'-'
@@ -159,6 +176,41 @@ pub fn is_device_code(value: &str) -> bool {
                 byte.is_ascii_digit() || (b'A'..=b'F').contains(byte)
             }
         })
+}
+
+/// Kode instance server Web: bentuknya sama dengan kode perangkat, berawalan
+/// `S`. Sengaja BUKAN anggota `is_device_code`: kode `S` di daftar `perangkat`
+/// membuat daftar itu tidak kosong, lalu semua Desktop ikut wajib terdaftar.
+pub fn is_instance_code(value: &str) -> bool {
+    is_code_shape(value, |prefix| prefix == b'S')
+}
+
+/// Cermin `alamatWebsiteSah` (TS), baris demi baris: nama domain lengkap, huruf
+/// kecil, tanpa skema, port, atau wildcard. Alamat IP ditolak (label terakhir
+/// wajib memuat huruf) karena IP jaringan lokal tidak unik antarsekolah.
+pub fn is_website_host(value: &str) -> bool {
+    if !(4..=253).contains(&value.len()) {
+        return false;
+    }
+    let labels = value.split('.').collect::<Vec<_>>();
+    if labels.len() < 2 {
+        return false;
+    }
+    for label in &labels {
+        let bytes = label.as_bytes();
+        if !(1..=63).contains(&bytes.len())
+            || !bytes
+                .iter()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
+            || bytes[0] == b'-'
+            || bytes[bytes.len() - 1] == b'-'
+        {
+            return false;
+        }
+    }
+    labels
+        .last()
+        .is_some_and(|label| label.bytes().any(|byte| byte.is_ascii_lowercase()))
 }
 
 fn string_field<'a>(object: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -243,6 +295,38 @@ fn validate_payload(value: &Value) -> Result<(String, LicensePayload), String> {
         .get("kunci_mobile")
         .and_then(Value::as_bool)
         .ok_or_else(|| "kunci_mobile harus true atau false.".to_owned())?;
+    let web_instance = match object.get("instance_web") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .filter(|code| is_instance_code(code))
+                .ok_or_else(|| "Kode instance Web tidak sah.".to_owned())?
+                .to_owned(),
+        ),
+    };
+    let mut websites: Vec<String> = Vec::new();
+    if let Some(value) = object.get("website") {
+        if web_instance.is_none() {
+            return Err("website hanya berlaku bersama instance_web.".into());
+        }
+        let entries = value
+            .as_array()
+            .filter(|entries| (1..=MAX_WEBSITES).contains(&entries.len()))
+            .ok_or_else(|| {
+                format!("Daftar website harus berupa array berisi 1-{MAX_WEBSITES} alamat.")
+            })?;
+        for entry in entries {
+            let host = entry
+                .as_str()
+                .filter(|host| is_website_host(host))
+                .ok_or_else(|| format!("Alamat website tidak sah: {entry}."))?;
+            if websites.iter().any(|seen| seen == host) {
+                return Err(format!("Alamat website ganda: {host}."));
+            }
+            websites.push(host.to_owned());
+        }
+    }
     Ok((
         product.to_owned(),
         LicensePayload {
@@ -254,6 +338,8 @@ fn validate_payload(value: &Value) -> Result<(String, LicensePayload), String> {
             valid_until,
             devices: codes,
             lock_mobile,
+            web_instance,
+            websites,
         },
     ))
 }
@@ -862,6 +948,8 @@ mod tests {
     /// Vektor kembar dari `lisensi/test/format.test.ts` — WAJIB sama persis.
     const VECTOR_V1: &str = "LIS1.eyJ2IjoxLCJwcm9kdWsiOiJrb3MtYWJzZW5zaSIsImlkIjoiTElTLTIwMjYtMDAwMSIsInBlbWVnYW5nIjoiU1BQRyBVamkgVmVrdG9yIiwiamVuaXMiOiJzZXdhIiwidGVyYml0IjoiMjAyNi0wOS0yMyIsInBlbWJhcnVhbl9zYW1wYWkiOiIyMDI3LTA5LTIzIiwiYmVybGFrdV9zYW1wYWkiOiIyMDI3LTA5LTIzIiwicGVyYW5na2F0IjpbIlctMUEyQi0zQzRELTVFNkYtN0E4QiJdLCJrdW5jaV9tb2JpbGUiOmZhbHNlfQ.mZd_W7LOv0CTY3GS9PjkRpLObWV7znUwvhBkYBorZJttYTlSAxSdiIjGsNkgmlinP8iXiTVXJ0G81WSqS_WCAQ";
     const VECTOR_V2: &str = "LIS1.eyJ2IjoxLCJwcm9kdWsiOiJrb3MtYWJzZW5zaSIsImlkIjoiTElTLTIwMjYtMDAwMiIsInBlbWVnYW5nIjoiU1BQRyBOdXNhbnRhcmEg4oCUIENhYmFuZyBUaW11ciIsImplbmlzIjoiYmVsaV9wdXR1cyIsInRlcmJpdCI6IjIwMjYtMDktMjMiLCJwZW1iYXJ1YW5fc2FtcGFpIjoiMjAyNy0wOS0yMyIsImJlcmxha3Vfc2FtcGFpIjpudWxsLCJwZXJhbmdrYXQiOltdLCJrdW5jaV9tb2JpbGUiOmZhbHNlfQ.SJNWqONTGK2IoCbHUtvTNO3meDdRHqtjc-TJx3s1hTbVp1zTPlLQOITVKO5b20uH1o81MnTeL4KC5RLD5SjMCQ";
+    const VECTOR_V3: &str = "LIS1.eyJ2IjoxLCJwcm9kdWsiOiJrb3MtYWJzZW5zaSIsImlkIjoiTElTLTIwMjYtMDAwMyIsInBlbWVnYW5nIjoiU01LIFVqaSBXZWIiLCJqZW5pcyI6ImJlbGlfcHV0dXMiLCJ0ZXJiaXQiOiIyMDI2LTEwLTAxIiwicGVtYmFydWFuX3NhbXBhaSI6IjIwMjctMTAtMDEiLCJiZXJsYWt1X3NhbXBhaSI6bnVsbCwicGVyYW5na2F0IjpbXSwia3VuY2lfbW9iaWxlIjpmYWxzZSwiaW5zdGFuY2Vfd2ViIjoiUy00QzFELTg4QUEtMDJGMy03QjE5Iiwid2Vic2l0ZSI6WyJhYnNlbnNpLnNtay11amkuc2NoLmlkIl19.yQHXDd8mv3E5n-hVioCL1lsLo-hkRZMlu8ZwPFoIyUNUw3rhvSMQznjxw18pc7glNk4FRfjMwylsg30rDrkbAw";
+    const INSTANCE: &str = "S-4C1D-88AA-02F3-7B19";
     const DEVICE: &str = "W-1A2B-3C4D-5E6F-7A8B";
     const OTHER_DEVICE: &str = "W-0000-1111-2222-3333";
 
@@ -921,6 +1009,8 @@ mod tests {
                 valid_until: Some("2027-09-23".into()),
                 devices: vec![DEVICE.into()],
                 lock_mobile: false,
+                web_instance: None,
+                websites: vec![],
             }
         );
         let v2 = parse_license(VECTOR_V2, &public_key()).expect("V2 sah");
@@ -928,6 +1018,104 @@ mod tests {
         assert_eq!(v2.kind, "beli_putus");
         assert_eq!(v2.valid_until, None);
         assert!(v2.devices.is_empty());
+        assert_eq!(v2.web_instance, None);
+
+        let v3 = parse_license(VECTOR_V3, &public_key()).expect("V3 sah");
+        assert_eq!(v3.holder, "SMK Uji Web");
+        assert_eq!(v3.web_instance.as_deref(), Some(INSTANCE));
+        assert_eq!(v3.websites, vec!["absensi.smk-uji.sch.id".to_owned()]);
+    }
+
+    /// Vektor aturan versi Web: daftar yang sama dengan `describe("versi Web")`
+    /// di `lisensi/test/format.test.ts` dan `license.test.ts` di server Web.
+    #[test]
+    fn web_fields_match_issuer() {
+        let reject = |changes: Value| parse_license(&with(changes), &public_key()).unwrap_err();
+        let accept = |changes: Value| parse_license(&with(changes), &public_key()).expect("sah");
+
+        // Instance saja sudah sah; website opsional.
+        let lan = accept(json!({ "instance_web": INSTANCE }));
+        assert_eq!(lan.web_instance.as_deref(), Some(INSTANCE));
+        assert!(lan.websites.is_empty());
+
+        for code in [
+            json!("W-4C1D-88AA-02F3-7B19"),
+            json!("s-4c1d-88aa-02f3-7b19"),
+            Value::Null,
+        ] {
+            assert_eq!(
+                reject(json!({ "instance_web": code })),
+                "Kode instance Web tidak sah."
+            );
+        }
+        // Kode instance tidak boleh menumpang di daftar perangkat.
+        assert!(reject(json!({ "perangkat": [INSTANCE] })).starts_with("Kode perangkat tidak sah"));
+
+        assert_eq!(
+            reject(json!({ "website": ["absensi.smk-uji.sch.id"] })),
+            "website hanya berlaku bersama instance_web."
+        );
+        let with_instance = |website: Value| {
+            reject(json!({ "instance_web": INSTANCE, "website": website }))
+        };
+        assert_eq!(
+            with_instance(json!([])),
+            "Daftar website harus berupa array berisi 1-10 alamat."
+        );
+        assert!(with_instance(json!("absensi.smk-uji.sch.id")).starts_with("Daftar website"));
+        let eleven = (0..11).map(|i| format!("a{i}.sch.id")).collect::<Vec<_>>();
+        assert!(with_instance(json!(eleven)).starts_with("Daftar website"));
+        assert_eq!(
+            with_instance(json!(["a.sch.id", "a.sch.id"])),
+            "Alamat website ganda: a.sch.id."
+        );
+        assert!(with_instance(json!(["192.168.1.10"])).starts_with("Alamat website tidak sah"));
+
+        for host in [
+            "absensi.smk-uji.sch.id",
+            "sekolah.id",
+            "a1.b2.co",
+            "xn--80ak6aa92e.com",
+        ] {
+            assert!(is_website_host(host), "{host} harus sah");
+        }
+        let too_long = format!("{}.id", "a".repeat(64));
+        for host in [
+            "192.168.1.10",
+            "localhost",
+            "Absensi.Sekolah.id",
+            "https://sekolah.id",
+            "sekolah.id:3000",
+            "sekolah.id/",
+            "*.sekolah.id",
+            "-a.sekolah.id",
+            "a-.sekolah.id",
+            "sekolah..id",
+            "sekolah.id.",
+            "sekolah.123",
+            "a.b",
+            too_long.as_str(),
+            "",
+        ] {
+            assert!(!is_website_host(host), "{host} harus ditolak");
+        }
+    }
+
+    /// Kolom Web tidak mengubah apa pun bagi Desktop dan Mobile: lisensi yang
+    /// sama, dengan atau tanpa kolom itu, dinilai persis sama.
+    #[test]
+    fn web_fields_do_not_affect_device_evaluation() {
+        let plain = with(json!({ "perangkat": [DEVICE] }));
+        let web = with(json!({
+            "perangkat": [DEVICE], "instance_web": INSTANCE,
+            "website": ["absensi.smk-uji.sch.id"]
+        }));
+        for (device, mobile) in [(DEVICE, false), (OTHER_DEVICE, false), (OTHER_DEVICE, true)] {
+            assert_eq!(
+                eval(&web, device, mobile, "2026-09-30", "2026-10-01").state,
+                eval(&plain, device, mobile, "2026-09-30", "2026-10-01").state
+            );
+        }
     }
 
     #[test]
@@ -1146,6 +1334,16 @@ mod tests {
             "2026-10-01",
         );
         assert_eq!(grant_from(&missing), None);
+    }
+
+    /// Vektor yang sama dengan `instanceCodeFromId` di `server/license.ts`:
+    /// server Web menurunkan kodenya dengan rumus ini, berawalan `S`.
+    #[test]
+    fn instance_code_matches_web_server() {
+        let code = device_code('S', "web-instance-uji");
+        assert_eq!(code, "S-3F5D-DA07-93C0-6927");
+        assert!(is_instance_code(&code));
+        assert!(!is_device_code(&code));
     }
 
     #[test]

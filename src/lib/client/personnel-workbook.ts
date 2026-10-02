@@ -95,6 +95,9 @@ export function exportStudents(
       ...row,
       kode_personil: row.kode_karyawan,
       kode_shift: shiftCodeOf(row.id_shift, shifts),
+      nama_rombel: row.tingkat
+        ? `Kelas ${row.tingkat} - ${row.nama_rombel}`
+        : row.nama_rombel || "",
     })),
     filename: `peserta-didik-${tanggal()}.xlsx`,
     sheetName: "Peserta Didik",
@@ -112,7 +115,11 @@ export function downloadStudentTemplate(lookups: ImportLookups) {
         nisn: "0012345678",
         nama_lengkap: "Nama Siswa",
         jenis_kelamin: "L",
-        nama_rombel: rombel ? String(rombel.nama_rombel) : "X-A",
+        nama_rombel: rombel
+          ? rombel.tingkat
+            ? `Kelas ${rombel.tingkat} - ${rombel.nama_rombel}`
+            : String(rombel.nama_rombel)
+          : "Kelas X - TSM",
         kode_shift: shift ? String(shift.kode_shift ?? "") : "1",
         nama_wali: "Nama Orang Tua",
         no_whatsapp_wali: "08123456789",

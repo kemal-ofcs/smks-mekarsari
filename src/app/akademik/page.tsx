@@ -9,6 +9,13 @@ import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
+import {
+  PRESET_TINGKAT_TEMPLATES,
+  parseUnitKeterangan,
+  resolveTingkatOptions,
+  serializeUnitKeterangan,
+  type TingkatItem,
+} from "@/lib/constants/academic-levels";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
   aktifkanTahunAjaran,
@@ -199,6 +206,79 @@ export default function AkademikPage() {
     ruang_kelas: "",
     is_aktif: 1,
   });
+
+  // State manajemen tingkat dinamis per unit
+  const [unitDeskripsi, setUnitDeskripsi] = useState("");
+  const [unitTingkatList, setUnitTingkatList] = useState<TingkatItem[]>([]);
+  const [newTingkatNum, setNewTingkatNum] = useState("");
+  const [newTingkatNama, setNewTingkatNama] = useState("");
+  const [unitTingkatError, setUnitTingkatError] = useState<string | null>(null);
+
+  // State pemilihan tingkat di modal rombel
+  const [rombelUnitFilter, setRombelUnitFilter] = useState("all");
+  const [showCustomTingkatInput, setShowCustomTingkatInput] = useState(false);
+
+  // Sinkronisasi data keterangan unit saat modal unit dibuka atau data unit berubah
+  useEffect(() => {
+    if (modalType === "unit") {
+      const parsed = parseUnitKeterangan(formUnit.keterangan);
+      setUnitDeskripsi(parsed.deskripsi);
+      setUnitTingkatList(parsed.daftar_tingkat);
+      setNewTingkatNum("");
+      setNewTingkatNama("");
+      setUnitTingkatError(null);
+    }
+  }, [modalType, formUnit.keterangan]);
+
+  const handleAddTingkatToUnit = () => {
+    setUnitTingkatError(null);
+    const num = Number(newTingkatNum);
+    if (
+      !newTingkatNum.trim() ||
+      Number.isNaN(num) ||
+      num < 0 ||
+      !Number.isInteger(num)
+    ) {
+      setUnitTingkatError(
+        "Angka tingkat wajib berupa bilangan bulat positif (cth: 0, 1, 10).",
+      );
+      return;
+    }
+    const exists = unitTingkatList.some((t) => t.tingkat === num);
+    if (exists) {
+      setUnitTingkatError(`Angka tingkat ${num} sudah ada di unit ini.`);
+      return;
+    }
+    const nama = newTingkatNama.trim() || `Kelas ${num}`;
+    const updated = [...unitTingkatList, { tingkat: num, nama }];
+    updated.sort((a, b) => a.tingkat - b.tingkat);
+    setUnitTingkatList(updated);
+    setNewTingkatNum("");
+    setNewTingkatNama("");
+  };
+
+  const handleRemoveTingkatFromUnit = (tingkat: number) => {
+    setUnitTingkatList((prev) => prev.filter((t) => t.tingkat !== tingkat));
+  };
+
+  const handleApplyPresetToUnit = (
+    key: keyof typeof PRESET_TINGKAT_TEMPLATES,
+  ) => {
+    const preset = PRESET_TINGKAT_TEMPLATES[key];
+    if (!preset) return;
+    setUnitTingkatList((prev) => {
+      const map = new Map<number, string>();
+      for (const item of prev) map.set(item.tingkat, item.nama);
+      for (const item of preset.tingkat) {
+        if (!map.has(item.tingkat)) {
+          map.set(item.tingkat, item.nama);
+        }
+      }
+      return Array.from(map.entries())
+        .map(([tingkat, nama]) => ({ tingkat, nama }))
+        .sort((a, b) => a.tingkat - b.tingkat);
+    });
+  };
 
   const [formMapel, setFormMapel] = useState<MapelInput>({
     kode_mapel: "",
@@ -395,7 +475,14 @@ export default function AkademikPage() {
       if (modalType === "tahun_ajaran") {
         await simpanTahunAjaran(formTA);
       } else if (modalType === "unit") {
-        await simpanUnit(formUnit);
+        const finalKeterangan = serializeUnitKeterangan(
+          unitDeskripsi,
+          unitTingkatList,
+        );
+        await simpanUnit({
+          ...formUnit,
+          keterangan: finalKeterangan,
+        });
       } else if (modalType === "jurusan") {
         await simpanJurusan(formJurusan);
       } else if (modalType === "rombel") {
@@ -482,6 +569,11 @@ export default function AkademikPage() {
                         urutan: unitList.length,
                         status_aktif: 1,
                       });
+                      setUnitDeskripsi("");
+                      setUnitTingkatList([]);
+                      setNewTingkatNum("");
+                      setNewTingkatNama("");
+                      setUnitTingkatError(null);
                     } else if (activeTab === "jurusan") {
                       setFormJurusan({
                         kode_jurusan: "",
@@ -490,13 +582,17 @@ export default function AkademikPage() {
                         is_aktif: 1,
                       });
                     } else if (activeTab === "rombel") {
+                      const allOpts = resolveTingkatOptions(unitList);
+                      const defaultTingkat = allOpts[0]?.tingkat ?? 10;
+                      setShowCustomTingkatInput(false);
+                      setRombelUnitFilter("all");
                       setFormRombel({
                         id_tahun_ajaran:
                           selectedTaForRombel ||
                           (tahunAjaranList[0]
                             ? String(tahunAjaranList[0].id_tahun_ajaran)
                             : ""),
-                        tingkat: 10,
+                        tingkat: defaultTingkat,
                         id_jurusan: jurusanList[0]
                           ? String(jurusanList[0].id_jurusan)
                           : "",
@@ -686,6 +782,7 @@ export default function AkademikPage() {
             rombelList={rombelList}
             tahunAjaranList={tahunAjaranList}
             selectedTaForRombel={selectedTaForRombel}
+            unitList={unitList}
             loading={loading}
             canManage={canManage}
             setFormRombel={setFormRombel}
@@ -891,7 +988,7 @@ export default function AkademikPage() {
                       htmlFor="unit-nama"
                       className="block text-xs font-semibold text-slate-300"
                     >
-                      Nama Unit (cth: TK, SD, SMP)
+                      Nama Unit (cth: TK, SD, SMP, SMA, SMK, Kuliah)
                     </label>
                     <input
                       id="unit-nama"
@@ -901,6 +998,7 @@ export default function AkademikPage() {
                       onChange={(e) =>
                         setFormUnit({ ...formUnit, nama_unit: e.target.value })
                       }
+                      placeholder="cth: TK, SMK, Perguruan Tinggi"
                       className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
                     />
                     <p className="mt-1 text-xs text-slate-500">
@@ -908,26 +1006,180 @@ export default function AkademikPage() {
                       ikut memindahkan semua personil yang memakai unit ini.
                     </p>
                   </div>
+
                   <div>
                     <label
-                      htmlFor="unit-keterangan"
+                      htmlFor="unit-deskripsi"
                       className="block text-xs font-semibold text-slate-300"
                     >
-                      Keterangan
+                      Deskripsi / Catatan Unit (Opsional)
                     </label>
                     <input
-                      id="unit-keterangan"
+                      id="unit-deskripsi"
                       type="text"
-                      value={formUnit.keterangan || ""}
-                      onChange={(e) =>
-                        setFormUnit({
-                          ...formUnit,
-                          keterangan: e.target.value,
-                        })
-                      }
+                      value={unitDeskripsi}
+                      onChange={(e) => setUnitDeskripsi(e.target.value)}
+                      placeholder="cth: Satuan Pendidikan Kejuruan"
                       className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
                     />
                   </div>
+
+                  {/* Kelola Daftar Tingkat / Jenjang Kelas */}
+                  <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-semibold text-sky-400">
+                          Daftar Tingkat / Kelas Unit
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          Kelola tingkat kelas di unit ini. Opsi ini akan
+                          otomatis muncul saat mengelola Rombel/Kelas.
+                        </p>
+                      </div>
+                      <span className="font-mono text-xs text-slate-400">
+                        {unitTingkatList.length} Tingkat
+                      </span>
+                    </div>
+
+                    {unitTingkatError ? (
+                      <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-400">
+                        {unitTingkatError}
+                      </div>
+                    ) : null}
+
+                    {/* List Tingkat yang ada */}
+                    {unitTingkatList.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-white/10 p-3 text-center text-xs text-slate-400">
+                        Belum ada tingkat kelas. Tambahkan manual di bawah ini
+                        sesuai kebutuhan Anda.
+                      </div>
+                    ) : (
+                      <div className="flex max-h-48 flex-col divide-y divide-white/5 overflow-y-auto pr-1">
+                        {unitTingkatList.map((t) => (
+                          <div
+                            key={t.tingkat}
+                            className="flex items-center justify-between py-1.5 text-xs"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="rounded border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 font-mono text-[11px] font-bold text-sky-400">
+                                Tingkat {t.tingkat}
+                              </span>
+                              <span className="font-semibold text-slate-200">
+                                {t.nama}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRemoveTingkatFromUnit(t.tingkat)
+                              }
+                              aria-label={`Hapus tingkat ${t.nama}`}
+                              className="rounded p-1 text-rose-400 hover:bg-rose-500/10"
+                            >
+                              <Icon name="trash" className="size-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Inline Form Tambah Tingkat */}
+                    <div className="flex flex-col gap-2 border-t border-white/5 pt-2">
+                      <span className="text-[11px] font-semibold text-slate-300">
+                        Tambah Tingkat Baru:
+                      </span>
+                      <div className="grid grid-cols-12 gap-2">
+                        <div className="col-span-4">
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="Angka (cth: 0, 10)"
+                            aria-label="Angka tingkat baru"
+                            value={newTingkatNum}
+                            onChange={(e) => setNewTingkatNum(e.target.value)}
+                            className="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                          />
+                        </div>
+                        <div className="col-span-5">
+                          <input
+                            type="text"
+                            placeholder="Nama (cth: TK A, Kelas 10)"
+                            aria-label="Nama tingkat baru"
+                            value={newTingkatNama}
+                            onChange={(e) => setNewTingkatNama(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddTingkatToUnit();
+                              }
+                            }}
+                            className="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <button
+                            type="button"
+                            onClick={handleAddTingkatToUnit}
+                            className="w-full rounded-xl bg-sky-600 px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-500"
+                          >
+                            + Tambah
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Preset Bantuan Otomatis (Opsional) */}
+                    <div className="flex flex-col gap-1.5 border-t border-white/5 pt-2">
+                      <span className="text-[10px] text-slate-400">
+                        Bantu isi otomatis (opsional):
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPresetToUnit("tk")}
+                          className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-white/10"
+                        >
+                          + TK (TK A, TK B)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPresetToUnit("sd")}
+                          className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-white/10"
+                        >
+                          + SD (Kelas 1-6)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPresetToUnit("smp")}
+                          className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-white/10"
+                        >
+                          + SMP (Kelas 7-9)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPresetToUnit("smk_sma")}
+                          className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-white/10"
+                        >
+                          + SMA/SMK (Kelas 10-12)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPresetToUnit("smk_4th")}
+                          className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-white/10"
+                        >
+                          + SMK 4 Th (10-13)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPresetToUnit("kuliah")}
+                          className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-white/10"
+                        >
+                          + Kuliah (Semester 1-8)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
                     <label
                       htmlFor="unit-urutan"
@@ -1072,44 +1324,101 @@ export default function AkademikPage() {
                       </select>
                     </div>
                     <div>
-                      <label
-                        htmlFor="rom-tingkat"
-                        className="block text-xs font-semibold text-slate-300"
-                      >
-                        Tingkat
-                      </label>
-                      <select
-                        id="rom-tingkat"
-                        value={formRombel.tingkat}
-                        onChange={(e) =>
-                          setFormRombel({
-                            ...formRombel,
-                            tingkat: Number(e.target.value),
-                          })
-                        }
-                        className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
-                      >
-                        <option
-                          value={10}
-                          className="bg-slate-900 text-slate-100"
+                      <div className="flex items-center justify-between">
+                        <label
+                          htmlFor={
+                            showCustomTingkatInput
+                              ? "rom-tingkat-custom"
+                              : "rom-tingkat"
+                          }
+                          className="block text-xs font-semibold text-slate-300"
                         >
-                          Kelas 10
-                        </option>
-                        <option
-                          value={11}
-                          className="bg-slate-900 text-slate-100"
+                          Tingkat / Kelas
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowCustomTingkatInput(!showCustomTingkatInput)
+                          }
+                          className="text-[11px] text-sky-400 underline hover:text-sky-300"
                         >
-                          Kelas 11
-                        </option>
-                        <option
-                          value={12}
-                          className="bg-slate-900 text-slate-100"
+                          {showCustomTingkatInput
+                            ? "Pilih dari daftar"
+                            : "Ketik angka manual"}
+                        </button>
+                      </div>
+
+                      {showCustomTingkatInput ? (
+                        <input
+                          id="rom-tingkat-custom"
+                          type="number"
+                          min={0}
+                          required
+                          aria-label="Angka tingkat kustom"
+                          value={formRombel.tingkat}
+                          onChange={(e) =>
+                            setFormRombel({
+                              ...formRombel,
+                              tingkat: Number(e.target.value) || 0,
+                            })
+                          }
+                          placeholder="Angka tingkat (cth: 0, 1, 10)"
+                          className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                        />
+                      ) : (
+                        <select
+                          id="rom-tingkat"
+                          aria-label="Pilih tingkat rombel"
+                          value={formRombel.tingkat}
+                          onChange={(e) =>
+                            setFormRombel({
+                              ...formRombel,
+                              tingkat: Number(e.target.value),
+                            })
+                          }
+                          className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
                         >
-                          Kelas 12
-                        </option>
-                      </select>
+                          {resolveTingkatOptions(
+                            unitList,
+                            rombelUnitFilter,
+                            formRombel.tingkat,
+                          ).map((opt) => (
+                            <option
+                              key={`${opt.tingkat}-${opt.label}-${opt.unitNama || ""}`}
+                              value={opt.tingkat}
+                              className="bg-slate-900 text-slate-100"
+                            >
+                              {opt.label}{" "}
+                              {opt.unitNama ? `(${opt.unitNama})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </div>
                   </div>
+
+                  {/* Saring jenjang unit jika terdapat lebih dari 1 unit dan bukan mode input manual */}
+                  {unitList.length > 1 && !showCustomTingkatInput ? (
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <span>Saring jenjang unit:</span>
+                      <select
+                        aria-label="Filter unit tingkat"
+                        value={rombelUnitFilter}
+                        onChange={(e) => setRombelUnitFilter(e.target.value)}
+                        className="rounded-lg border border-white/10 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 focus:border-sky-500 focus:outline-none"
+                      >
+                        <option value="all">Semua Unit</option>
+                        {unitList.map((u) => (
+                          <option
+                            key={String(u.id_unit)}
+                            value={String(u.id_unit)}
+                          >
+                            {String(u.nama_unit)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
                   <div>
                     <label
                       htmlFor="rom-jur"

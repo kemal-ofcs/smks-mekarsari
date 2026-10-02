@@ -1,48 +1,69 @@
 # ==============================================================================
-# Dockerfile untuk Next.js Web Server (Absensi SPPG / Manajemen Sekolah)
-# Multi-stage build menggunakan Bun untuk performa cepat dan ukuran image kecil
+# Manajemen Sekolah, server Web (Next.js) untuk pemasangan self-hosted.
+#
+# Hasilnya image yang berisi build `standalone` saja: tanpa `src/`, tanpa
+# `node_modules` lengkap, tanpa source map. Itulah yang diserahkan ke pembeli,
+# bukan repo ini.
+#
+# Menerbitkan (dijalankan pemilik aplikasi, dari root repo):
+#   bun run image:build --versi <versi>
+# Perintah itu membangun image ini bersama pasangannya dan menyusun folder
+# `rilis/` yang siap diserahkan. Untuk jalur registry, beri tag lalu dorong:
+#   docker tag <nama-image>:<versi> <registry>/<nama-image>:<versi>
+#   docker push <registry>/<nama-image>:<versi>
+# Pembeli memakainya lewat `deploy/docker-compose.yml`.
 # ==============================================================================
 
-# Stage 1: Install Dependencies
-FROM oven/bun:1.2-alpine AS deps
+# Tahap 1: dependensi
+FROM oven/bun:1.3-alpine AS deps
 WORKDIR /app
 
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-# Stage 2: Build Application
-FROM oven/bun:1.2-alpine AS builder
+# Tahap 2: build
+FROM oven/bun:1.3-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set environment agar Next.js mem-build untuk target web (bukan export desktop)
 ENV NODE_ENV=production
-ENV SPPG_BUILD_TARGET=web
-ENV NEXT_PUBLIC_SPPG_RUNTIME=web
 ENV NEXT_TELEMETRY_DISABLED=1
+# `build:web` menyetel target build-nya sendiri; yang ditambahkan di sini hanya
+# permintaan keluaran standalone (lihat `next.config.ts`).
+ENV KOS_BUILD_STANDALONE=1
+# Image pembeli SELALU menegakkan lisensi. Nilainya ditanam ke hasil build
+# (lihat `next.config.ts`), jadi tidak bisa dimatikan lewat `.env` di server.
+ENV KOS_LICENSE_ENFORCED=1
 
 RUN bun run build:web
 
-# Stage 3: Production Runner
-FROM oven/bun:1.2-alpine AS runner
+# Next.js menyalin setiap `.env*` yang ia temukan ke `.next/standalone/`.
+# `.dockerignore` sudah menahannya di luar konteks build; langkah ini penjaga
+# kedua, dan ia MEMERIKSA hasilnya. Menghapus tanpa memeriksa hanya memindahkan
+# kepercayaan: bila suatu saat ada berkas rahasia atau source yang lolos, build
+# harus gagal di sini, bukan sampai ke tangan pembeli.
+RUN rm -f .next/standalone/.env* \
+  && find .next/standalone -name "*.map" -not -path "*/node_modules/*" -delete \
+  && bocor="$(find .next/standalone -not -path '*/node_modules/*' \
+       \( -name '.env*' -o -name '*.ts' -o -name '*.tsx' -o -name '*.rs' -o -name '*.map' \) -print)" \
+  && if [ -n "$bocor" ]; then echo "Berkas yang tidak boleh ikut image:"; echo "$bocor"; exit 1; fi
+
+# Tahap 3: runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-ENV SPPG_BUILD_TARGET=web
-ENV NEXT_PUBLIC_SPPG_RUNTIME=web
+ENV HOSTNAME=0.0.0.0
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Salin aset dan build output
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/next.config.ts ./next.config.ts
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/public ./public
 
+USER node
 EXPOSE 3000
 
-CMD ["bun", "x", "next", "start", "-p", "3000", "-H", "0.0.0.0"]
+CMD ["node", "server.js"]

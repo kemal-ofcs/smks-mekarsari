@@ -2,339 +2,43 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { BrandLogo } from "@/components/ui/BrandLogo";
-import { Icon, type IconName } from "@/components/ui/Icon";
+import { Icon } from "@/components/ui/Icon";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
-import { type AppArea, canAccessArea } from "@/lib/auth/access";
-import { BRANDING } from "@/lib/constants/branding";
+import { canAccessArea } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
-import { useAppName } from "@/lib/hooks/useAppName";
-import { useCompanyName } from "@/lib/hooks/useCompanyName";
-import { useOnlineStatus } from "@/lib/hooks/useOnlineStatus";
-
-interface NavigationItem {
-  area: AppArea;
-  href: string;
-  icon: IconName;
-  label: string;
-}
-
-const NAVIGATION: NavigationItem[] = [
-  { area: "home", href: "/", icon: "home", label: "Home" },
-  { area: "scanner", href: "/scanner", icon: "scanner", label: "QR Scanner" },
-  {
-    area: "dashboard",
-    href: "/dashboard",
-    icon: "dashboard",
-    label: "Dashboard",
-  },
-  { area: "history", href: "/history", icon: "clock", label: "Riwayat" },
-  { area: "karyawan", href: "/karyawan", icon: "user", label: "Karyawan" },
-  { area: "idcards", href: "/id-cards", icon: "user", label: "ID Card" },
-  { area: "shift", href: "/shift", icon: "clock", label: "Shift" },
-  {
-    area: "holidays",
-    href: "/holidays",
-    icon: "calendar",
-    label: "Hari Libur",
-  },
-  {
-    area: "operational",
-    href: "/operational",
-    icon: "tools",
-    label: "Operasional",
-  },
-  {
-    area: "payroll",
-    href: "/payroll",
-    icon: "document",
-    label: "Penggajian",
-  },
-  {
-    area: "akademik",
-    href: "/akademik",
-    icon: "calendar",
-    label: "Akademik",
-  },
-  {
-    area: "presensi_kelas",
-    href: "/presensi-kelas",
-    icon: "clock",
-    label: "Presensi KBM",
-  },
-  {
-    area: "jurnal_mengajar",
-    href: "/jurnal-mengajar",
-    icon: "document",
-    label: "Jurnal Mengajar",
-  },
-  {
-    area: "leger_kehadiran",
-    href: "/leger-kehadiran",
-    icon: "calendar",
-    label: "Leger Kehadiran",
-  },
-  {
-    area: "guru",
-    href: "/guru",
-    icon: "user",
-    label: "Guru / PTK",
-  },
-  {
-    area: "siswa",
-    href: "/siswa",
-    icon: "users",
-    label: "Peserta Didik",
-  },
-  {
-    area: "dasbor_kehadiran",
-    href: "/dasbor-kehadiran",
-    icon: "dashboard",
-    label: "Dasbor Kehadiran",
-  },
-  {
-    area: "notifikasi_wa",
-    href: "/notifikasi-wa",
-    icon: "whatsapp",
-    label: "Notifikasi WA",
-  },
-  {
-    area: "bimbingan_konseling",
-    href: "/bimbingan-konseling",
-    icon: "users",
-    label: "Bimbingan Konseling",
-  },
-  {
-    area: "pmb",
-    href: "/pmb",
-    icon: "document",
-    label: "PMB",
-  },
-  {
-    area: "nilai",
-    href: "/nilai",
-    icon: "document",
-    label: "Penilaian",
-  },
-  {
-    area: "konten",
-    href: "/konten",
-    icon: "monitor",
-    label: "Situs Publik",
-  },
-  {
-    area: "audit",
-    href: "/audit-absensi",
-    icon: "alert",
-    label: "Audit Absensi",
-  },
-  {
-    area: "operators",
-    href: "/operators",
-    icon: "users",
-    label: "Operator",
-  },
-  {
-    area: "password_reset",
-    href: "/riwayat-reset-password",
-    icon: "lock",
-    label: "Riwayat Reset",
-  },
-  {
-    area: "karyawan",
-    href: "/riwayat-identitas-karyawan",
-    icon: "history",
-    label: "Riwayat Identitas",
-  },
-  {
-    area: "attendance_photo",
-    href: "/foto-absensi",
-    icon: "eye",
-    label: "Foto Absensi",
-  },
-  {
-    area: "settings",
-    href: "/settings",
-    icon: "settings",
-    label: "Pengaturan",
-  },
-];
-
-// Dikunci per href, bukan per area: satu area bisa punya beberapa halaman
-// (area `karyawan` juga memiliki Riwayat Identitas), dan hanya halaman induknya
-// yang pantas mengisi baris utama.
-const PRIMARY_HREFS = new Set([
-  "/",
-  "/scanner",
-  "/operational",
-  "/karyawan",
-  "/settings",
-]);
-const MOBILE_FIXED_HREFS = PRIMARY_HREFS;
+import {
+  BrandLink,
+  setDrawerOpen,
+  toggleDesktopSidebar,
+  useSidebarState,
+} from "./AppSidebar";
+import {
+  BOTTOM_BAR_HREFS,
+  NAVIGATION,
+  routeIsActive,
+} from "./navigation-items";
 
 /**
- * Pengelompokan isi menu "Kelola".
- *
- * Dua puluh halaman dalam satu daftar datar memaksa orang membaca seluruhnya
- * untuk menemukan satu, dan gulirannya tidak memberi tahu apa pun tentang sudah
- * sampai di mana. Kelompok berjudul mengubahnya menjadi lima blok berisi 3-7
- * yang bisa dilewati sekaligus.
- *
- * Pengelompokan ini MURNI TAMPILAN. Tidak ada rute yang berubah, tidak ada
- * halaman yang digabung, dan hak aksesnya tetap ditentukan `canAccessArea` per
- * item seperti sebelumnya — kelompok yang seluruh isinya tidak boleh diakses
- * pengguna ini tidak dirender sama sekali, judulnya sekalian.
- *
- * `Operator` masuk SISTEM, bukan KEPEGAWAIAN: yang dikelola di sana adalah akun
- * aplikasi beserta role-nya, satu urusan dengan Riwayat Reset dan Pengaturan —
- * bukan data orang seperti Karyawan.
+ * Bilah atas dan bilah bawah layar sempit. Daftar menunya sendiri ada di
+ * `AppSidebar`; di sini hanya tombol yang membuka atau menyembunyikannya.
  */
-const MANAGEMENT_GROUPS: ReadonlyArray<{
-  label: string;
-  areas: readonly AppArea[];
-}> = [
-  { label: "Personil & PD", areas: ["karyawan", "guru", "siswa", "idcards"] },
-  {
-    label: "Akademik & KBM",
-    areas: [
-      "akademik",
-      "presensi_kelas",
-      "jurnal_mengajar",
-      "leger_kehadiran",
-      "nilai",
-      "bimbingan_konseling",
-    ],
-  },
-  {
-    label: "Kehadiran & Gerbang",
-    areas: ["dasbor_kehadiran", "audit", "attendance_photo", "history"],
-  },
-  {
-    label: "Operasional & Payroll",
-    areas: ["operational", "payroll", "notifikasi_wa"],
-  },
-  {
-    label: "Situs Publik",
-    areas: ["konten", "pmb"],
-  },
-  {
-    label: "Sistem & Pengaturan",
-    areas: ["settings", "operators", "password_reset", "shift", "holidays"],
-  },
-];
-
-function routeIsActive(pathname: string, href: string) {
-  return href === "/"
-    ? pathname === href
-    : pathname === href || pathname.startsWith(`${href}/`);
-}
-
-function NavigationLink({
-  item,
-  pathname,
-  compact = false,
-  onNavigate,
-}: {
-  item: NavigationItem;
-  pathname: string;
-  compact?: boolean;
-  onNavigate?: () => void;
-}) {
-  const active = routeIsActive(pathname, item.href);
-  return (
-    <Link
-      href={item.href}
-      onClick={onNavigate}
-      aria-current={active ? "page" : undefined}
-      className={`group flex items-center rounded-xl font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-        compact
-          ? "min-h-10 gap-1.5 px-2 text-xs xl:px-2.5"
-          : "min-h-11 gap-2 px-4 text-sm"
-      } ${
-        active
-          ? "bg-sky-600 dark:bg-[#003399] text-white shadow-md shadow-sky-600/20 dark:shadow-blue-950/30 ring-1 ring-black/5 dark:ring-white/15"
-          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.07] hover:text-slate-900 dark:hover:text-white"
-      }`}
-    >
-      <Icon name={item.icon} className="size-4 shrink-0" />
-      <span className="truncate">{item.label}</span>
-    </Link>
-  );
-}
-
 export function HeaderBar() {
   const { user, logout } = useAuth();
-  const isOnline = useOnlineStatus();
   const pathname = usePathname();
-  const appName = useAppName();
-  const companyName = useCompanyName();
-  const [desktopMenuOpen, setDesktopMenuOpen] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    if (!desktopMenuOpen && !mobileMenuOpen) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setDesktopMenuOpen(false);
-        setMobileMenuOpen(false);
-      }
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [desktopMenuOpen, mobileMenuOpen]);
-
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [mobileMenuOpen]);
+  const { desktopOpen, drawerOpen } = useSidebarState();
 
   if (!user) return null;
 
   const visibleNavigation = NAVIGATION.filter((item) =>
     canAccessArea(user, item.area),
   );
-  const primaryNavigation = visibleNavigation.filter((item) =>
-    PRIMARY_HREFS.has(item.href),
-  );
-  const managementNavigation = visibleNavigation.filter(
-    (item) => !PRIMARY_HREFS.has(item.href),
-  );
-  const activeManagementItem = managementNavigation.find((item) =>
-    routeIsActive(pathname, item.href),
-  );
-
-  // Kelompok yang benar-benar punya isi untuk pengguna ini. Kelompok yang
-  // seluruh halamannya di luar haknya tidak dirender, judulnya sekalian.
-  const managementGroups = MANAGEMENT_GROUPS.map((group) => ({
-    label: group.label,
-    items: group.areas
-      .map((area) => managementNavigation.find((item) => item.area === area))
-      .filter((item): item is NavigationItem => Boolean(item)),
-  })).filter((group) => group.items.length > 0);
-
-  // Jaring pengaman: halaman baru yang lupa dimasukkan ke `MANAGEMENT_GROUPS`
-  // TETAP TAMPIL, bukan hilang diam-diam. Menu yang menelan halaman tanpa suara
-  // jauh lebih buruk daripada menu yang sedikit tidak rapi, dan hilangnya tidak
-  // akan tertangkap gerbang mana pun — `audit:page-guard` memeriksa izin, bukan
-  // apakah halamannya bisa dicapai dari navigasi.
-  const groupedAreas = new Set(MANAGEMENT_GROUPS.flatMap((g) => g.areas));
-  const ungroupedItems = managementNavigation.filter(
-    (item) => !groupedAreas.has(item.area),
-  );
-
   const mobileNavigation = visibleNavigation.filter((item) =>
-    MOBILE_FIXED_HREFS.has(item.href),
+    BOTTOM_BAR_HREFS.has(item.href),
   );
   const contextualMobileItem =
     visibleNavigation.find(
       (item) =>
-        !MOBILE_FIXED_HREFS.has(item.href) &&
-        routeIsActive(pathname, item.href),
+        !BOTTOM_BAR_HREFS.has(item.href) && routeIsActive(pathname, item.href),
     ) ?? visibleNavigation.find((item) => item.area === "history");
   if (
     contextualMobileItem &&
@@ -349,133 +53,29 @@ export function HeaderBar() {
   return (
     <>
       <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/90 px-3 py-2.5 shadow-xl shadow-slate-950/30 backdrop-blur-xl sm:px-5">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3 xl:gap-4">
-            <Link
-              href="/"
-              onClick={() => {
-                setDesktopMenuOpen(false);
-                setMobileMenuOpen(false);
-              }}
-              className="group flex min-w-0 shrink-0 items-center gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
-              aria-label={`Buka Home ${BRANDING.appDisplayName}`}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={toggleDesktopSidebar}
+              aria-expanded={desktopOpen}
+              aria-label="Menu samping"
+              title={
+                desktopOpen
+                  ? "Sembunyikan menu samping"
+                  : "Tampilkan menu samping"
+              }
+              className="hidden size-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-300 transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 lg:grid"
             >
-              <BrandLogo size={36} />
-              <span className="min-w-0 leading-tight">
-                <span className="block max-w-36 truncate text-sm font-black tracking-tight text-white xl:max-w-44">
-                  {appName}
-                </span>
-                <span className="block max-w-28 truncate text-[10px] font-semibold text-sky-300 xl:max-w-36">
-                  {companyName}
-                </span>
-                <span className="flex items-center gap-1.5 text-[10px] font-medium text-slate-400">
-                  <span
-                    className={`size-1.5 rounded-full ${isOnline ? "bg-emerald-400" : "bg-amber-300"}`}
-                  />
-                  <span className="truncate">
-                    {isOnline ? "Online" : "Offline"}
-                  </span>
-                </span>
-              </span>
-            </Link>
-
-            <nav
-              aria-label="Navigasi utama"
-              className="hidden items-center gap-1 rounded-2xl border border-white/10 bg-white/[0.04] p-1 lg:flex"
-            >
-              {primaryNavigation.map((item) => (
-                <NavigationLink
-                  key={item.href}
-                  item={item}
-                  pathname={pathname}
-                  compact
-                  onNavigate={() => setDesktopMenuOpen(false)}
-                />
-              ))}
-
-              {managementNavigation.length > 0 ? (
-                <div className="relative">
-                  <button
-                    type="button"
-                    aria-expanded={desktopMenuOpen}
-                    aria-controls="desktop-management-menu"
-                    onClick={() => setDesktopMenuOpen((open) => !open)}
-                    className={`flex min-h-10 items-center gap-1.5 rounded-xl px-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 xl:px-2.5 ${
-                      activeManagementItem
-                        ? "bg-sky-600 dark:bg-[#003399] text-white shadow-md shadow-sky-600/20 dark:shadow-blue-950/30"
-                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.07] hover:text-slate-900 dark:hover:text-white"
-                    }`}
-                  >
-                    <Icon
-                      name={activeManagementItem?.icon ?? "tools"}
-                      className="size-4"
-                    />
-                    <span className="max-w-20 truncate xl:max-w-24">
-                      {activeManagementItem?.label ?? "Kelola"}
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      className={`text-[10px] transition ${desktopMenuOpen ? "rotate-180" : ""}`}
-                    >
-                      ▼
-                    </span>
-                  </button>
-
-                  {desktopMenuOpen ? (
-                    <div
-                      id="desktop-management-menu"
-                      // `max-h` + guliran sendiri: panel ini tumbuh mengikuti
-                      // jumlah halaman yang boleh diakses, dan tanpa batas ia
-                      // memanjang melewati tepi layar pada laptop pendek —
-                      // item terakhir tidak akan pernah bisa diklik.
-                      className="absolute left-0 top-[calc(100%+0.65rem)] z-50 max-h-[70vh] w-64 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-slate-900/98 p-2 shadow-2xl shadow-slate-950/70 backdrop-blur-xl"
-                    >
-                      {managementGroups.map((group, index) => (
-                        <div
-                          key={group.label}
-                          className={
-                            index > 0
-                              ? "mt-1 border-t border-white/10 pt-1"
-                              : undefined
-                          }
-                        >
-                          <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                            {group.label}
-                          </p>
-                          {group.items.map((item) => (
-                            <NavigationLink
-                              key={item.href}
-                              item={item}
-                              pathname={pathname}
-                              onNavigate={() => setDesktopMenuOpen(false)}
-                            />
-                          ))}
-                        </div>
-                      ))}
-                      {ungroupedItems.length > 0 ? (
-                        <div className="mt-1 border-t border-white/10 pt-1">
-                          <p className="px-3 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                            Lainnya
-                          </p>
-                          {ungroupedItems.map((item) => (
-                            <NavigationLink
-                              key={item.href}
-                              item={item}
-                              pathname={pathname}
-                              onNavigate={() => setDesktopMenuOpen(false)}
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </nav>
+              <Icon name="menu" className="size-5" />
+            </button>
+            {/* Di layar lebar merek sudah ada di kepala sidebar selama ia terbuka. */}
+            <div className={`min-w-0 ${desktopOpen ? "lg:hidden" : ""}`}>
+              <BrandLink />
+            </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            {/* Theme Switcher Toggle */}
             <ThemeToggle variant="compact" />
 
             <div className="hidden min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-2.5 py-1.5 xl:flex">
@@ -505,59 +105,6 @@ export function HeaderBar() {
         </div>
       </header>
 
-      {mobileMenuOpen ? (
-        <div className="fixed inset-0 z-[60] lg:hidden">
-          <button
-            type="button"
-            aria-label="Tutup menu"
-            onClick={() => setMobileMenuOpen(false)}
-            className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"
-          />
-          <section
-            id="mobile-all-menu"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Semua menu aplikasi"
-            className="absolute inset-x-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] max-h-[min(70dvh,34rem)] overflow-y-auto rounded-3xl border border-white/10 bg-slate-900 p-4 shadow-2xl shadow-black/70 sm:inset-x-6"
-          >
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-300">
-                  Navigasi
-                </p>
-                <h2 className="text-base font-bold text-white">
-                  Semua menu aplikasi
-                </h2>
-                <p className="mt-0.5 max-w-52 truncate text-xs text-slate-400">
-                  {user.nama_operator} · {user.role}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <ThemeToggle variant="segmented" />
-                <button
-                  type="button"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="grid size-10 place-items-center rounded-xl bg-white/[0.06] text-xl text-slate-300"
-                  aria-label="Tutup semua menu"
-                >
-                  &times;
-                </button>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {visibleNavigation.map((item) => (
-                <NavigationLink
-                  key={item.href}
-                  item={item}
-                  pathname={pathname}
-                  onNavigate={() => setMobileMenuOpen(false)}
-                />
-              ))}
-            </div>
-          </section>
-        </div>
-      ) : null}
-
       <nav
         aria-label="Navigasi mobile"
         className="mobile-safe-bottom fixed inset-x-0 bottom-0 z-[70] border-t border-slate-200/80 dark:border-white/10 bg-white/95 dark:bg-slate-950/96 px-2 pt-2 shadow-[0_-10px_30px_rgba(0,0,0,0.06)] dark:shadow-[0_-14px_40px_rgba(2,8,23,0.55)] backdrop-blur-xl lg:hidden"
@@ -570,7 +117,6 @@ export function HeaderBar() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={() => setMobileMenuOpen(false)}
                   aria-current={active ? "page" : undefined}
                   aria-label="Buka Terminal Scanner QR Instan"
                   className="group relative -top-3.5 flex flex-col items-center px-1"
@@ -604,7 +150,6 @@ export function HeaderBar() {
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={() => setMobileMenuOpen(false)}
                 aria-current={active ? "page" : undefined}
                 className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:scale-95 ${
                   active
@@ -623,17 +168,19 @@ export function HeaderBar() {
           {hasMoreMobileItems ? (
             <button
               type="button"
-              aria-expanded={mobileMenuOpen}
-              aria-controls="mobile-all-menu"
-              onClick={() => setMobileMenuOpen((open) => !open)}
+              aria-haspopup="dialog"
+              aria-expanded={drawerOpen}
+              onClick={() => setDrawerOpen(true)}
               className={`flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 ${
-                mobileMenuOpen
+                drawerOpen
                   ? "bg-sky-400/15 text-sky-200"
                   : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
               }`}
             >
-              <Icon name="tools" className="size-5" />
-              <span>Menu</span>
+              <Icon name="menu" className="size-5" />
+              {/* Ukuran di span: `button { font: inherit }` di globals.css
+                  mengalahkan kelas ukuran teks pada tombolnya sendiri. */}
+              <span className="text-[10px] font-bold">Menu</span>
             </button>
           ) : null}
         </div>

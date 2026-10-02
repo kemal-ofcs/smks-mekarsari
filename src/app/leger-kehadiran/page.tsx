@@ -427,7 +427,7 @@ export default function LegerKehadiranPage() {
                 <thead className="text-xs uppercase bg-slate-950/70 text-slate-400 border-b border-slate-800">
                   <tr>
                     <th className="px-3 py-3 w-12 text-center">No</th>
-                    <th className="px-3 py-3">NIS</th>
+                    <th className="px-3 py-3">NIPD</th>
                     <th className="px-3 py-3">Nama Lengkap</th>
                     <th className="px-3 py-3">Kelas</th>
                     <th className="px-3 py-3 text-center">Hadir</th>
@@ -519,7 +519,7 @@ export default function LegerKehadiranPage() {
               <thead className="text-xs uppercase bg-slate-950/70 text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="px-3 py-3 w-12 text-center">No</th>
-                  <th className="px-3 py-3">NIS</th>
+                  <th className="px-3 py-3">NIPD</th>
                   <th className="px-3 py-3">Nama Lengkap</th>
                   <th className="px-3 py-3">Kelas</th>
                   <th className="px-3 py-3 text-center">Hadir</th>

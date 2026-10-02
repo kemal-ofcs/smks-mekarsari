@@ -88,6 +88,7 @@ export default function SiswaPage() {
   const [unitList, setUnitList] = useState<Record<string, unknown>[]>([]);
   const [formData, setFormData] = useState<SiswaInput>({
     id_siswa: "",
+    kode_karyawan: "",
     nama_lengkap: "",
     nis: "",
     nisn: "",
@@ -102,6 +103,8 @@ export default function SiswaPage() {
 
   // QR Modal State
   const [qrModalData, setQrModalData] = useState<{
+    id_siswa: string;
+    kode_karyawan: string;
     nama: string;
     nis: string;
     rombel: string;
@@ -227,6 +230,7 @@ export default function SiswaPage() {
   const handleOpenAdd = () => {
     setFormData({
       id_siswa: "",
+      kode_karyawan: "",
       nama_lengkap: "",
       nis: "",
       nisn: "",
@@ -249,6 +253,7 @@ export default function SiswaPage() {
     setIsEditing(true);
     setFormData({
       id_siswa: String(item.id_siswa),
+      kode_karyawan: item.kode_karyawan ? String(item.kode_karyawan) : "",
       nama_lengkap: String(item.nama_lengkap),
       nis: item.nis ? String(item.nis) : "",
       nisn: item.nisn ? String(item.nisn) : "",
@@ -313,9 +318,13 @@ export default function SiswaPage() {
     try {
       const png = await createQrPng(payload, 400);
       setQrModalData({
+        id_siswa: String(item.id_siswa || ""),
+        kode_karyawan: String(item.kode_karyawan || item.nis || "-"),
         nama: String(item.nama_lengkap),
         nis: String(item.nis || item.nisn || "-"),
-        rombel: String(item.nama_rombel || `Kelas ${item.tingkat}`),
+        rombel: item.tingkat
+          ? `Kelas ${item.tingkat}${item.nama_rombel ? ` - ${item.nama_rombel}` : ""}`
+          : String(item.nama_rombel || "-"),
         qrPng: png,
       });
     } catch {
@@ -332,7 +341,7 @@ export default function SiswaPage() {
     isSubmittingRef.current = true;
     setSaving(true);
     try {
-      const hasil = await simpanSiswa(formData);
+      const hasil = await simpanSiswa({ ...formData, is_edit: isEditing });
       const peringatanFoto = isEditing
         ? null
         : await simpanFotoPersonilBaru(hasil.id_siswa, fotoBaru);
@@ -543,7 +552,7 @@ export default function SiswaPage() {
     password: string,
   ) => {
     const nomor = String(student.no_whatsapp_wali || "");
-    const pesan = `Kata sandi sementara portal wali untuk ${String(student.nama_lengkap || "ananda")}: ${password}\n\nMasuk dengan NIS/NISN anak dan kata sandi ini, lalu buat kata sandi Anda sendiri.`;
+    const pesan = `Kata sandi sementara portal wali untuk ${String(student.nama_lengkap || "ananda")}: ${password}\n\nMasuk dengan NIPD/NISN anak dan kata sandi ini, lalu buat kata sandi Anda sendiri.`;
     if (!nomor || !(await openWhatsAppChat(nomor, pesan))) {
       setFeedback({
         tone: "error",
@@ -734,7 +743,7 @@ export default function SiswaPage() {
             <input
               aria-label="Cari peserta didik"
               type="text"
-              placeholder="Cari peserta didik berdasarkan nama, NIS, NISN, atau nama orang tua/wali..."
+              placeholder="Cari peserta didik berdasarkan nama, NIPD, NISN, atau nama orang tua/wali..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 pl-10 text-sm text-slate-100 placeholder-slate-500 shadow-inner focus:border-sky-500 focus:outline-none"
@@ -818,8 +827,8 @@ export default function SiswaPage() {
                 <tr>
                   <th className="px-6 py-4">Foto</th>
                   <th className="px-6 py-4">Peserta Didik</th>
-                  <th className="px-6 py-4">NIS / NISN</th>
-                  <th className="px-6 py-4">Rombel / Kelas</th>
+                  <th className="px-6 py-4">NIPD / NISN</th>
+                  <th className="px-6 py-4">Kelas / Rombel</th>
                   <th className="px-6 py-4">Unit</th>
                   <th className="px-6 py-4">Orang Tua / Wali</th>
                   <th className="px-6 py-4">Status</th>
@@ -884,7 +893,7 @@ export default function SiswaPage() {
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono text-xs text-slate-300">
-                          <div>NIS: {String(item.nis || "-")}</div>
+                          <div>NIPD: {String(item.nis || "-")}</div>
                           <div className="text-slate-400">
                             NISN: {String(item.nisn || "-")}
                           </div>
@@ -1014,30 +1023,56 @@ export default function SiswaPage() {
               onSubmit={(e) => void handleSave(e)}
               className="flex flex-col gap-4 py-2"
             >
-              <div>
-                <label
-                  htmlFor="siswa-id"
-                  className="block text-xs font-semibold text-slate-300"
-                >
-                  ID Unik
-                </label>
-                <input
-                  id="siswa-id"
-                  type="text"
-                  value={formData.id_siswa || ""}
-                  readOnly={isEditing}
-                  disabled={isEditing}
-                  placeholder="Kosongkan untuk dibuatkan otomatis"
-                  onChange={(e) =>
-                    setFormData({ ...formData, id_siswa: e.target.value })
-                  }
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  {isEditing
-                    ? "ID tidak dapat diubah. Ia menjadi kunci absensi, kartu, nilai, dan QR yang sudah tercetak."
-                    : "Boleh diisi sendiri. Dikosongkan berarti sistem yang membuatkannya."}
-                </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="siswa-id"
+                    className="block text-xs font-semibold text-slate-300"
+                  >
+                    ID Unik
+                  </label>
+                  <input
+                    id="siswa-id"
+                    type="text"
+                    value={formData.id_siswa || ""}
+                    readOnly={isEditing}
+                    disabled={isEditing}
+                    placeholder="Kosongkan untuk otomatis"
+                    onChange={(e) =>
+                      setFormData({ ...formData, id_siswa: e.target.value })
+                    }
+                    className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {isEditing
+                      ? "ID unik kunci absensi, kartu, dan QR."
+                      : "Boleh diisi sendiri. Dikosongkan berarti dibuatkan sistem."}
+                  </p>
+                </div>
+                <div>
+                  <label
+                    htmlFor="siswa-kode"
+                    className="block text-xs font-semibold text-slate-300"
+                  >
+                    Kode Personil / Karyawan
+                  </label>
+                  <input
+                    id="siswa-kode"
+                    type="text"
+                    value={formData.kode_karyawan || ""}
+                    placeholder="Kosongkan untuk otomatis (NIS/ID)"
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        kode_karyawan: e.target.value,
+                      })
+                    }
+                    className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Kode personil di data induk & kartu nama.
+                  </p>
+                </div>
               </div>
               <div>
                 <label
@@ -1096,7 +1131,7 @@ export default function SiswaPage() {
                     htmlFor="siswa-nis"
                     className="block text-xs font-semibold text-slate-300"
                   >
-                    NIS (Nomor Induk Siswa)
+                    NIPD (Nomor Induk Peserta Didik)
                   </label>
                   <input
                     id="siswa-nis"
@@ -1159,7 +1194,7 @@ export default function SiswaPage() {
                     htmlFor="siswa-rombel"
                     className="block text-xs font-semibold text-slate-300"
                   >
-                    Rombel / Kelas
+                    Kelas / Rombel
                   </label>
                   <select
                     id="siswa-rombel"
@@ -1390,8 +1425,22 @@ export default function SiswaPage() {
                 <h4 className="text-base font-black text-white">
                   {qrModalData.nama}
                 </h4>
-                <p className="font-mono text-xs text-sky-400">
-                  NIS: {qrModalData.nis}
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 text-xs">
+                  <span className="font-mono text-slate-400">
+                    ID:{" "}
+                    <span className="text-slate-200">
+                      {qrModalData.id_siswa}
+                    </span>
+                  </span>
+                  <span className="font-mono text-slate-400">
+                    Kode:{" "}
+                    <span className="text-slate-200">
+                      {qrModalData.kode_karyawan}
+                    </span>
+                  </span>
+                </div>
+                <p className="mt-1 font-mono text-xs text-sky-400">
+                  NIPD: {qrModalData.nis}
                 </p>
                 <p className="text-xs text-slate-400">{qrModalData.rombel}</p>
               </div>
@@ -1642,7 +1691,7 @@ export default function SiswaPage() {
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                               <div>
                                 <span className="text-slate-400 text-[11px]">
-                                  NIS / NISN:
+                                  NIPD / NISN:
                                 </span>
                                 <p className="font-mono font-medium text-slate-200">
                                   {slip.nis || "-"}

@@ -2,6 +2,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import { Icon } from "@/components/ui/Icon";
+import { formatTingkatDisplay } from "@/lib/constants/academic-levels";
 import type { RombelInput } from "@/lib/gateways/academic";
 
 type TabKey =
@@ -28,6 +29,7 @@ export interface RombelPanelProps {
   rombelList: Record<string, unknown>[];
   tahunAjaranList: Record<string, unknown>[];
   selectedTaForRombel: string;
+  unitList?: Record<string, unknown>[];
   loading: boolean;
   canManage: boolean;
   setFormRombel: Dispatch<SetStateAction<RombelInput>>;
@@ -40,6 +42,7 @@ export function RombelPanel({
   rombelList,
   tahunAjaranList,
   selectedTaForRombel,
+  unitList,
   loading,
   canManage,
   setFormRombel,
@@ -112,7 +115,10 @@ export function RombelPanel({
                   return (
                     <tr key={id} className="transition hover:bg-white/[0.02]">
                       <td className="px-6 py-4 font-mono font-bold text-sky-400">
-                        Kelas {String(item.tingkat)}
+                        {formatTingkatDisplay(
+                          item.tingkat as number,
+                          unitList || [],
+                        )}
                       </td>
                       <td className="px-6 py-4 font-bold text-white">
                         {String(item.nama_rombel)}

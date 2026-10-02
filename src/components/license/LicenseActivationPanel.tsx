@@ -13,12 +13,13 @@ import {
   LICENSE_KIND_LABEL,
   type LicenseState,
   type LicenseStatus,
+  licenseTargetNoun,
 } from "@/lib/gateways/license";
 
 const TITLES: Record<LicenseState, string> = {
   missing: "Aktifkan lisensi aplikasi",
   invalid: "Lisensi tidak sah",
-  device_not_listed: "Perangkat ini belum terdaftar",
+  device_not_listed: "Belum terdaftar di lisensi",
   read_only: "Aktifkan lisensi baru",
   active: "Ganti lisensi",
 };
@@ -125,7 +126,7 @@ export function LicenseActivationPanel({
 
       <div className="space-y-1.5">
         <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
-          Kode perangkat ini
+          Kode {licenseTargetNoun()} ini
         </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 select-all rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-2.5 text-center font-mono text-sm font-bold tracking-wider text-white">

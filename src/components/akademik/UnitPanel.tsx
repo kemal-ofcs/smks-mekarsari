@@ -2,6 +2,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import { Icon } from "@/components/ui/Icon";
+import { parseUnitKeterangan } from "@/lib/constants/academic-levels";
 import type { UnitInput } from "@/lib/gateways/academic";
 
 type TabKey =
@@ -85,8 +86,36 @@ export function UnitPanel({
                     <td className="px-6 py-4 font-bold text-white">
                       {String(item.nama_unit)}
                     </td>
-                    <td className="max-w-xs truncate px-6 py-4 text-xs text-slate-400">
-                      {String(item.keterangan || "-")}
+                    <td className="max-w-md px-6 py-4 text-xs">
+                      {(() => {
+                        const parsed = parseUnitKeterangan(item.keterangan);
+                        return (
+                          <div className="flex flex-col gap-1.5">
+                            {parsed.deskripsi ? (
+                              <span className="text-slate-300 line-clamp-1">
+                                {parsed.deskripsi}
+                              </span>
+                            ) : null}
+                            {parsed.daftar_tingkat.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-1">
+                                {parsed.daftar_tingkat.map((t) => (
+                                  <span
+                                    key={t.tingkat}
+                                    className="inline-flex items-center rounded-md border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-300"
+                                    title={`Tingkat ${t.tingkat}`}
+                                  >
+                                    {t.nama}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-slate-500 italic">
+                                Belum ada tingkat kelas
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 py-4">
                       {Number(item.status_aktif) === 1 ? (

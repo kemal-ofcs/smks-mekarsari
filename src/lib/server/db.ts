@@ -2,7 +2,10 @@ import "server-only";
 
 import { type Client, createClient } from "@libsql/client";
 import { initDatabaseSchema } from "@/lib/db-schema";
-import { resolveServerDatabaseConfig } from "@/lib/server/database-config";
+import {
+  fileDatabaseOptions,
+  resolveServerDatabaseConfig,
+} from "@/lib/server/database-config";
 
 interface ServerDatabaseState {
   client: Client | null;
@@ -63,20 +66,31 @@ export function getServerDatabase() {
       url: config.url,
       authToken: config.authToken,
       fetch: resilientFetch,
+      ...fileDatabaseOptions(config),
     });
   }
 
   return state.client;
 }
 
+async function siapkanDatabase() {
+  const client = getServerDatabase();
+  // WAL membuat pembaca tidak menghalangi penulis, dan sebaliknya. Tanpa itu,
+  // setiap halaman situs publik yang sedang dibaca menahan login di aplikasi
+  // admin. Setelannya tersimpan di berkas database, jadi cukup disetel di sini:
+  // situs publik tidak pernah menyiapkan database, hanya membacanya.
+  if (!resolveServerDatabaseConfig(process.env).isRemote) {
+    await client.execute("PRAGMA journal_mode = WAL;");
+  }
+  await initDatabaseSchema(client);
+}
+
 export async function ensureServerDatabaseInitialized() {
   if (!state.initialization) {
-    state.initialization = initDatabaseSchema(getServerDatabase()).catch(
-      (error) => {
-        state.initialization = null;
-        throw error;
-      },
-    );
+    state.initialization = siapkanDatabase().catch((error) => {
+      state.initialization = null;
+      throw error;
+    });
   }
 
   await state.initialization;

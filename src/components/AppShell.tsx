@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { AppSidebar } from "./AppSidebar";
 import { AutoAlfaRunner } from "./AutoAlfaRunner";
 import { AutoSyncRunner } from "./AutoSyncRunner";
 import { AutoWaSenderRunner } from "./AutoWaSenderRunner";
@@ -31,14 +32,21 @@ export function AppShell({
       >
         Lewati ke konten utama
       </a>
-      <HeaderBar />
-      <LicenseNotice />
-      <main
-        id="main-content"
-        className={`visual-page-enter relative z-10 flex min-h-0 flex-1 flex-col pb-24 lg:pb-0 ${contentClassName}`}
-      >
-        {children}
-      </main>
+      <div className="flex flex-1">
+        <AppSidebar />
+        {/* `min-w-0`: tanpa ini tabel lebar mendorong kolom keluar layar
+            alih-alih menggulir di dalam wadahnya sendiri. */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <HeaderBar />
+          <LicenseNotice />
+          <main
+            id="main-content"
+            className={`visual-page-enter relative z-10 flex min-h-0 flex-1 flex-col pb-24 lg:pb-0 ${contentClassName}`}
+          >
+            {children}
+          </main>
+        </div>
+      </div>
     </div>
   );
 }

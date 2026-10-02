@@ -1569,8 +1569,15 @@ pub fn save_teacher(state: &DesktopState, draft: &Value) -> Result<Value, Comman
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
     let now = sqlite_now(&tx);
-    let is_new = text(draft, "id_guru").is_empty();
-    let id = if is_new {
+    let is_edit = draft.get("is_edit").and_then(Value::as_bool);
+    let is_new = if is_edit == Some(true) {
+        false
+    } else if is_edit == Some(false) {
+        true
+    } else {
+        text(draft, "id_guru").is_empty()
+    };
+    let id = if is_new && text(draft, "id_guru").is_empty() {
         new_academic_id("ptk_")
     } else {
         text(draft, "id_guru").to_owned()
@@ -1595,6 +1602,44 @@ pub fn save_teacher(state: &DesktopState, draft: &Value) -> Result<Value, Comman
             "VALIDATION_ERROR",
             "Nama guru wajib diisi.",
         ));
+    }
+
+    if is_edit == Some(false) {
+        if !text(draft, "id_guru").is_empty() {
+            let id_exists: bool = tx
+                .query_row(
+                    "SELECT 1 FROM master_data WHERE id_unik = ?1 LIMIT 1",
+                    params![text(draft, "id_guru")],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if id_exists {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    format!(
+                        "ID Unik '{}' sudah terdaftar di sistem. Data lama tidak diubah. Gunakan ID unik lain atau kosongkan agar dibuatkan otomatis.",
+                        text(draft, "id_guru")
+                    ),
+                ));
+            }
+        }
+        if !kode.is_empty() {
+            let kode_exists: bool = tx
+                .query_row(
+                    "SELECT 1 FROM master_data WHERE kode_karyawan = ?1 LIMIT 1",
+                    params![kode],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if kode_exists {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    format!(
+                        "Kode personil/karyawan '{kode}' sudah terdaftar untuk personil lain."
+                    ),
+                ));
+            }
+        }
     }
 
     // Cadangannya ID UTUH, bukan irisannya. `short_suffix` dulu membuang empat
@@ -1822,8 +1867,15 @@ pub fn save_student(state: &DesktopState, draft: &Value) -> Result<Value, Comman
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
     let now = sqlite_now(&tx);
-    let is_new = text(draft, "id_siswa").is_empty();
-    let id = if is_new {
+    let is_edit = draft.get("is_edit").and_then(Value::as_bool);
+    let is_new = if is_edit == Some(true) {
+        false
+    } else if is_edit == Some(false) {
+        true
+    } else {
+        text(draft, "id_siswa").is_empty()
+    };
+    let id = if is_new && text(draft, "id_siswa").is_empty() {
         new_academic_id("sis_")
     } else {
         text(draft, "id_siswa").to_owned()
@@ -1863,6 +1915,45 @@ pub fn save_student(state: &DesktopState, draft: &Value) -> Result<Value, Comman
             "VALIDATION_ERROR",
             "Nama lengkap siswa dan rombel wajib diisi.",
         ));
+    }
+
+    if is_edit == Some(false) {
+        if !text(draft, "id_siswa").is_empty() {
+            let id_exists: bool = tx
+                .query_row(
+                    "SELECT 1 FROM master_data WHERE id_unik = ?1 LIMIT 1",
+                    params![text(draft, "id_siswa")],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if id_exists {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    format!(
+                        "ID Unik '{}' sudah terdaftar di sistem. Data lama tidak diubah. Gunakan ID unik lain atau kosongkan agar dibuatkan otomatis.",
+                        text(draft, "id_siswa")
+                    ),
+                ));
+            }
+        }
+        let input_kode = text(draft, "kode_karyawan");
+        if !input_kode.is_empty() {
+            let kode_exists: bool = tx
+                .query_row(
+                    "SELECT 1 FROM master_data WHERE kode_karyawan = ?1 LIMIT 1",
+                    params![input_kode],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if kode_exists {
+                return Err(CommandError::new(
+                    "VALIDATION_ERROR",
+                    format!(
+                        "Kode personil/karyawan '{input_kode}' sudah terdaftar untuk personil lain."
+                    ),
+                ));
+            }
+        }
     }
 
     // Dulu dijaga `nis TEXT UNIQUE` / `nisn TEXT UNIQUE`.
@@ -2239,7 +2330,7 @@ fn daftar_wali_kredensial(
 ) -> Result<Vec<Value>, CommandError> {
     let dasar = r#"SELECT s.id_siswa, COALESCE(s.nis, ''), COALESCE(s.nisn, ''),
                           s.nama_lengkap, r.nama_rombel, COALESCE(m.unit, ''),
-                          k.password_hash, k.changed_at
+                          k.password_hash, k.changed_at, COALESCE(r.tingkat, '')
                      FROM siswa_data s
                      JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
                      LEFT JOIN master_data m ON m.id_unik = s.id_siswa
@@ -2275,12 +2366,24 @@ fn daftar_wali_kredensial(
             let unit: String = row.get(5)?;
             let hash: Option<String> = row.get(6)?;
             let changed_at: Option<String> = row.get(7)?;
+            let nama_rombel: String = row.get(4)?;
+            let tingkat_val: Option<rusqlite::types::Value> = row.get(8)?;
+            let tingkat = match tingkat_val {
+                Some(rusqlite::types::Value::Integer(n)) => n.to_string(),
+                Some(rusqlite::types::Value::Text(s)) => s,
+                _ => String::new(),
+            };
+            let rombel = if tingkat.trim().is_empty() {
+                nama_rombel
+            } else {
+                format!("Kelas {} - {}", tingkat.trim(), nama_rombel.trim())
+            };
             Ok(json!({
                 "idSiswa": row.get::<_, String>(0)?,
                 "namaSiswa": row.get::<_, String>(3)?,
                 "nis": if nis.is_empty() { Value::Null } else { json!(nis) },
                 "nisn": if nisn.is_empty() { Value::Null } else { json!(nisn) },
-                "rombel": row.get::<_, String>(4)?,
+                "rombel": rombel,
                 "unit": if unit.trim().is_empty() {
                     Value::Null
                 } else {
@@ -2880,6 +2983,57 @@ mod tests {
         save_teacher(&state, &json!({ "id_guru": id, "nama": "Guru Siang" }))
             .expect("edit tanpa shift");
         assert_eq!(shift_of(&state, &id), 2);
+    }
+
+    #[test]
+    fn tambah_guru_atau_siswa_dengan_id_duplikat_harus_ditolak_pada_mode_tambah() {
+        let (_dir, state) = fixture();
+
+        // 1. Simpan guru awal
+        save_teacher(
+            &state,
+            &json!({ "id_guru": "GURU-DUPLIKAT-01", "nama": "Guru Asli" }),
+        )
+        .expect("guru awal berhasil");
+
+        // Coba tambah dengan ID yang sama pada mode tambah (is_edit: false) -> HARUS DITOLAK
+        let err_guru = save_teacher(
+            &state,
+            &json!({ "id_guru": "GURU-DUPLIKAT-01", "nama": "Guru Peniru", "is_edit": false }),
+        )
+        .expect_err("tambah guru dengan ID duplikat harus ditolak");
+        assert_eq!(err_guru.code, "VALIDATION_ERROR");
+
+        // Mode edit (is_edit: true) -> HARUS DIIZINKAN
+        save_teacher(
+            &state,
+            &json!({ "id_guru": "GURU-DUPLIKAT-01", "nama": "Guru Asli Update", "is_edit": true }),
+        )
+        .expect("edit guru harus berhasil");
+
+        // 2. Simpan siswa awal
+        save_student(
+            &state,
+            &json!({
+                "id_siswa": "SISWA-DUPLIKAT-01",
+                "nama_lengkap": "Siswa Asli",
+                "id_rombel": "rom-1"
+            }),
+        )
+        .expect("siswa awal berhasil");
+
+        // Coba tambah siswa dengan ID yang sama pada mode tambah (is_edit: false) -> HARUS DITOLAK
+        let err_siswa = save_student(
+            &state,
+            &json!({
+                "id_siswa": "SISWA-DUPLIKAT-01",
+                "nama_lengkap": "Siswa Peniru",
+                "id_rombel": "rom-1",
+                "is_edit": false
+            }),
+        )
+        .expect_err("tambah siswa dengan ID duplikat harus ditolak");
+        assert_eq!(err_siswa.code, "VALIDATION_ERROR");
     }
 
     /// Batas foto siswa WAJIB sama dengan `MAX_PERSONNEL_PHOTO_SIZE` di

@@ -49,6 +49,7 @@ export async function saveTeacher(draft: {
   id_shift?: number;
   status_aktif?: string;
   unit?: string;
+  is_edit?: boolean;
 }) {
   await ensureDbInitialized();
   const id = draft.id_guru || `ptk_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -59,6 +60,33 @@ export async function saveTeacher(draft: {
   // acak dari tengah ID-nya. `kode_karyawan` UNIQUE, dan ID sudah primary key,
   // jadi memakainya utuh sekaligus menjamin keunikan yang tidak dijamin irisan.
   const kode = draft.kode_karyawan || draft.nip || id;
+
+  if (draft.is_edit === false) {
+    if (draft.id_guru) {
+      const existing = await db.execute({
+        sql: "SELECT 1 FROM master_data WHERE id_unik = ? LIMIT 1;",
+        args: [draft.id_guru],
+      });
+      if (existing.rows.length > 0) {
+        throw new ApiRequestError(
+          `ID Unik '${draft.id_guru}' sudah terdaftar di sistem. Data lama tidak diubah. Gunakan ID unik lain atau kosongkan agar dibuatkan otomatis.`,
+          400,
+        );
+      }
+    }
+    if (draft.kode_karyawan) {
+      const existingKode = await db.execute({
+        sql: "SELECT 1 FROM master_data WHERE kode_karyawan = ? LIMIT 1;",
+        args: [draft.kode_karyawan],
+      });
+      if (existingKode.rows.length > 0) {
+        throw new ApiRequestError(
+          `Kode personil/karyawan '${draft.kode_karyawan}' sudah terdaftar untuk personil lain.`,
+          400,
+        );
+      }
+    }
+  }
   // NIP diperiksa sendiri: bila kode personil diisi terpisah, pemeriksaan kode
   // di bawah tidak lagi menyentuh NIP, dan dua guru bisa memegang NIP yang
   // sama. Cerminan `save_teacher` di `academic.rs`.
@@ -225,11 +253,39 @@ export async function saveStudent(draft: {
   status?: string;
   id_shift?: number;
   unit?: string;
+  is_edit?: boolean;
 }) {
   await ensureDbInitialized();
   const id = draft.id_siswa || `sis_${crypto.randomUUID().replace(/-/g, "")}`;
   // Sama seperti guru: ID utuh, bukan irisannya. Lihat catatan di simpanGuru.
   const kode = draft.kode_karyawan || draft.nis || id;
+
+  if (draft.is_edit === false) {
+    if (draft.id_siswa) {
+      const existing = await db.execute({
+        sql: "SELECT 1 FROM master_data WHERE id_unik = ? LIMIT 1;",
+        args: [draft.id_siswa],
+      });
+      if (existing.rows.length > 0) {
+        throw new ApiRequestError(
+          `ID Unik '${draft.id_siswa}' sudah terdaftar di sistem. Data lama tidak diubah. Gunakan ID unik lain atau kosongkan agar dibuatkan otomatis.`,
+          400,
+        );
+      }
+    }
+    if (draft.kode_karyawan) {
+      const existingKode = await db.execute({
+        sql: "SELECT 1 FROM master_data WHERE kode_karyawan = ? LIMIT 1;",
+        args: [draft.kode_karyawan],
+      });
+      if (existingKode.rows.length > 0) {
+        throw new ApiRequestError(
+          `Kode personil/karyawan '${draft.kode_karyawan}' sudah terdaftar untuk personil lain.`,
+          400,
+        );
+      }
+    }
+  }
   await assertUniqueValue({
     table: "siswa_data",
     column: "nis",

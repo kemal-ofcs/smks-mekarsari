@@ -104,9 +104,6 @@ export function CollectionRepeater({
           {description ? (
             <p className="mt-1 text-[11px] text-slate-400">{description}</p>
           ) : null}
-          <p className="mt-1 font-mono text-[11px] text-slate-500">
-            Kunci database: {kunci}
-          </p>
         </div>
         <span className="shrink-0 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-300">
           {items.length} / {maksItem}

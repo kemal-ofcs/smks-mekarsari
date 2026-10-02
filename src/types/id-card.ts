@@ -23,6 +23,10 @@ export interface IdCardElement {
     | "company.logo"
     | "company.terms"
     | "company.signature"
+    | "teacher.nip"
+    | "teacher.nuptk"
+    | "student.nisn"
+    | "employee.unit"
     | "static_text";
   staticValue?: string;
   label: string;
@@ -35,6 +39,7 @@ export interface IdCardElement {
   color: string; // Hex color
   textAlign?: "left" | "center" | "right";
   isUppercase?: boolean;
+  isItalic?: boolean;
   visible?: boolean; // Default true, jika false maka elemen tidak dirender di kartu
 }
 

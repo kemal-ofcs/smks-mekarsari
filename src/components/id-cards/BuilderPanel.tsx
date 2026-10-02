@@ -896,6 +896,52 @@ export function BuilderPanel({
                 </label>
               </div>
 
+              {/* Format Teks (Bold & Italic) */}
+              <div className="space-y-1">
+                <div className="text-xs font-medium text-slate-400">
+                  Format Teks (Ketebalan & Kemiringan)
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleUpdateSelectedElement({
+                        fontWeight:
+                          selectedElement.fontWeight === "bold" ||
+                          selectedElement.fontWeight === "600"
+                            ? "normal"
+                            : "bold",
+                      })
+                    }
+                    className={`rounded-xl py-1.5 text-xs font-bold transition border flex items-center justify-center gap-1.5 ${
+                      selectedElement.fontWeight === "bold" ||
+                      selectedElement.fontWeight === "600"
+                        ? "border-sky-400 bg-sky-400/10 text-sky-300"
+                        : "border-white/5 bg-slate-900 text-slate-400 hover:bg-slate-800"
+                    }`}
+                  >
+                    <span className="font-black text-sm">B</span>
+                    <span>Tebal (Bold)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleUpdateSelectedElement({
+                        isItalic: !selectedElement.isItalic,
+                      })
+                    }
+                    className={`rounded-xl py-1.5 text-xs font-bold transition border flex items-center justify-center gap-1.5 ${
+                      selectedElement.isItalic
+                        ? "border-sky-400 bg-sky-400/10 text-sky-300"
+                        : "border-white/5 bg-slate-900 text-slate-400 hover:bg-slate-800"
+                    }`}
+                  >
+                    <span className="italic font-serif text-sm">I</span>
+                    <span>Miring (Italic)</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Perataan Teks (Alignment) */}
               <div className="space-y-1">
                 <div className="text-xs font-medium text-slate-400">

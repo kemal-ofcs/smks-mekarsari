@@ -24,14 +24,20 @@ export function acceptsJson(request: Request) {
  * Alamat pemanggil untuk rate limit dan allowlist IP scanner Web.
  *
  * Yang dibaca adalah entri PALING KANAN `X-Forwarded-For`, dikurangi jumlah
- * proxy tepercaya (`SPPG_TRUSTED_PROXY_HOPS`, bawaan 1). Entri paling kiri
+ * proxy tepercaya (`KOS_TRUSTED_PROXY_HOPS`, bawaan 1). Entri paling kiri
  * adalah isian klien: di belakang nginx/Caddy yang MENAMBAHKAN alamat, klien
  * bebas menulisnya sendiri dan lolos dari rate limit maupun allowlist IP. Di
  * Vercel header ini ditimpa platform (satu alamat), jadi hasilnya sama.
  * Cerminan fungsi yang sama di `web-public`.
  */
 export function getClientAddress(request: Request) {
-  const hops = Math.max(1, Number(process.env.SPPG_TRUSTED_PROXY_HOPS) || 1);
+  // Nama lama `SPPG_TRUSTED_PROXY_HOPS` tetap dibaca; nama `KOS_` yang menang.
+  const hops = Math.max(
+    1,
+    Number(
+      process.env.KOS_TRUSTED_PROXY_HOPS ?? process.env.SPPG_TRUSTED_PROXY_HOPS,
+    ) || 1,
+  );
   const rantai = (request.headers.get("x-forwarded-for") ?? "")
     .split(",")
     .map((alamat) => alamat.trim())

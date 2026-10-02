@@ -670,7 +670,7 @@ export default function BimbinganKonselingPage() {
               <input
                 id="filter-search"
                 type="text"
-                placeholder="Nama, NIS, atau ringkasan..."
+                placeholder="Nama, NIPD, atau ringkasan..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -733,7 +733,7 @@ export default function BimbinganKonselingPage() {
                           {c.nama_siswa}
                         </p>
                         <p className="text-[11px] text-slate-400">
-                          NIS: {c.nis || "-"} | {c.nama_rombel || "-"}
+                          NIPD: {c.nis || "-"} | {c.nama_rombel || "-"}
                         </p>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
@@ -841,7 +841,7 @@ export default function BimbinganKonselingPage() {
                   {students.map((s) => (
                     <option key={String(s.id_siswa)} value={String(s.id_siswa)}>
                       {String(s.nama_lengkap)} ({String(s.nama_rombel || "-")})
-                      - NIS: {String(s.nis || "-")}
+                      - NIPD: {String(s.nis || "-")}
                     </option>
                   ))}
                 </select>
@@ -967,7 +967,7 @@ export default function BimbinganKonselingPage() {
             isOpen
             onClose={() => setDetailModalOpen(false)}
             title={activeCase.ringkasan}
-            subtitle={`Siswa: ${activeCase.nama_siswa} (${activeCase.nama_rombel}) | NIS: ${activeCase.nis || "-"}`}
+            subtitle={`Siswa: ${activeCase.nama_siswa} (${activeCase.nama_rombel}) | NIPD: ${activeCase.nis || "-"}`}
             maxWidth="max-w-3xl"
             footer={
               <div className="flex w-full justify-between">
@@ -1418,7 +1418,7 @@ export default function BimbinganKonselingPage() {
                         <td>{activeCase.nama_rombel}</td>
                       </tr>
                       <tr>
-                        <td className="py-0.5">NIS / NISN</td>
+                        <td className="py-0.5">NIPD / NISN</td>
                         <td>:</td>
                         <td>{activeCase.nis || "-"}</td>
                       </tr>

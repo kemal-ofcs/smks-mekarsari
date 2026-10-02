@@ -5,6 +5,11 @@ import { redirect, useRouter } from "next/navigation";
 import type React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { BootstrapPanel } from "@/components/BootstrapPanel";
+import {
+  DATABASE_NOT_CONFIGURED_DESCRIPTION,
+  DATABASE_NOT_CONFIGURED_TITLE,
+  DatabaseNotConfiguredNotice,
+} from "@/components/DatabaseNotConfiguredNotice";
 import { LicenseActivationPanel } from "@/components/license/LicenseActivationPanel";
 import { LoginSceneGate } from "@/components/visual/LoginSceneGate";
 import { VisualProvider } from "@/components/visual/VisualProvider";
@@ -13,7 +18,8 @@ import { useAuth } from "@/lib/context/AuthContext";
 import {
   type BootstrapStatus,
   getBootstrapStatus,
-  getWebProvisioningHint,
+  getWebProvisioningStatus,
+  type WebProvisioningStatus,
 } from "@/lib/gateways/bootstrap";
 import { isLicenseBlocking } from "@/lib/gateways/license";
 import { useAppName } from "@/lib/hooks/useAppName";
@@ -21,6 +27,7 @@ import { useCompanyName } from "@/lib/hooks/useCompanyName";
 import { useHydrated } from "@/lib/hooks/useHydrated";
 import { useLicenseStatus } from "@/lib/hooks/useLicenseStatus";
 import { useOnlineStatus } from "@/lib/hooks/useOnlineStatus";
+import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
 
 export default function LoginPage() {
   const isHydrated = useHydrated();
@@ -61,7 +68,7 @@ export default function LoginPage() {
     refreshBootstrapStatus();
   }, [refreshBootstrapStatus]);
 
-  // Desktop/Mobile saja (Web selalu `null`). Dibaca setelah database siap:
+  // `null` pada build Web yang tidak menegakkan lisensi. Dibaca setelah database siap:
   // database yang belum diprovisioning meminta lisensinya di BootstrapPanel.
   const {
     status: licenseStatus,
@@ -70,24 +77,35 @@ export default function LoginPage() {
   } = useLicenseStatus(false);
   // Dibaca ulang setiap status database berubah: perangkat yang baru
   // bergabung ke database berlisensi menemukan lisensinya di sana.
+  // Di Web `bootstrapStatus` selalu `null` (database ditentukan `.env`
+  // server), jadi lisensinya dibaca langsung; tanpa itu layar aktivasi tidak
+  // pernah muncul dan form login hanya menolak dengan pesan lisensi.
   useEffect(() => {
-    if (bootstrapStatus) void refreshLicense();
+    if (bootstrapStatus || !isDesktopRuntime()) void refreshLicense();
   }, [bootstrapStatus, refreshLicense]);
   // Pemasangan baru meminta lisensi SEBELUM provisioning. Perangkat kedua dan
   // seterusnya milik lembaga yang sama melewatinya: lisensi lembaga sudah ada
   // di database yang akan mereka sambungkan.
   const [joiningLicensedDatabase, setJoiningLicensedDatabase] = useState(false);
 
-  // Khusus Web: `false` berarti database belum punya satu akun pun. Tanpa
-  // petunjuk ini, database yang baru dibuat membuat halaman ini jalan buntu —
-  // form login tampil, tidak ada akun untuk dipakai, dan tidak ada tanda harus
-  // berbuat apa. `null` (tidak diketahui, atau bukan Web) sengaja diam.
-  const [webProvisioningHint, setWebProvisioningHint] = useState<
-    boolean | null
-  >(null);
-  useEffect(() => {
-    void getWebProvisioningHint().then(setWebProvisioningHint);
+  // Khusus Web. `hasOperator: false` berarti database belum punya satu akun
+  // pun: tanpa petunjuk ini halaman login menjadi jalan buntu, karena form
+  // tampil sementara tidak ada akun untuk dipakai. `null` (bukan Web, atau
+  // status tidak terbaca) sengaja diam.
+  const [webProvisioning, setWebProvisioning] =
+    useState<WebProvisioningStatus | null>(null);
+  const [checkingProvisioning, setCheckingProvisioning] = useState(false);
+  const refreshWebProvisioning = useCallback(async () => {
+    setCheckingProvisioning(true);
+    try {
+      setWebProvisioning(await getWebProvisioningStatus());
+    } finally {
+      setCheckingProvisioning(false);
+    }
   }, []);
+  useEffect(() => {
+    void refreshWebProvisioning();
+  }, [refreshWebProvisioning]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,6 +159,27 @@ export default function LoginPage() {
   }
 
   if (isAuthenticated && user) redirect("/");
+  // Form login tidak ditampilkan sama sekali: tanpa database ia tidak bisa
+  // dipakai, dan menampilkannya membuat aplikasi tampak rusak.
+  if (webProvisioning?.databaseConfigured === false) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 sm:p-6 font-sans">
+        <div className="w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl">
+          <h1 className="text-base font-bold text-white">
+            {DATABASE_NOT_CONFIGURED_TITLE}
+          </h1>
+          <p className="mt-1 mb-4 text-xs leading-5 text-slate-400">
+            {DATABASE_NOT_CONFIGURED_DESCRIPTION}
+          </p>
+          <DatabaseNotConfiguredNotice
+            issue={webProvisioning.databaseIssue}
+            onRetry={() => void refreshWebProvisioning()}
+            checking={checkingProvisioning}
+          />
+        </div>
+      </main>
+    );
+  }
   if (
     bootstrapStatus?.required &&
     !joiningLicensedDatabase &&
@@ -198,14 +237,18 @@ export default function LoginPage() {
             }}
           />
           {/* Perangkat yang menunjuk database salah tidak pernah menemukan
-              lisensinya; tanpa pintu ini ia terjebak di layar aktivasi. */}
-          <button
-            type="button"
-            onClick={() => setShowDatabaseSetup(true)}
-            className="mt-3 w-full min-h-10 rounded-xl border border-slate-700 bg-slate-800/80 px-3 text-xs font-bold text-slate-300 transition hover:bg-slate-700"
-          >
-            Konfigurasi ulang database
-          </button>
+              lisensinya; tanpa pintu ini ia terjebak di layar aktivasi. Di Web
+              database ditentukan `.env` server, jadi tombolnya tidak ada:
+              `bootstrapStatus` di sana selalu `null`. */}
+          {bootstrapStatus ? (
+            <button
+              type="button"
+              onClick={() => setShowDatabaseSetup(true)}
+              className="mt-3 w-full min-h-10 rounded-xl border border-slate-700 bg-slate-800/80 px-3 text-xs font-bold text-slate-300 transition hover:bg-slate-700"
+            >
+              Konfigurasi ulang database
+            </button>
+          ) : null}
         </div>
       </main>
     );
@@ -238,8 +281,8 @@ export default function LoginPage() {
           </div>
 
           <div className="pt-2">
-            <div className="w-12 h-12 bg-gradient-to-tr from-emerald-600 to-sky-500 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-emerald-950/60 font-bold text-white text-xl">
-              🔑
+            <div className="w-12 h-12 bg-gradient-to-tr from-emerald-600 to-sky-500 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-emerald-950/60 font-bold text-white text-sm tracking-wider">
+              AUTH
             </div>
             <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight mt-3">
               {companyName && companyName !== BRANDING.defaultCompanyName
@@ -278,40 +321,62 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        {/* Database Web yang belum punya akun sama sekali. Hanya MENUNJUK ke
-            jalan provisioning — tidak ada cara membuat akun dari browser, dan
-            tidak boleh ada: aplikasi Web terbuka ke internet, jadi layar
-            "buat Superadmin pertama" di sini berarti siapa pun yang pertama
-            membuka URL-nya bisa mengklaim seluruh sistem.
+        {/* Database Web yang belum punya akun. Halaman ini hanya MENUNJUK ke
+            jalan provisioning; pembuatan akunnya ada di `/setup`, yang dijaga
+            token pemasangan dari `.env` server. Tanpa token itu, pengunjung
+            pertama yang membuka URL ini bisa mengklaim seluruh sistem.
 
             Kelasnya sengaja hanya yang sudah punya pasangan mode terang di
             globals.css (`bg-amber-950/50`, `text-amber-100`, `text-amber-300`);
             varian ber-opasitas seperti `text-amber-200/90` belum punya, dan
             akan menjadi teks terang di atas latar terang. */}
-        {webProvisioningHint === false ? (
+        {webProvisioning?.hasOperator === false ? (
           <div className="p-3.5 bg-amber-950/50 border border-white/10 rounded-2xl text-amber-100 text-xs space-y-1.5">
             <p className="font-bold text-amber-300">
               Database ini belum punya akun
             </p>
-            <p>
-              Belum ada satu pun akun untuk login. Buat Superadmin pertama lewat
-              aplikasi Desktop — layar provisioning akan muncul dengan
-              sendirinya — lalu akun yang sama langsung bisa dipakai di sini.
-            </p>
-            <p>
-              Untuk server tanpa Desktop, jalankan{" "}
-              <code className="font-mono font-bold text-amber-300">
-                bun run bootstrap:superadmin
-              </code>{" "}
-              di server.
-            </p>
+            {webProvisioning.setupEnabled ? (
+              <>
+                <p>
+                  Belum ada akun untuk masuk. Buat Superadmin pertama dengan
+                  token pemasangan dari berkas .env server.
+                </p>
+                <Link
+                  href="/setup"
+                  className="flex min-h-11 w-full items-center justify-center rounded-xl bg-amber-400 px-3 text-xs font-black text-slate-950 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
+                >
+                  Buat Superadmin pertama
+                </Link>
+              </>
+            ) : (
+              <>
+                <p>
+                  Belum ada akun untuk masuk. Sambungkan aplikasi Desktop ke
+                  database yang sama: layar provisioning muncul sendiri di sana,
+                  dan akun yang dibuat langsung bisa dipakai di sini.
+                </p>
+                <p>
+                  Tanpa Desktop, isi{" "}
+                  <code className="font-mono font-bold text-amber-300">
+                    KOS_SETUP_TOKEN
+                  </code>{" "}
+                  di berkas .env server, lalu ikuti{" "}
+                  <Link
+                    href="/setup"
+                    className="font-bold text-amber-300 underline underline-offset-2"
+                  >
+                    langkah di halaman provisioning
+                  </Link>
+                  .
+                </p>
+              </>
+            )}
           </div>
         ) : null}
 
         {/* Error Alert Message */}
         {errorMsg && (
           <div className="p-3.5 bg-rose-950/60 border border-rose-800/80 rounded-2xl text-rose-300 text-xs flex items-start gap-2.5 animate-fadeIn">
-            <span className="text-base leading-none">⚠️</span>
             <div className="flex-1 font-medium">{errorMsg}</div>
           </div>
         )}
@@ -360,7 +425,7 @@ export default function LoginPage() {
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs px-2 py-1 rounded transition"
               >
-                {showPassword ? "🙈 Sembunyi" : "👁️ Lihat"}
+                {showPassword ? "Sembunyikan" : "Lihat"}
               </button>
             </div>
           </div>
@@ -376,7 +441,7 @@ export default function LoginPage() {
                 <span>Memverifikasi Login...</span>
               </>
             ) : (
-              <span>Masuk Aplikasi →</span>
+              <span>Masuk Aplikasi</span>
             )}
           </button>
 

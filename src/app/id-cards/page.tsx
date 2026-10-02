@@ -1179,6 +1179,7 @@ export default function IdCardsPage() {
       color: type === "qr_code" ? "#000000" : "#ffffff",
       textAlign: "left",
       isUppercase: false,
+      isItalic: false,
       visible: true,
     };
     setTemplate({
@@ -1924,6 +1925,14 @@ export default function IdCardsPage() {
                     setNewElementLabel("Nama Instansi");
                   } else if (s === "company.terms") {
                     setNewElementLabel("Syarat & Ketentuan");
+                  } else if (s === "teacher.nip") {
+                    setNewElementLabel("NIP (Guru/PTK)");
+                  } else if (s === "teacher.nuptk") {
+                    setNewElementLabel("NUPTK (Guru/PTK)");
+                  } else if (s === "student.nisn") {
+                    setNewElementLabel("NISN (Peserta Didik)");
+                  } else if (s === "employee.unit") {
+                    setNewElementLabel("Unit Sekolah");
                   }
                 }}
                 className="min-h-10 w-full rounded-xl border border-white/10 bg-slate-900 px-3 text-xs text-white"
@@ -1956,6 +1965,10 @@ export default function IdCardsPage() {
                 <option value="text|employee.department">
                   Divisi / Unit Departemen
                 </option>
+                <option value="text|teacher.nip">NIP Guru / PTK</option>
+                <option value="text|teacher.nuptk">NUPTK Guru / PTK</option>
+                <option value="text|student.nisn">NISN Peserta Didik</option>
+                <option value="text|employee.unit">Unit Sekolah</option>
                 <option value="text|company.name">Nama Instansi</option>
                 <option value="text|company.terms">
                   Syarat & Ketentuan Penggunaan

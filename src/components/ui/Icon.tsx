@@ -19,6 +19,7 @@ export type IconName =
   | "home"
   | "logout"
   | "lock"
+  | "menu"
   | "monitor"
   | "moon"
   | "palette"
@@ -147,6 +148,7 @@ const paths: Record<IconName, ReactNode> = {
       <line x1="12" x2="12" y1="17" y2="21" />
     </>
   ),
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   moon: <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />,
   palette: (
     <>

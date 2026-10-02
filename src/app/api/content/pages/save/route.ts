@@ -21,9 +21,11 @@ export async function POST(request: NextRequest) {
     await requireWebPermission(request, "content.manage", true);
     await ensureServerDatabaseInitialized();
 
+    // Batas 3 MB mengakomodasi data URL gambar latar hero terkompresi (~300 KB)
+    // beserta field teks dan koleksi JSON lainnya tanpa memicu HTTP 413.
     const body = (await readJsonBody(
       request,
-      1024 * 1024,
+      3 * 1024 * 1024,
     )) as PageContentUpdateInput;
     const result = await savePageContent(
       getServerDatabase(),

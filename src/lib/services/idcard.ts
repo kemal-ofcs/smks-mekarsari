@@ -21,9 +21,12 @@ export async function getDaftarIdCard(filter?: {
       COALESCE(c.idcard_status, 'Belum') AS idcard_status,
       c.idcard_pdf_url, c.idcard_last_generate, c.idcard_catatan,
       c.tanggal_generate, c.link_qr_png, m.kode_karyawan, m.status_aktif,
-      m.token_absensi, m.qr_code, m.jabatan_status
+      m.token_absensi, m.qr_code, m.jabatan_status, m.unit,
+      g.nip, g.nuptk, s.nisn
     FROM master_data m
     LEFT JOIN id_card c ON c.id_unik = m.id_unik
+    LEFT JOIN guru_data g ON g.id_guru = m.id_unik
+    LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik
     WHERE 1=1
   `;
   const params: (string | number | boolean | null)[] = [];

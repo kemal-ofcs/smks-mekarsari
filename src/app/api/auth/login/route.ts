@@ -3,13 +3,19 @@ import {
   clearLoginFailures,
   consumeLoginAttempt,
 } from "@/lib/auth/login-rate-limit";
+import { AuthorizationError } from "@/lib/auth/permission-assertion";
 import {
   getWebSessionCookieOptions,
   WEB_SESSION_COOKIE,
 } from "@/lib/auth/web-session";
 import { authenticateWebOperator } from "@/lib/server/auth/authenticate";
+import { assertWebLicense } from "@/lib/server/auth/authorize";
 import { createWebSession } from "@/lib/server/auth/session";
 import { evaluateTwoFactorGate } from "@/lib/server/auth/two-factor";
+import {
+  DATABASE_NOT_CONFIGURED_MESSAGE,
+  databaseConfigIssue,
+} from "@/lib/server/database-config";
 import {
   ensureServerDatabaseInitialized,
   getServerDatabase,
@@ -67,8 +73,27 @@ export async function POST(request: NextRequest) {
       return errorResponse("Username atau password tidak sesuai.", 401);
     }
 
+    // Tanpa ini, server yang belum diberi alamat database menjawab 500 umum
+    // dan pemasangnya tidak tahu bahwa yang kurang hanya satu variabel.
+    if (databaseConfigIssue(process.env) !== null) {
+      return errorResponse(DATABASE_NOT_CONFIGURED_MESSAGE, 503);
+    }
+
     await ensureServerDatabaseInitialized();
     const database = getServerDatabase();
+
+    // Gerbang lisensi di awal login, sebelum password diperiksa, sama seperti
+    // `gate_login` di Rust: tanpa lisensi yang sah untuk server ini tidak ada
+    // sesi yang dibuat. Lisensi yang habis tetap boleh masuk (mode baca-saja).
+    try {
+      await assertWebLicense(request, null);
+    } catch (error) {
+      if (error instanceof AuthorizationError) {
+        return errorResponse(error.message, 403);
+      }
+      throw error;
+    }
+
     const clientAddress = getClientAddress(request);
     const rateLimit = await consumeLoginAttempt(
       database,

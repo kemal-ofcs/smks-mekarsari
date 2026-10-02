@@ -171,7 +171,13 @@ function resolveRombel(
   if (!namaRombel) {
     throw new Error(`Baris ${baris}: nama_rombel wajib diisi.`);
   }
-  const cocok = rombel.filter((r) => key(r.nama_rombel) === key(namaRombel));
+  const cleaned = key(namaRombel);
+  const cocok = rombel.filter((r) => {
+    const kNama = key(r.nama_rombel);
+    const kFull = key(`kelas ${r.tingkat} - ${r.nama_rombel}`);
+    const kShort = key(`${r.tingkat} - ${r.nama_rombel}`);
+    return kNama === cleaned || kFull === cleaned || kShort === cleaned;
+  });
   if (cocok.length === 0) {
     throw new Error(
       `Baris ${baris}: rombel '${namaRombel}' belum ada. Buat dulu di Struktur Akademik.`,
@@ -232,17 +238,20 @@ export function parseStudentRows(
 
   for (const { row, baris } of dataRows(rows, "siswa")) {
     const nama = val(row, "nama_lengkap");
-    if (!nama && !val(row, "nis") && !val(row, "id_siswa")) continue;
+    const hasNipd = Boolean(val(row, "nipd"));
+    const rawNis = val(row, "nipd") || val(row, "nis");
+    if (!nama && !rawNis && !val(row, "id_siswa")) continue;
     if (!nama) throw new Error(`Baris ${baris}: nama_lengkap wajib diisi.`);
 
-    const nis = teksIdentitas(val(row, "nis"), "nis", baris);
+    const labelNis = hasNipd ? "NIPD" : "NIS";
+    const nis = teksIdentitas(rawNis, labelNis.toLowerCase(), baris);
     const nisn = teksIdentitas(val(row, "nisn"), "nisn", baris);
     const kodePersonil = teksIdentitas(
       val(row, "kode_personil") || val(row, "kode_karyawan"),
       "kode_personil",
       baris,
     );
-    assertUniqueInFile(nisTerpakai, nis, "NIS", baris);
+    assertUniqueInFile(nisTerpakai, nis, labelNis, baris);
     assertUniqueInFile(nisnTerpakai, nisn, "NISN", baris);
 
     const statusMentah = val(row, "status");
@@ -283,7 +292,9 @@ export function parseStudentRows(
         jenis_kelamin: jenisKelamin(val(row, "jenis_kelamin"), baris),
         id_rombel: resolveRombel(
           val(row, "id_rombel"),
-          val(row, "nama_rombel"),
+          val(row, "kelas_rombel") ||
+            val(row, "nama_rombel") ||
+            val(row, "rombel"),
           lookups.rombel,
           baris,
         ),

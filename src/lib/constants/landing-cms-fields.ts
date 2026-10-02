@@ -10,7 +10,7 @@
 export interface CmsFieldConfig {
   key: string;
   label: string;
-  type: "text" | "textarea";
+  type: "text" | "textarea" | "image";
   placeholder: string;
   rows?: number;
   description?: string;
@@ -173,6 +173,14 @@ export const LANDING_PAGE_SUBSECTIONS: CmsSubSectionConfig[] = [
     description:
       "Headline, subheadline, lencana, dan kartu statistik di bagian paling atas halaman. Judul yang dikosongkan memakai nama sekolah.",
     fields: [
+      {
+        key: "landing.hero_image",
+        label: "Foto Latar Belakang Hero (Background Utama)",
+        type: "image",
+        placeholder: "Pilih foto kampus atau gedung sekolah",
+        description:
+          "Foto gedung atau kampus sekolah (rasio landscape 16:9). Bila dikosongkan, halaman menggunakan animasi gradien sekolah.",
+      },
       {
         key: "landing.hero_badge",
         label: "Badge Pill Atas (Akreditasi & Nama Sekolah)",

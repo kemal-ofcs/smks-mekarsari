@@ -220,23 +220,46 @@ html.light .page-header-description {
   color: #475569 !important;
 }
 
-/* Inactive navigation links in light mode */
-html[data-theme="light"] header
-  nav
-  a:not(.bg-sky-600):not(.bg-sky-500):not(.bg-sky-400),
-html.light header nav a:not(.bg-sky-600):not(.bg-sky-500):not(.bg-sky-400) {
-  color: #334155 !important;
+/* Sidebar: kolom tetap (aside) dan laci layar sempit (dialog) memakai kelas
+   yang sama. Laci yang terbuka mengunci gulir halaman di belakangnya. */
+html:has(dialog.app-sidebar[open]) {
+  overflow: hidden;
 }
-html[data-theme="light"]
-  header
-  nav
-  a:not(.bg-sky-600):not(.bg-sky-500):not(.bg-sky-400):hover,
-html.light
-  header
-  nav
-  a:not(.bg-sky-600):not(.bg-sky-500):not(.bg-sky-400):hover {
+html[data-theme="light"] .app-sidebar,
+html.light .app-sidebar {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+html[data-theme="light"] .app-sidebar nav a:not([aria-current="page"]):hover,
+html[data-theme="light"] .app-sidebar button:hover,
+html.light .app-sidebar nav a:not([aria-current="page"]):hover,
+html.light .app-sidebar button:hover {
   background-color: #f1f5f9 !important;
   color: #0f172a !important;
+}
+html[data-theme="light"] .app-sidebar nav a[aria-current="page"],
+html.light .app-sidebar nav a[aria-current="page"] {
+  background-color: #e0f2fe !important;
+  color: #075985 !important;
+}
+html[data-theme="light"] .app-sidebar summary:hover,
+html.light .app-sidebar summary:hover {
+  color: #0f172a !important;
+}
+
+/* Inversion for cyan action button (e.g. Uji Koneksi Database) in light mode */
+html[data-theme="light"] .text-cyan-200,
+html.light .text-cyan-200 {
+  color: #0e7490 !important;
+}
+html[data-theme="light"] .bg-cyan-400\/10,
+html.light .bg-cyan-400\/10 {
+  background-color: #ecfeff !important;
+  border-color: #a5f3fc !important;
+}
+html[data-theme="light"] .hover\:bg-cyan-400\/20:hover,
+html.light .hover\:bg-cyan-400\/20:hover {
+  background-color: #cffafe !important;
 }
 
 /* Mobile bottom nav */
@@ -355,13 +378,19 @@ html.light .bg-white\/\[0\.05\] {
   border-color: #e2e8f0 !important;
 }
 
-/* 4. Segmented Tab Switchers (Dashboard, Scanner, Riwayat) */
+/* 4. Segmented Tab Switchers (Dashboard, Scanner, Riwayat, CMS Sub-tabs) */
 html[data-theme="light"] .bg-slate-900\/60,
 html[data-theme="light"] .bg-slate-950\/60,
+html[data-theme="light"] .bg-slate-800\/60,
 html[data-theme="light"] div.bg-slate-950.p-1\.5.rounded-2xl,
+html[data-theme="light"] div.rounded-2xl.bg-slate-900\/60,
+html[data-theme="light"] div.rounded-2xl.bg-slate-800\/60,
 html.light .bg-slate-900\/60,
 html.light .bg-slate-950\/60,
-html.light div.bg-slate-950.p-1\.5.rounded-2xl {
+html.light .bg-slate-800\/60,
+html.light div.bg-slate-950.p-1\.5.rounded-2xl,
+html.light div.rounded-2xl.bg-slate-900\/60,
+html.light div.rounded-2xl.bg-slate-800\/60 {
   background-color: #f1f5f9 !important;
   border-color: #e2e8f0 !important;
 }
@@ -370,9 +399,11 @@ html.light div.bg-slate-950.p-1\.5.rounded-2xl {
 html[data-theme="light"] button.bg-gradient-to-r.from-sky-600,
 html[data-theme="light"] div.bg-slate-950 button.bg-sky-500,
 html[data-theme="light"] div.bg-slate-900\/60 button.bg-sky-500,
+html[data-theme="light"] div.bg-slate-800\/60 button.bg-sky-500,
 html.light button.bg-gradient-to-r.from-sky-600,
 html.light div.bg-slate-950 button.bg-sky-500,
-html.light div.bg-slate-900\/60 button.bg-sky-500 {
+html.light div.bg-slate-900\/60 button.bg-sky-500,
+html.light div.bg-slate-800\/60 button.bg-sky-500 {
   background: linear-gradient(to right, #0284c7, #0ea5e9) !important;
   color: #ffffff !important;
   box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25) !important;
@@ -381,9 +412,11 @@ html.light div.bg-slate-900\/60 button.bg-sky-500 {
 html[data-theme="light"] button.bg-gradient-to-r.from-sky-600 *,
 html[data-theme="light"] div.bg-slate-950 button.bg-sky-500 *,
 html[data-theme="light"] div.bg-slate-900\/60 button.bg-sky-500 *,
+html[data-theme="light"] div.bg-slate-800\/60 button.bg-sky-500 *,
 html.light button.bg-gradient-to-r.from-sky-600 *,
 html.light div.bg-slate-950 button.bg-sky-500 *,
-html.light div.bg-slate-900\/60 button.bg-sky-500 * {
+html.light div.bg-slate-900\/60 button.bg-sky-500 *,
+html.light div.bg-slate-800\/60 button.bg-sky-500 * {
   color: #ffffff !important;
 }
 
@@ -391,26 +424,38 @@ html.light div.bg-slate-900\/60 button.bg-sky-500 * {
 html[data-theme="light"] .bg-slate-900\/60
   button:not(.bg-gradient-to-r):not(.bg-sky-500),
 html[data-theme="light"]
+  .bg-slate-800\/60
+  button:not(.bg-gradient-to-r):not(.bg-sky-500),
+html[data-theme="light"]
   div.bg-slate-950
   button:not(.bg-gradient-to-r):not(.bg-sky-500),
 html.light .bg-slate-900\/60 button:not(.bg-gradient-to-r):not(.bg-sky-500),
+html.light .bg-slate-800\/60 button:not(.bg-gradient-to-r):not(.bg-sky-500),
 html.light div.bg-slate-950 button:not(.bg-gradient-to-r):not(.bg-sky-500) {
   color: #475569 !important;
+  background-color: transparent !important;
 }
 html[data-theme="light"]
   .bg-slate-900\/60
   button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
 html[data-theme="light"]
+  .bg-slate-800\/60
+  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
+html[data-theme="light"]
   div.bg-slate-950
   button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
 html.light
   .bg-slate-900\/60
   button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
 html.light
+  .bg-slate-800\/60
+  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
+html.light
   div.bg-slate-950
   button:not(.bg-gradient-to-r):not(.bg-sky-500):hover {
   color: #0f172a !important;
-  background-color: #e2e8f0 !important;
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
 }
 
 /* 5. General Hover & Active States (No dark gray/black hovers) */
@@ -962,15 +1007,32 @@ html.light .text-rose-400 {
 /* 10. Borders & Dividers */
 html[data-theme="light"] .border-slate-800,
 html[data-theme="light"] .border-slate-700,
+html[data-theme="light"] .border-white\/5,
 html[data-theme="light"] .border-white\/10,
 html[data-theme="light"] .border-white\/15,
 html[data-theme="light"] .border-white\/20,
 html.light .border-slate-800,
 html.light .border-slate-700,
+html.light .border-white\/5,
 html.light .border-white\/10,
 html.light .border-white\/15,
 html.light .border-white\/20 {
   border-color: #e2e8f0 !important;
+}
+
+/* Horizontal Underline Tabs (.border-b-2) */
+html[data-theme="light"] button.border-sky-400,
+html.light button.border-sky-400 {
+  border-color: #0284c7 !important;
+  color: #0284c7 !important;
+}
+html[data-theme="light"] button.border-transparent.text-slate-400,
+html.light button.border-transparent.text-slate-400 {
+  color: #64748b !important;
+}
+html[data-theme="light"] button.border-transparent.text-slate-400:hover,
+html.light button.border-transparent.text-slate-400:hover {
+  color: #0f172a !important;
 }
 
 html[data-theme="light"] .divide-slate-800\/60,
@@ -1878,14 +1940,21 @@ html.light .bootstrap-input-readonly {
 }
 
 /* Submit & Cancel Buttons */
+/* `button.` wajib ikut: aturan umum `button.bg-sky-400` lebih spesifik daripada
+   kelas saja, sehingga tanpa itu tombol ini tetap #0284c7 (putih di atasnya
+   4,10:1, di bawah 4,5:1). Putih di atas #0369a1 = 5,93:1. */
 html[data-theme="light"] .bootstrap-btn-submit,
-html.light .bootstrap-btn-submit {
-  background-color: #0284c7 !important;
+html.light .bootstrap-btn-submit,
+html[data-theme="light"] button.bootstrap-btn-submit,
+html.light button.bootstrap-btn-submit {
+  background-color: #0369a1 !important;
   color: #ffffff !important;
 }
 html[data-theme="light"] .bootstrap-btn-submit:hover:not(:disabled),
-html.light .bootstrap-btn-submit:hover:not(:disabled) {
-  background-color: #0369a1 !important;
+html.light .bootstrap-btn-submit:hover:not(:disabled),
+html[data-theme="light"] button.bootstrap-btn-submit:hover:not(:disabled),
+html.light button.bootstrap-btn-submit:hover:not(:disabled) {
+  background-color: #075985 !important;
 }
 html[data-theme="light"] .bootstrap-btn-cancel,
 html.light .bootstrap-btn-cancel {

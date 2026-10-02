@@ -69,6 +69,7 @@ export default function GuruPage() {
   const [formData, setFormData] = useState<GuruInput>({
     id_guru: "",
     nama: "",
+    kode_karyawan: "",
     nip: "",
     nuptk: "",
     gelar: "",
@@ -82,6 +83,8 @@ export default function GuruPage() {
 
   // QR Modal State
   const [qrModalData, setQrModalData] = useState<{
+    id_guru: string;
+    kode_karyawan: string;
     nama: string;
     nip: string;
     qrPng: string;
@@ -179,6 +182,7 @@ export default function GuruPage() {
     setFormData({
       id_guru: "",
       nama: "",
+      kode_karyawan: "",
       nip: "",
       nuptk: "",
       gelar: "",
@@ -200,6 +204,7 @@ export default function GuruPage() {
     setFormData({
       id_guru: String(item.id_guru),
       nama: String(item.nama),
+      kode_karyawan: item.kode_karyawan ? String(item.kode_karyawan) : "",
       nip: item.nip ? String(item.nip) : "",
       nuptk: item.nuptk ? String(item.nuptk) : "",
       gelar: item.gelar ? String(item.gelar) : "",
@@ -265,6 +270,8 @@ export default function GuruPage() {
     try {
       const png = await createQrPng(payload, 400);
       setQrModalData({
+        id_guru: String(item.id_guru || ""),
+        kode_karyawan: String(item.kode_karyawan || item.nip || "-"),
         nama: String(item.nama) + (item.gelar ? `, ${String(item.gelar)}` : ""),
         nip: String(item.nip || item.nuptk || item.kode_karyawan || "-"),
         qrPng: png,
@@ -283,7 +290,10 @@ export default function GuruPage() {
     isSubmittingRef.current = true;
     setSaving(true);
     try {
-      const hasil = await simpanGuru(formData);
+      const hasil = await simpanGuru({
+        ...formData,
+        is_edit: isEditing,
+      });
       const peringatanFoto = isEditing
         ? null
         : await simpanFotoPersonilBaru(hasil.id_guru, fotoBaru);
@@ -739,7 +749,7 @@ export default function GuruPage() {
               onSubmit={(e) => void handleSave(e)}
               className="flex flex-col gap-4 py-2"
             >
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label
                     htmlFor="guru-id"
@@ -761,42 +771,66 @@ export default function GuruPage() {
                   />
                   <p className="mt-1 text-xs text-slate-500">
                     {isEditing
-                      ? "ID tidak dapat diubah; ia kunci absensi, kartu, dan QR yang sudah tercetak."
+                      ? "ID unik kunci absensi, kartu, dan QR."
                       : "Boleh diisi sendiri. Dikosongkan berarti dibuatkan sistem."}
                   </p>
                 </div>
                 <div>
                   <label
-                    htmlFor="guru-unit"
+                    htmlFor="guru-kode"
                     className="block text-xs font-semibold text-slate-300"
                   >
-                    Unit
+                    Kode Karyawan / PTK
                   </label>
-                  <select
-                    id="guru-unit"
-                    value={formData.unit || ""}
+                  <input
+                    id="guru-kode"
+                    type="text"
+                    value={formData.kode_karyawan || ""}
+                    placeholder="Kosongkan untuk otomatis (NIP/ID)"
                     onChange={(e) =>
-                      setFormData({ ...formData, unit: e.target.value })
+                      setFormData({
+                        ...formData,
+                        kode_karyawan: e.target.value,
+                      })
                     }
-                    className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
-                  >
-                    <option value="">Tidak ditentukan</option>
-                    {unitList.map((u) => (
-                      <option
-                        key={String(u.id_unit)}
-                        value={String(u.nama_unit)}
-                        className="bg-slate-900"
-                      >
-                        {String(u.nama_unit)}
-                      </option>
-                    ))}
-                  </select>
-                  {unitList.length === 0 ? (
-                    <p className="mt-1 text-xs text-slate-500">
-                      Belum ada unit. Tambahkan lewat Akademik → Unit.
-                    </p>
-                  ) : null}
+                    className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 font-mono text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Kode personil di data induk & kartu nama.
+                  </p>
                 </div>
+              </div>
+              <div>
+                <label
+                  htmlFor="guru-unit"
+                  className="block text-xs font-semibold text-slate-300"
+                >
+                  Unit
+                </label>
+                <select
+                  id="guru-unit"
+                  value={formData.unit || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, unit: e.target.value })
+                  }
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                >
+                  <option value="">Tidak ditentukan</option>
+                  {unitList.map((u) => (
+                    <option
+                      key={String(u.id_unit)}
+                      value={String(u.nama_unit)}
+                      className="bg-slate-900"
+                    >
+                      {String(u.nama_unit)}
+                    </option>
+                  ))}
+                </select>
+                {unitList.length === 0 ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Belum ada unit. Tambahkan lewat Akademik → Unit.
+                  </p>
+                ) : null}
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
@@ -1098,9 +1132,14 @@ export default function GuruPage() {
                 <h4 className="text-base font-black text-white">
                   {qrModalData.nama}
                 </h4>
-                <p className="font-mono text-xs text-sky-400">
-                  ID: {qrModalData.nip}
-                </p>
+                <div className="mt-1.5 flex flex-col gap-0.5 font-mono text-xs">
+                  <span className="text-sky-400">
+                    ID Unik: {qrModalData.id_guru}
+                  </span>
+                  <span className="text-slate-400">
+                    Kode Karyawan: {qrModalData.kode_karyawan}
+                  </span>
+                </div>
               </div>
               <p className="text-xs text-slate-400">
                 Arahkan barcode ini ke kamera terminal pemindai saat tiba atau

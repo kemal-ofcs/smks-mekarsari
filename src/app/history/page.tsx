@@ -773,7 +773,7 @@ export default function HistoryPage() {
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <span>🔍</span> Log Scan
+              Log Scan
             </button>
             <button
               type="button"
@@ -788,7 +788,7 @@ export default function HistoryPage() {
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <span>📋</span> Absensi Harian
+              Absensi Harian
             </button>
           </div>
 
@@ -976,7 +976,7 @@ export default function HistoryPage() {
           <div className="flex flex-col gap-1 sm:col-span-2 md:col-span-3 lg:col-span-5 pt-1">
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/60 pt-2">
               <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1.5">
-                <span>🔄</span> Urutan Data (Sort Order):
+                Urutan Data (Sort Order):
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <select
@@ -994,11 +994,11 @@ export default function HistoryPage() {
                   }
                   className="min-h-9 rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs font-mono text-sky-300 font-bold outline-none focus:border-sky-500 shadow-sm"
                 >
-                  <option value="time_desc">⬇️ Terbaru (DESC)</option>
-                  <option value="time_asc">⬆️ Terlama (ASC)</option>
-                  <option value="name_asc">🔤 Nama (A - Z)</option>
-                  <option value="name_desc">🔤 Nama (Z - A)</option>
-                  <option value="division_asc">🏢 Divisi (A - Z)</option>
+                  <option value="time_desc">Terbaru (DESC)</option>
+                  <option value="time_asc">Terlama (ASC)</option>
+                  <option value="name_asc">Nama (A - Z)</option>
+                  <option value="name_desc">Nama (Z - A)</option>
+                  <option value="division_asc">Divisi (A - Z)</option>
                 </select>
 
                 <button
@@ -1007,7 +1007,7 @@ export default function HistoryPage() {
                   disabled={loading}
                   className="min-h-9 px-3.5 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded-xl font-bold border border-slate-700 transition disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  <span>🔄</span> Muat Ulang
+                  Muat Ulang
                 </button>
               </div>
             </div>
@@ -1164,7 +1164,6 @@ export default function HistoryPage() {
                             className="px-2.5 py-1 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold transition flex items-center gap-1 mx-auto"
                             title="Hapus baris log scan ini"
                           >
-                            <span>🗑️</span>
                             <span>Hapus</span>
                           </button>
                         </td>
@@ -1377,7 +1376,6 @@ export default function HistoryPage() {
                                   className="px-2.5 py-1 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-300 text-[11px] font-bold transition flex items-center gap-1"
                                   title="Edit data absensi ini"
                                 >
-                                  <span>✏️</span>
                                   <span>Edit</span>
                                 </button>
                               ) : null}
@@ -1395,7 +1393,6 @@ export default function HistoryPage() {
                                   className="px-2.5 py-1 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold transition flex items-center gap-1"
                                   title="Hapus baris absensi harian ini"
                                 >
-                                  <span>🗑️</span>
                                   <span>Hapus</span>
                                 </button>
                               ) : null}
@@ -1472,10 +1469,7 @@ export default function HistoryPage() {
                     <span>Menyimpan...</span>
                   </>
                 ) : (
-                  <>
-                    <span>💾</span>
-                    <span>Simpan Perubahan</span>
-                  </>
+                  <span>Simpan Perubahan</span>
                 )}
               </button>
             </div>
@@ -1603,10 +1597,7 @@ export default function HistoryPage() {
                     <span>Menghapus...</span>
                   </>
                 ) : (
-                  <>
-                    <span>🗑️</span>
-                    <span>Ya, Hapus Data</span>
-                  </>
+                  <span>Ya, Hapus Data</span>
                 )}
               </button>
             </div>

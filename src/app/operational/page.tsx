@@ -567,9 +567,9 @@ export default function OperationalPage() {
                 : "text-slate-400 hover:text-white"
             }`}
           >
-            {value === "correction" && "🛠️ Koreksi Admin"}
-            {value === "backup" && "👥 Penugasan Backup"}
-            {value === "import" && "📥 Import Manual"}
+            {value === "correction" && "Koreksi Admin"}
+            {value === "backup" && "Penugasan Backup"}
+            {value === "import" && "Import Manual"}
           </button>
         ))}
       </div>
@@ -783,7 +783,7 @@ export default function OperationalPage() {
                 <span>Sedang Memproses Koreksi...</span>
               </>
             ) : (
-              <>💾 Simpan Koreksi Admin</>
+              <>Simpan Koreksi Admin</>
             )}
           </button>
         </section>
@@ -938,7 +938,7 @@ export default function OperationalPage() {
                 <span>Sedang Menyimpan Backup...</span>
               </>
             ) : (
-              <>👥 Buat Penugasan Backup</>
+              <>Buat Penugasan Backup</>
             )}
           </button>
         </section>
@@ -949,7 +949,7 @@ export default function OperationalPage() {
         <section className="app-panel rounded-3xl p-5 sm:p-7 space-y-6 bg-slate-900/80 border border-slate-800">
           <div className="border-b border-slate-800 pb-3">
             <h2 className="text-base font-bold text-white">
-              📥 Input Absensi Manual (Per-Kolom)
+              Input Absensi Manual (Per-Kolom)
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               Tambahkan data absensi harian per kolom secara langsung. Pilih
@@ -1114,9 +1114,7 @@ export default function OperationalPage() {
                   })
                 }
               >
-                <option value="">
-                  ✨ Otomatis (Generate Sistem Sesuai Jam)
-                </option>
+                <option value="">Otomatis (Generate Sistem Sesuai Jam)</option>
                 <option value="Lengkap">Lengkap (Masuk & Pulang)</option>
                 <option value="Belum Pulang">Belum Pulang (Hanya Masuk)</option>
                 <option value="Perlu Verifikasi">
@@ -1158,7 +1156,7 @@ export default function OperationalPage() {
                     <span>Sedang Menyimpan Entri Manual...</span>
                   </>
                 ) : (
-                  <>➕ Simpan Entri Manual</>
+                  <>Simpan Entri Manual</>
                 )}
               </button>
             </div>
@@ -1172,7 +1170,7 @@ export default function OperationalPage() {
               className="text-xs font-mono text-sky-400 hover:text-sky-300 font-bold flex items-center gap-2"
             >
               <span>{showBulkUpload ? "▼" : "▶"}</span>
-              <span>📁 Opsi Tambahan: Import Massal File CSV (Opsional)</span>
+              <span>Opsi Tambahan: Import Massal File CSV (Opsional)</span>
             </button>
 
             {showBulkUpload ? (
@@ -1202,7 +1200,7 @@ export default function OperationalPage() {
                       <span>Sedang Mengimpor Data CSV...</span>
                     </>
                   ) : (
-                    <>🚀 Proses Import Massal CSV</>
+                    <>Proses Import Massal CSV</>
                   )}
                 </button>
               </div>
@@ -1215,7 +1213,7 @@ export default function OperationalPage() {
       <section className="app-panel rounded-3xl p-5 bg-slate-900/80 border border-slate-800 space-y-4">
         <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <h2 className="font-bold text-white text-sm">
-            📋 Log Riwayat{" "}
+            Log Riwayat{" "}
             {tab === "backup"
               ? "Backup"
               : tab === "import"
@@ -1228,7 +1226,7 @@ export default function OperationalPage() {
             onClick={() => void load(tab)}
             className="rounded-xl border border-white/10 px-4 py-2 text-xs font-mono font-bold bg-slate-800 hover:bg-slate-700 text-sky-300 transition"
           >
-            🔄 Muat Data
+            Muat Data
           </button>
         </div>
 
@@ -1312,7 +1310,6 @@ export default function OperationalPage() {
                             className="px-2.5 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold transition flex items-center gap-1"
                             title="Hapus baris backup ini"
                           >
-                            <span>🗑️</span>
                             <span>Hapus</span>
                           </button>
                         ) : null}
@@ -1384,7 +1381,6 @@ export default function OperationalPage() {
                           className="px-2.5 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold transition flex items-center gap-1 mx-auto"
                           title="Hapus baris koreksi ini"
                         >
-                          <span>🗑️</span>
                           <span>Hapus</span>
                         </button>
                       </td>
@@ -1477,7 +1473,6 @@ export default function OperationalPage() {
                           className="px-2.5 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold transition flex items-center gap-1 mx-auto"
                           title="Hapus baris import ini"
                         >
-                          <span>🗑️</span>
                           <span>Hapus</span>
                         </button>
                       </td>
@@ -1524,17 +1519,14 @@ export default function OperationalPage() {
                     <span>Menghapus...</span>
                   </>
                 ) : (
-                  <>
-                    <span>🗑️</span>
-                    <span>
-                      Ya, Hapus{" "}
-                      {deleteConfirm.type === "import"
-                        ? "Import"
-                        : deleteConfirm.type === "backup"
-                          ? "Backup"
-                          : "Koreksi"}
-                    </span>
-                  </>
+                  <span>
+                    Ya, Hapus{" "}
+                    {deleteConfirm.type === "import"
+                      ? "Import"
+                      : deleteConfirm.type === "backup"
+                        ? "Backup"
+                        : "Koreksi"}
+                  </span>
                 )}
               </button>
             </div>

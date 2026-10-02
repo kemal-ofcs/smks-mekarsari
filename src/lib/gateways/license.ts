@@ -1,49 +1,25 @@
 "use client";
 
+import { requestWebApi } from "@/lib/client/api-client";
+import type { LicenseKind, LicenseStatus } from "@/lib/license/types";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop } from "@/lib/runtime/desktop-commands";
 
 /**
- * Lisensi offline Ed25519 — hanya ditegakkan di build Desktop dan Mobile
- * (`license.rs`). Web di-host pemilik aplikasi sendiri, jadi di sana setiap
- * fungsi di sini mengembalikan `null` dan UI lisensi tidak pernah tampil.
+ * Lisensi offline Ed25519. Desktop dan Mobile selalu menegakkannya
+ * (`license.rs`). Web hanya menegakkannya pada build self-hosted
+ * (`server/license.ts`); pada deployment milik pemilik aplikasi server
+ * menjawab `null`, dan seluruh UI lisensi tidak pernah tampil.
  *
- * Bentuknya persis `LicenseStatus` / `LicensePayload` di `license.rs`
- * (serde camelCase; enum snake_case).
+ * Bentuk datanya ada di `lib/license/types.ts`.
  */
-export type LicenseState =
-  | "active"
-  | "read_only"
-  | "missing"
-  | "invalid"
-  | "device_not_listed";
-
-export type LicenseReadOnlyReason = "expired" | "version_not_covered";
-
-export type LicenseKind = "beli_putus" | "sewa";
-
-export type LicensePayload = {
-  id: string;
-  holder: string;
-  kind: LicenseKind;
-  issued: string;
-  updatesUntil: string;
-  validUntil: string | null;
-  devices: string[];
-  lockMobile: boolean;
-};
-
-export type LicenseStatus = {
-  state: LicenseState;
-  readOnlyReason: LicenseReadOnlyReason | null;
-  message: string | null;
-  license: LicensePayload | null;
-  /** Sisa hari sewa, hari ini ikut dihitung (hari terakhir = 1). `null` untuk beli putus. */
-  daysLeft: number | null;
-  deviceCode: string;
-  deviceBound: boolean;
-  buildDate: string;
-};
+export type {
+  LicenseKind,
+  LicensePayload,
+  LicenseReadOnlyReason,
+  LicenseState,
+  LicenseStatus,
+} from "@/lib/license/types";
 
 /** Penerbit lisensi, disebut di layar aktivasi. Padanan `LICENSE_ISSUER` di `license.rs`. */
 export const LICENSE_ISSUER = "Kemal Office Studio";
@@ -60,8 +36,22 @@ export function isLicenseBlocking(status: LicenseStatus | null): boolean {
   );
 }
 
+/**
+ * Kata untuk benda yang diikat lisensi di build ini. Di Web yang diikat adalah
+ * server (lewat kode instance database), bukan perangkat yang sedang dipakai.
+ */
+export function licenseTargetNoun(): "perangkat" | "server" {
+  return isDesktopRuntime() ? "perangkat" : "server";
+}
+
 export async function getLicenseStatus(): Promise<LicenseStatus | null> {
-  if (!isDesktopRuntime()) return null;
+  if (!isDesktopRuntime()) {
+    const response = await requestWebApi<{ status: LicenseStatus | null }>(
+      "/api/license/status",
+      "POST",
+    );
+    return response.status;
+  }
   return invokeDesktop<LicenseStatus>("desktop_get_license_status");
 }
 
@@ -71,7 +61,12 @@ export async function getLicenseStatus(): Promise<LicenseStatus | null> {
  */
 export async function installLicense(license: string): Promise<LicenseStatus> {
   if (!isDesktopRuntime()) {
-    throw new Error("Lisensi hanya dipasang di aplikasi Desktop/Mobile.");
+    const response = await requestWebApi<{ status: LicenseStatus }>(
+      "/api/license/install",
+      "POST",
+      { license: license.trim() },
+    );
+    return response.status;
   }
   return invokeDesktop<LicenseStatus>("desktop_install_license", {
     license: license.trim(),

@@ -32,7 +32,7 @@ function statusKredensial(hasHash: boolean, changedAt: string | null) {
  * menerbitkannya; di tempat lain nilainya `null`.
  */
 async function daftarKredensial(list: string[] | null | undefined) {
-  let sql = `SELECT s.id_siswa, s.nis, s.nisn, s.nama_lengkap, r.nama_rombel, m.unit,
+  let sql = `SELECT s.id_siswa, s.nis, s.nisn, s.nama_lengkap, r.nama_rombel, r.tingkat, m.unit,
                     k.changed_at, k.password_hash
                FROM siswa_data s
                JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
@@ -47,19 +47,30 @@ async function daftarKredensial(list: string[] | null | undefined) {
   sql += ` ORDER BY r.nama_rombel, s.nama_lengkap;`;
 
   const hasil = await db.execute({ sql, args });
-  return hasil.rows.map((baris) => ({
-    idSiswa: String(baris.id_siswa),
-    namaSiswa: String(baris.nama_lengkap ?? ""),
-    nis: baris.nis ? String(baris.nis).trim() || null : null,
-    nisn: baris.nisn ? String(baris.nisn).trim() || null : null,
-    rombel: baris.nama_rombel ? String(baris.nama_rombel) : null,
-    unit: baris.unit ? String(baris.unit).trim() || null : null,
-    password: null as string | null,
-    status: statusKredensial(
-      Boolean(baris.password_hash),
-      baris.changed_at ? String(baris.changed_at) : null,
-    ),
-  }));
+  return hasil.rows.map((baris) => {
+    const tingkat = baris.tingkat ? String(baris.tingkat).trim() : "";
+    const namaRombel = baris.nama_rombel
+      ? String(baris.nama_rombel).trim()
+      : "";
+    const rombel =
+      tingkat && namaRombel
+        ? `Kelas ${tingkat} - ${namaRombel}`
+        : namaRombel || null;
+
+    return {
+      idSiswa: String(baris.id_siswa),
+      namaSiswa: String(baris.nama_lengkap ?? ""),
+      nis: baris.nis ? String(baris.nis).trim() || null : null,
+      nisn: baris.nisn ? String(baris.nisn).trim() || null : null,
+      rombel,
+      unit: baris.unit ? String(baris.unit).trim() || null : null,
+      password: null as string | null,
+      status: statusKredensial(
+        Boolean(baris.password_hash),
+        baris.changed_at ? String(baris.changed_at) : null,
+      ),
+    };
+  });
 }
 
 /** Simpan password sementara dan cabut sesi wali yang masih hidup. */

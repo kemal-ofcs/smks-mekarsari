@@ -140,4 +140,28 @@ describe("CMS landing: koleksi dan perpindahan kunci lama", () => {
       "kontak.jam_kerja",
     );
   });
+
+  test("field hero_image terdaftar di sub-tab hero_stats dengan tipe image", () => {
+    const heroStats = LANDING_PAGE_SUBSECTIONS.find(
+      (s) => s.id === "hero_stats",
+    );
+    expect(heroStats).toBeDefined();
+    const heroImageField = heroStats?.fields.find(
+      (f) => f.key === "landing.hero_image",
+    );
+    expect(heroImageField).toBeDefined();
+    expect(heroImageField?.type).toBe("image");
+  });
+
+  test("siapkanSimpanLanding mempertahankan nilai landing.hero_image", () => {
+    const konten = {
+      "landing.hero_title": "Sekolah Prestasi",
+      "landing.hero_image": "data:image/jpeg;base64,samplephoto123",
+    };
+    const siap = siapkanSimpanLanding(konten, {});
+    expect(siap["landing.hero_title"]).toBe("Sekolah Prestasi");
+    expect(siap["landing.hero_image"]).toBe(
+      "data:image/jpeg;base64,samplephoto123",
+    );
+  });
 });

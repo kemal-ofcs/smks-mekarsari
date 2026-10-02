@@ -988,7 +988,7 @@ export default function PresensiKelasPage() {
                     <thead className="border-b border-white/10 bg-slate-950/80 font-mono text-[11px] uppercase tracking-wider text-slate-400">
                       <tr>
                         <th className="px-4 py-3">No</th>
-                        <th className="px-4 py-3">NIS</th>
+                        <th className="px-4 py-3">NIPD</th>
                         <th className="px-4 py-3">Nama Siswa</th>
                         <th className="px-4 py-3">L/P</th>
                         <th className="px-4 py-3">Scan Gerbang</th>
@@ -1279,7 +1279,7 @@ export default function PresensiKelasPage() {
                               {item.nama_siswa}
                             </span>
                             <span className="font-mono text-[10px] text-slate-400">
-                              NIS: {item.nis}
+                              NIPD: {item.nis}
                             </span>
                           </td>
                           <td className="px-4 py-3 font-semibold text-slate-300">

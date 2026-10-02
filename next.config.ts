@@ -2,6 +2,16 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const isDesktopBuild = process.env.SPPG_BUILD_TARGET === "desktop";
+/**
+ * Build untuk image Docker pemasangan self-hosted: hasilnya `.next/standalone`,
+ * server yang berjalan tanpa `src/` dan tanpa `node_modules` lengkap, sehingga
+ * image yang diserahkan ke pembeli tidak memuat source code.
+ *
+ * Sengaja hanya aktif bila diminta (`Dockerfile` yang menyetelnya). `next start`
+ * tidak melayani build standalone, dan Vercel tidak memerlukannya.
+ */
+const isStandaloneBuild =
+  !isDesktopBuild && process.env.KOS_BUILD_STANDALONE === "1";
 const zxingBrowserModule = "@zxing/browser/es2015/index.js";
 const zxingLibraryModule = "@zxing/library/es2015/index.js";
 const zxingBrowserEntry = path.resolve(
@@ -33,11 +43,28 @@ const SECURITY_HEADERS = [
   },
 ];
 
+/**
+ * Sakelar lisensi dan tanggal build DITANAM ke dalam hasil build lewat `env`,
+ * bukan dibaca dari `.env` saat server berjalan. Sakelar yang dibaca saat jalan
+ * bisa dimatikan pembeli dengan satu baris di `.env`; yang ditanam hanya bisa
+ * diubah dengan membangun ulang dari source, yang tidak mereka pegang.
+ * Bawaannya MATI, jadi deployment milik pemilik aplikasi tidak terpengaruh.
+ */
+const licenseEnforced = process.env.KOS_LICENSE_ENFORCED === "1" ? "1" : "0";
+const buildDateWib = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Jakarta",
+}).format(new Date());
+
 const nextConfig: NextConfig = {
+  env: {
+    KOS_LICENSE_ENFORCED: licenseEnforced,
+    KOS_BUILD_DATE: buildDateWib,
+  },
   // Static export Desktop tidak melayani header; di sana CSP Tauri yang berlaku.
   ...(isDesktopBuild
     ? { output: "export" as const }
     : {
+        ...(isStandaloneBuild ? { output: "standalone" as const } : {}),
         async headers() {
           return [{ source: "/:path*", headers: SECURITY_HEADERS }];
         },

@@ -10,7 +10,8 @@ import {
 
 const lookups = {
   rombel: [
-    { id_rombel: "rom-a", nama_rombel: "X-A" },
+    { id_rombel: "rom-a", nama_rombel: "X-A", tingkat: "X" },
+    { id_rombel: "rom-tsm", nama_rombel: "TSM", tingkat: "X" },
     { id_rombel: "rom-b-2025", nama_rombel: "X-B" },
     { id_rombel: "rom-b-2026", nama_rombel: "X-B" },
   ],
@@ -105,6 +106,28 @@ describe("parseStudentRows", () => {
         lookups,
       ),
     ).toThrow(/NIS '001' muncul dua kali/);
+  });
+
+  test("nama rombel format 'Kelas X - TSM' berhasil dipetakan ke rombel TSM tingkat X", () => {
+    const [hasil] = parseStudentRows(
+      sheet({
+        nama_lengkap: "Doni",
+        nama_rombel: "Kelas X - TSM",
+      }),
+      lookups,
+    );
+    expect(hasil.draft.id_rombel).toBe("rom-tsm");
+  });
+
+  test("NIPD kembar di dalam berkas ditolak dengan pesan NIPD", () => {
+    const customSheet = [
+      ["nama_lengkap", "nama_rombel", "nipd"],
+      ["Ani", "X-A", "001"],
+      ["Budi", "X-A", "001"],
+    ];
+    expect(() => parseStudentRows(customSheet, lookups)).toThrow(
+      /NIPD '001' muncul dua kali/,
+    );
   });
 
   test("nomor WhatsApp wali yang tidak valid ditolak lebih awal", () => {

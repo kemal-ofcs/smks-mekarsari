@@ -35,6 +35,7 @@ export async function POST(request: NextRequest) {
         status?: string;
         id_shift?: number;
         unit?: string;
+        is_edit?: boolean;
       };
       id?: string;
     }>(request);

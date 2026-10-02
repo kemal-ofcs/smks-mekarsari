@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/lib/context/AuthContext";
-import { LICENSE_KIND_LABEL } from "@/lib/gateways/license";
+import { LICENSE_KIND_LABEL, licenseTargetNoun } from "@/lib/gateways/license";
 import { useLicenseStatus } from "@/lib/hooks/useLicenseStatus";
 import { LicenseActivationPanel } from "./LicenseActivationPanel";
 
@@ -17,14 +17,14 @@ const STATE_LABEL = {
   read_only: "Mode baca-saja",
   missing: "Belum ada lisensi",
   invalid: "Tidak sah",
-  device_not_listed: "Perangkat tidak terdaftar",
+  device_not_listed: "Tidak terdaftar di lisensi",
 } as const;
 
 /**
- * Kartu Lisensi di Pengaturan (Desktop dan Mobile), KHUSUS Superadmin: sisa
- * sewa dan daftar perangkat adalah urusan pemilik lembaga, bukan operator.
- * Operator tetap melihat dialog "Aktifkan lisensi" saat sewa habis
- * (`LicenseNotice`). Tidak merender apa pun di Web.
+ * Kartu Lisensi di Pengaturan, KHUSUS Superadmin: sisa sewa dan daftar
+ * perangkat adalah urusan pemilik lembaga, bukan operator. Operator tetap
+ * melihat dialog "Aktifkan lisensi" saat sewa habis (`LicenseNotice`). Tidak
+ * merender apa pun pada build Web yang tidak menegakkan lisensi.
  */
 export function LicenseCard() {
   const { user } = useAuth();
@@ -52,6 +52,12 @@ export function LicenseCard() {
           license.devices.length
             ? `${license.devices.length} terdaftar${status.deviceBound ? "" : " (perangkat ini tidak wajib terdaftar)"}`
             : "Tidak dikunci ke perangkat",
+        ],
+        [
+          "Versi Web",
+          license.webInstance
+            ? `${license.webInstance}, ${license.websites.length ? license.websites.join(", ") : "alamat apa pun"}`
+            : "Tidak dicakup",
         ],
       ]
     : [];
@@ -90,7 +96,7 @@ export function LicenseCard() {
       ) : null}
 
       <p className="text-xs text-slate-400">
-        Kode perangkat ini:{" "}
+        Kode {licenseTargetNoun()} ini:{" "}
         <code className="select-all font-mono font-bold text-slate-300">
           {status.deviceCode}
         </code>

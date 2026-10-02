@@ -819,7 +819,7 @@ export default function KaryawanPage() {
                             onClick={() => setDetailKaryawan(row)}
                             className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 rounded-lg text-xs transition flex items-center gap-1"
                           >
-                            <span>👁️</span> Detail
+                            Detail
                           </button>
                           {canManage ? (
                             <>
@@ -828,14 +828,14 @@ export default function KaryawanPage() {
                                 onClick={() => void handleShowQr(row)}
                                 className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded-lg text-xs transition flex items-center gap-1"
                               >
-                                <span>🔲</span> QR
+                                QR
                               </button>
                               <button
                                 type="button"
                                 onClick={() => openEditModal(row)}
                                 className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-lg text-xs transition flex items-center gap-1"
                               >
-                                <span>✏️</span> Edit
+                                Edit
                               </button>
                             </>
                           ) : null}
@@ -856,7 +856,7 @@ export default function KaryawanPage() {
             href="/id-cards"
             className="text-xs font-bold text-sky-300 hover:text-sky-200"
           >
-            Buka pembuatan dan cetak ID card →
+            Buka pembuatan dan cetak ID card
           </Link>
         </div>
       ) : null}
@@ -1006,7 +1006,7 @@ export default function KaryawanPage() {
                   onClick={() => void handleShowQr(detailKaryawan)}
                   className="px-3 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 rounded-xl font-bold border border-emerald-700/60 flex items-center gap-1.5"
                 >
-                  <span>🔲</span> Lihat QR
+                  Lihat QR
                 </button>
                 {canManage ? (
                   <button
@@ -1018,7 +1018,7 @@ export default function KaryawanPage() {
                     }}
                     className="px-3 py-1.5 bg-sky-950 hover:bg-sky-900 text-sky-300 rounded-xl font-bold border border-sky-700/60 flex items-center gap-1.5"
                   >
-                    <span>✏️</span> Edit Data
+                    Edit Data
                   </button>
                 ) : null}
               </div>
@@ -1059,7 +1059,7 @@ export default function KaryawanPage() {
               onClick={handleSaveQrPng}
               className="rounded-xl bg-sky-500 hover:bg-sky-400 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-sky-950 transition"
             >
-              📥 Simpan QR sebagai PNG
+              Simpan QR sebagai PNG
             </button>
           </div>
         </Modal>

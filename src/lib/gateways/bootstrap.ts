@@ -40,32 +40,90 @@ export type BootstrapDraft = {
   license: string;
 };
 
+export type WebProvisioningStatus = {
+  /**
+   * `false` = database memang belum diprovisioning. `null` = tidak diketahui
+   * (database tidak terjangkau), dan pada `null` layar WAJIB diam: kegagalan
+   * jaringan sesaat tidak boleh menyuruh orang memprovisioning database yang
+   * sebenarnya sudah berisi.
+   */
+  hasOperator: boolean | null;
+  /** Server ini memasang `KOS_SETUP_TOKEN`, jadi `/setup` bisa dipakai. */
+  setupEnabled: boolean;
+  /**
+   * `false` = alamat database belum diisi atau tidak sah di environment
+   * server. Berbeda dari `hasOperator: null`: keadaan ini tidak pulih sendiri,
+   * jadi layar WAJIB mengatakannya alih-alih diam.
+   */
+  databaseConfigured: boolean;
+  /** Alasan dari server saat `databaseConfigured` bernilai `false`. */
+  databaseIssue: string | null;
+};
+
 /**
- * Apakah database Web sudah punya setidaknya satu akun? Khusus Web.
- *
- * `false` = database memang belum diprovisioning; halaman login menunjuk ke
- * jalan provisioning. `null` = tidak diketahui (bukan Web, atau database tidak
- * terjangkau) — dan pada `null` halaman login WAJIB diam, supaya kegagalan
- * jaringan sesaat tidak menyuruh orang memprovisioning database yang sebenarnya
- * sudah berisi.
- *
- * Desktop dan Mobile tidak memanggil ini sama sekali: keduanya punya layar
- * provisioning sendiri lewat `getBootstrapStatus`, dan endpoint yang dipanggil
- * di bawah tidak ada pada static export.
+ * Status provisioning database Web. `null` di Desktop/Mobile (keduanya punya
+ * layar provisioning sendiri lewat `getBootstrapStatus`, dan endpoint di bawah
+ * tidak ada pada static export) dan saat endpoint-nya gagal dijangkau.
  */
-export async function getWebProvisioningHint(): Promise<boolean | null> {
+export async function getWebProvisioningStatus(): Promise<WebProvisioningStatus | null> {
   if (isDesktopRuntime()) return null;
   try {
-    const response = await requestWebApi<{ hasOperator: boolean | null }>(
-      "/api/auth/provisioning-status",
-      "POST",
-    );
-    return response.hasOperator;
+    const response = await requestWebApi<{
+      hasOperator: boolean | null;
+      setupEnabled?: boolean;
+      databaseConfigured?: boolean;
+      databaseIssue?: string | null;
+    }>("/api/auth/provisioning-status", "POST");
+    return {
+      hasOperator: response.hasOperator,
+      setupEnabled: response.setupEnabled === true,
+      databaseConfigured: response.databaseConfigured !== false,
+      databaseIssue:
+        typeof response.databaseIssue === "string"
+          ? response.databaseIssue
+          : null,
+    };
   } catch {
     // Petunjuk ini pelengkap, bukan syarat untuk login. Endpoint yang gagal
-    // cukup berarti "tidak diketahui" — halaman login tetap berfungsi penuh.
+    // cukup berarti "tidak diketahui": halaman login tetap berfungsi penuh.
     return null;
   }
+}
+
+export type WebSuperadminDraft = {
+  /** Isi `KOS_SETUP_TOKEN` dari `.env` server. */
+  setupToken: string;
+  namaOperator: string;
+  username: string;
+  email: string;
+  noHp: string;
+  password: string;
+  /** Teks `LIS1.…`; wajib pada build terkunci yang belum berlisensi. */
+  license?: string;
+};
+
+/**
+ * Buat Superadmin pertama dari browser. Khusus Web: Desktop dan Mobile memakai
+ * `bootstrapSuperadmin` di bawah, yang juga menyimpan koneksi database.
+ *
+ * Mengembalikan kode pemulihan, yang hanya bisa dibaca SEKALI.
+ */
+export async function createWebSuperadmin(
+  draft: WebSuperadminDraft,
+): Promise<string[]> {
+  if (isDesktopRuntime()) {
+    throw new Error(
+      "Provisioning lewat browser hanya tersedia pada versi Web.",
+    );
+  }
+  const response = await requestWebApi<{ recoveryCodes?: unknown }>(
+    "/api/auth/bootstrap",
+    "POST",
+    draft,
+  );
+  return Array.isArray(response.recoveryCodes)
+    ? response.recoveryCodes.map((code) => String(code))
+    : [];
 }
 
 export async function getBootstrapStatus(): Promise<BootstrapStatus | null> {

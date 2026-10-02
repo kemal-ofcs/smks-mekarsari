@@ -29,8 +29,8 @@ Perintah `bun run build` diarahkan ke target Web. Konfigurasi Tauri selalu mengg
 
 Salin nama variable dari `.env.example`. Credential database wajib server-only:
 
-- `TURSO_DATABASE_URL`
-- `TURSO_AUTH_TOKEN`
+- `KOS_DATABASE_URL` (nama lama `TURSO_DATABASE_URL` masih dibaca)
+- `KOS_DATABASE_AUTH_TOKEN` (nama lama `TURSO_AUTH_TOKEN` masih dibaca)
 
 Jangan memakai prefix `NEXT_PUBLIC_` untuk URL atau token Turso. Token yang pernah dipakai sebagai public environment harus dirotasi sebelum deployment production.
 
