@@ -356,6 +356,12 @@ export interface RenderCardParams {
   dpiScale?: number; // default 1 (300 DPI = 1011x638)
   selectedElementId?: string | null;
   showBoundingBoxes?: boolean;
+  /**
+   * Hanya perancang template yang menyalakannya: nomor identitas yang kosong
+   * diganti contoh supaya elemennya terlihat dan bisa diposisikan. Pratinjau
+   * dan cetak kartu sungguhan tidak pernah menyalakannya.
+   */
+  designMode?: boolean;
 }
 
 export async function drawIdCardToCanvas(
@@ -371,6 +377,7 @@ export async function drawIdCardToCanvas(
     dpiScale = 1,
     selectedElementId,
     showBoundingBoxes,
+    designMode = false,
   } = params;
 
   const isPortrait = template.orientation === "portrait";
@@ -423,7 +430,7 @@ export async function drawIdCardToCanvas(
       employee,
       company,
       qrPngOverride,
-      Boolean(showBoundingBoxes || selectedElementId),
+      designMode,
     );
   }
 
@@ -582,6 +589,70 @@ function drawFallbackBackground(
   ctx.strokeRect(10, 10, width - 20, height - 20);
 }
 
+/**
+ * Jenis kelamin untuk kartu. Data induk menyimpannya sebagai kode `L`/`P`
+ * (`master_data.lp`, `siswa_data.jenis_kelamin`); teks lain dipakai apa adanya.
+ */
+function genderLabel(employee: Record<string, unknown>): string {
+  const raw = String(
+    employee.jenis_kelamin || employee.gender || employee.lp || "",
+  ).trim();
+  const kode = raw.toUpperCase();
+  if (kode === "L") return "Laki-laki";
+  if (kode === "P") return "Perempuan";
+  return raw;
+}
+
+/**
+ * Teks yang ditulis sebuah elemen kartu untuk satu orang.
+ *
+ * Data yang kosong TETAP KOSONG di kartu sungguhan. Contohnya hanya muncul
+ * saat `designMode`, supaya elemen itu terlihat dan bisa diposisikan di
+ * perancang template. Dulu contohnya ikut tercetak: guru tanpa NIP membawa
+ * kartu bernomor karangan, dan setiap orang tercetak "Laki-laki" karena
+ * daftar ID Card tidak membawa jenis kelamin sama sekali.
+ */
+export function resolveElementText(
+  el: IdCardElement,
+  employee: Record<string, unknown>,
+  company?: CompanyProfile | null,
+  designMode = false,
+): string {
+  const contoh = (teks: string) => (designMode ? teks : "");
+  switch (el.sourceKey) {
+    case "employee.name":
+      return String(employee.nama || contoh("NAMA KARYAWAN"));
+    case "employee.nik":
+      return String(
+        employee.kode_karyawan || employee.id_unik || contoh("DEMO-001"),
+      );
+    case "employee.gender":
+      return genderLabel(employee) || contoh("Laki-laki");
+    case "employee.position":
+      return String(employee.jabatan_status || contoh("Staff"));
+    case "employee.department":
+      return String(employee.divisi || contoh("Operasional"));
+    case "company.name":
+      return String(company?.company_name || BRANDING.defaultCompanyName);
+    case "company.terms":
+      return String(company?.card_terms || BRANDING.defaultCardTerms);
+    case "teacher.nip":
+      return String(employee.nip || contoh("198701012010011001"));
+    case "teacher.nuptk":
+      return String(employee.nuptk || contoh("1234567890123456"));
+    case "student.nisn":
+      return String(employee.nisn || contoh("0012345678"));
+    case "student.nis":
+      return String(employee.nis || contoh("2024001"));
+    case "employee.unit":
+      return String(employee.unit || contoh("UNIT SEKOLAH"));
+    case "static_text":
+      return el.staticValue || el.label || "";
+    default:
+      return el.label || "";
+  }
+}
+
 async function renderSingleElement(
   ctx: CanvasRenderingContext2D,
   el: IdCardElement,
@@ -668,54 +739,7 @@ async function renderSingleElement(
     }
   } else {
     // Text rendering
-    let val = "";
-    switch (el.sourceKey) {
-      case "employee.name":
-        val = String(employee.nama || "NAMA KARYAWAN");
-        break;
-      case "employee.nik":
-        val = String(employee.kode_karyawan || employee.id_unik || "DEMO-001");
-        break;
-      case "employee.gender":
-        val = String(employee.jenis_kelamin || employee.gender || "Laki-laki");
-        break;
-      case "employee.position":
-        val = String(employee.jabatan_status || "Staff");
-        break;
-      case "employee.department":
-        val = String(employee.divisi || "Operasional");
-        break;
-      case "company.name":
-        val = String(company?.company_name || BRANDING.defaultCompanyName);
-        break;
-      case "company.terms":
-        val = String(company?.card_terms || BRANDING.defaultCardTerms);
-        break;
-      case "teacher.nip":
-        val = String(employee.nip || "198701012010011001");
-        break;
-      case "teacher.nuptk":
-        val = String(employee.nuptk || "1234567890123456");
-        break;
-      case "student.nisn":
-        val = String(employee.nisn || "0012345678");
-        break;
-      case "student.nis":
-        // Contoh hanya tampil di perancang template, supaya elemennya bisa
-        // diposisikan. Di kartu yang dicetak, NIPD kosong tetap kosong:
-        // nomor karangan tidak boleh tercetak di kartu seorang siswa.
-        val = String(employee.nis || (designMode ? "2024001" : ""));
-        break;
-      case "employee.unit":
-        val = String(employee.unit || "UNIT SEKOLAH");
-        break;
-      case "static_text":
-        val = el.staticValue || el.label || "";
-        break;
-      default:
-        val = el.label || "";
-        break;
-    }
+    let val = resolveElementText(el, employee, company, designMode);
 
     if (el.isUppercase) {
       val = val.toUpperCase();

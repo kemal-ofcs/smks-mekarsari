@@ -23,7 +23,8 @@ export async function getDaftarIdCard(filter?: {
       c.tanggal_generate, c.link_qr_png, m.kode_karyawan, m.status_aktif,
       m.token_absensi, m.qr_code, m.jabatan_status, m.unit,
       g.nip, g.nuptk, s.nisn,
-      s.id_rombel, r.nama_rombel, CAST(r.tingkat AS TEXT) AS tingkat, s.nis
+      s.id_rombel, r.nama_rombel, CAST(r.tingkat AS TEXT) AS tingkat, s.nis,
+      COALESCE(NULLIF(TRIM(m.lp), ''), s.jenis_kelamin) AS lp
     FROM master_data m
     LEFT JOIN id_card c ON c.id_unik = m.id_unik
     LEFT JOIN guru_data g ON g.id_guru = m.id_unik

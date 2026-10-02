@@ -706,6 +706,7 @@ export default function IdCardsPage() {
         company: companyProfile,
         selectedElementId,
         showBoundingBoxes,
+        designMode: true,
       });
     });
 

@@ -1,68 +1,102 @@
 import { describe, expect, test } from "bun:test";
-import {
-  escapeAttr,
-  ID_CARD_LINE_HEIGHT,
-  ID_CARD_MIN_FONT_RATIO,
-  tataTeksDalamKotak,
-} from "./id-card-renderer";
+import type { IdCardElement } from "@/types/id-card";
+import { resolveElementText } from "./id-card-renderer";
 
-describe("escapeAttr", () => {
-  test("nama personil tidak bisa keluar dari atribut alt", () => {
-    const nama = `"><img src=x onerror="alert(1)">`;
-    const html = `<img alt="${escapeAttr(nama)}" />`;
-    expect(html).not.toContain("<img src=x");
-    expect(html).toBe(
-      '<img alt="&quot;&gt;&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" />',
+function elemen(sourceKey: IdCardElement["sourceKey"]): IdCardElement {
+  return {
+    id: "uji",
+    type: "text",
+    side: "front",
+    sourceKey,
+    label: "Label",
+    x: 0,
+    y: 0,
+    fontSize: 12,
+    color: "#ffffff",
+  };
+}
+
+const NOMOR = [
+  ["teacher.nip", "nip"],
+  ["teacher.nuptk", "nuptk"],
+  ["student.nisn", "nisn"],
+  ["student.nis", "nis"],
+] as const;
+
+describe("nomor identitas di kartu", () => {
+  for (const [sourceKey, kolom] of NOMOR) {
+    test(`${sourceKey}: yang kosong tetap kosong di kartu sungguhan`, () => {
+      expect(resolveElementText(elemen(sourceKey), { nama: "Budi" })).toBe("");
+      expect(
+        resolveElementText(elemen(sourceKey), { [kolom]: null }, null),
+      ).toBe("");
+    });
+
+    test(`${sourceKey}: nomor asli dipakai apa adanya`, () => {
+      expect(resolveElementText(elemen(sourceKey), { [kolom]: "A-17" })).toBe(
+        "A-17",
+      );
+      expect(
+        resolveElementText(elemen(sourceKey), { [kolom]: "A-17" }, null, true),
+      ).toBe("A-17");
+    });
+
+    test(`${sourceKey}: contoh hanya muncul di perancang template`, () => {
+      expect(resolveElementText(elemen(sourceKey), {}, null, true)).not.toBe(
+        "",
+      );
+    });
+  }
+});
+
+describe("jenis kelamin di kartu", () => {
+  const gender = elemen("employee.gender");
+
+  test("kode L/P dari data induk diterjemahkan", () => {
+    expect(resolveElementText(gender, { lp: "P" })).toBe("Perempuan");
+    expect(resolveElementText(gender, { lp: " l " })).toBe("Laki-laki");
+    expect(resolveElementText(gender, { jenis_kelamin: "P", lp: "L" })).toBe(
+      "Perempuan",
     );
   });
 
-  test("nama biasa tidak berubah", () => {
-    expect(escapeAttr("Siti Aisyah")).toBe("Siti Aisyah");
+  test("teks yang sudah berupa kata dipakai apa adanya", () => {
+    expect(resolveElementText(gender, { jenis_kelamin: "Perempuan" })).toBe(
+      "Perempuan",
+    );
+  });
+
+  test("yang kosong tidak pernah menjadi Laki-laki di kartu sungguhan", () => {
+    expect(resolveElementText(gender, {})).toBe("");
+    expect(resolveElementText(gender, { lp: null })).toBe("");
+    expect(resolveElementText(gender, {}, null, true)).toBe("Laki-laki");
   });
 });
 
-describe("tataTeksDalamKotak", () => {
-  // Pengukur palsu: tiap huruf selebar setengah ukuran font.
-  const ukur = (teks: string, px: number) => teks.length * px * 0.5;
-
-  test("teks yang sudah muat tidak berubah", () => {
-    expect(tataTeksDalamKotak(ukur, "Budi", 100, 40, 20)).toEqual({
-      fontPx: 20,
-      baris: ["Budi"],
+describe("data kosong lain di kartu", () => {
+  for (const sourceKey of [
+    "employee.position",
+    "employee.department",
+    "employee.unit",
+  ] as const) {
+    test(`${sourceKey}: kosong di kartu sungguhan, contoh di perancang`, () => {
+      expect(resolveElementText(elemen(sourceKey), {})).toBe("");
+      expect(resolveElementText(elemen(sourceKey), {}, null, true)).not.toBe(
+        "",
+      );
     });
-  });
+  }
 
-  test("teks panjang dibungkus lalu dikecilkan sampai muat di kotak", () => {
-    const hasil = tataTeksDalamKotak(
-      ukur,
-      "Siti Aisyah Rahmawati",
-      100,
-      40,
-      20,
+  test("data yang terisi tidak berubah", () => {
+    const orang = {
+      jabatan_status: "Guru",
+      divisi: "Tenaga Pengajar",
+      unit: "SMA",
+    };
+    expect(resolveElementText(elemen("employee.position"), orang)).toBe("Guru");
+    expect(resolveElementText(elemen("employee.department"), orang)).toBe(
+      "Tenaga Pengajar",
     );
-    expect(hasil.fontPx).toBeLessThan(20);
-    for (const baris of hasil.baris) {
-      expect(ukur(baris, hasil.fontPx)).toBeLessThanOrEqual(100);
-    }
-    expect(
-      hasil.baris.length * hasil.fontPx * ID_CARD_LINE_HEIGHT,
-    ).toBeLessThanOrEqual(40);
-  });
-
-  test("kata tanpa spasi dipecah per huruf, tidak keluar ke samping", () => {
-    const hasil = tataTeksDalamKotak(ukur, "SPPG-2026-000123", 60, 0, 10);
-    for (const baris of hasil.baris) {
-      expect(ukur(baris, hasil.fontPx)).toBeLessThanOrEqual(60);
-    }
-    expect(hasil.baris.join("")).toBe("SPPG-2026-000123");
-  });
-
-  test("di ukuran minimum yang tidak muat dipotong dengan …", () => {
-    const hasil = tataTeksDalamKotak(ukur, "a ".repeat(80).trim(), 40, 14, 20);
-    expect(hasil.fontPx).toBe(20 * ID_CARD_MIN_FONT_RATIO);
-    expect(hasil.baris.at(-1)?.endsWith("…")).toBe(true);
-    expect(
-      hasil.baris.length * hasil.fontPx * ID_CARD_LINE_HEIGHT,
-    ).toBeLessThanOrEqual(14);
+    expect(resolveElementText(elemen("employee.unit"), orang)).toBe("SMA");
   });
 });
