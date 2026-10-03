@@ -53,7 +53,18 @@ export function LicenseBootstrapField({ value, onChange }: Props) {
         className="w-full resize-y rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-2.5 font-mono text-[11px] text-white outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 break-all"
       />
       <p className="text-[11px] text-slate-500">
-        Kode {licenseTargetNoun()} ini:{" "}
+        {status.deviceName ? (
+          <>
+            Nama {licenseTargetNoun()} ini:{" "}
+            <span className="select-all font-bold text-slate-300">
+              {status.deviceName}
+            </span>
+            , kode
+          </>
+        ) : (
+          "Kode"
+        )}{" "}
+        {licenseTargetNoun()} ini:{" "}
         <code className="select-all font-mono font-bold text-slate-300">
           {status.deviceCode}
         </code>

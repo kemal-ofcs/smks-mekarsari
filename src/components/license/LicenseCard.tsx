@@ -95,12 +95,22 @@ export function LicenseCard() {
         </dl>
       ) : null}
 
-      <p className="text-xs text-slate-400">
-        Kode {licenseTargetNoun()} ini:{" "}
-        <code className="select-all font-mono font-bold text-slate-300">
-          {status.deviceCode}
-        </code>
-      </p>
+      <div className="space-y-1 text-xs text-slate-400">
+        {status.deviceName ? (
+          <p>
+            Nama {licenseTargetNoun()} ini:{" "}
+            <span className="select-all font-bold text-slate-300 break-words">
+              {status.deviceName}
+            </span>
+          </p>
+        ) : null}
+        <p>
+          Kode {licenseTargetNoun()} ini:{" "}
+          <code className="select-all font-mono font-bold text-slate-300">
+            {status.deviceCode}
+          </code>
+        </p>
+      </div>
 
       {replacing ? (
         <div className="border-t border-white/10 pt-4">

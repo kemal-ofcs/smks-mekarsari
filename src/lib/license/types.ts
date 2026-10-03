@@ -40,6 +40,12 @@ export type LicenseStatus = {
   /** Sisa hari sewa, hari ini ikut dihitung (hari terakhir = 1). `null` untuk beli putus. */
   daysLeft: number | null;
   deviceCode: string;
+  /**
+   * Nama perangkat yang dikenali manusia (nama komputer, merek + model HP).
+   * Hanya untuk dibaca, lisensi tidak pernah mengikatnya. Tidak ada di Web,
+   * tempat yang diikat adalah server, bukan perangkat yang sedang dipakai.
+   */
+  deviceName?: string | null;
   deviceBound: boolean;
   buildDate: string;
 };

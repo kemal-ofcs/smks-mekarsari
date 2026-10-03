@@ -141,6 +141,9 @@ pub struct LicenseStatus {
     /// Sisa hari sewa (hari ini ikut dihitung); `None` untuk beli putus.
     pub days_left: Option<i64>,
     pub device_code: String,
+    /// Nama perangkat yang dikenali manusia (nama komputer, merek + model HP),
+    /// hanya untuk dibaca; `None` bila platform tidak memberikannya.
+    pub device_name: Option<String>,
     pub device_bound: bool,
     pub build_date: String,
 }
@@ -597,6 +600,83 @@ pub fn current_device_code(state: &DesktopState) -> Result<String, CommandError>
     Ok(device_code(PLATFORM_PREFIX, &raw))
 }
 
+const MAX_DEVICE_NAME_CHARS: usize = 64;
+
+/// Rapikan nama perangkat mentah: buang karakter kontrol dan spasi berlebih,
+/// potong ke 64 karakter. Kosong = tidak ada nama.
+fn tidy_device_name(raw: &str) -> Option<String> {
+    let name = raw
+        .split(|character: char| character.is_whitespace() || character.is_control())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let name = name.chars().take(MAX_DEVICE_NAME_CHARS).collect::<String>();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Label HP Android dari properti sistem. Nama pasar (`ro.product.marketname`,
+/// mis. "Redmi Note 12") lebih dikenali daripada kode model, tetapi tidak
+/// semua merek mengisinya. Merek tidak diulang bila model sudah memuatnya.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn android_device_label(market_name: &str, manufacturer: &str, model: &str) -> Option<String> {
+    if let Some(name) = tidy_device_name(market_name) {
+        return Some(name);
+    }
+    let model = tidy_device_name(model)?;
+    match tidy_device_name(manufacturer) {
+        Some(brand) if !model.to_lowercase().starts_with(&brand.to_lowercase()) => {
+            let mut letters = brand.chars();
+            let brand = letters
+                .next()
+                .map(|first| first.to_uppercase().chain(letters).collect::<String>())
+                .unwrap_or_default();
+            tidy_device_name(&format!("{brand} {model}"))
+        }
+        _ => Some(model),
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_property(name: &str) -> String {
+    std::process::Command::new("getprop")
+        .arg(name)
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// Nama perangkat untuk layar aktivasi dan kartu Lisensi, supaya klien dan
+/// `LICENSE_ISSUER` tahu kode perangkat mana milik PC atau HP yang mana.
+/// Lisensi TIDAK pernah mengikat nama ini: pemiliknya bisa menggantinya kapan
+/// saja, sedangkan kode perangkat tidak berubah.
+pub fn device_name() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("COMPUTERNAME")
+            .ok()
+            .and_then(|name| tidy_device_name(&name))
+    }
+    #[cfg(target_os = "android")]
+    {
+        android_device_label(
+            &android_property("ro.product.marketname"),
+            &android_property("ro.product.manufacturer"),
+            &android_property("ro.product.model"),
+        )
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/etc/hostname")
+            .ok()
+            .and_then(|name| tidy_device_name(&name))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "android", target_os = "linux")))]
+    {
+        None
+    }
+}
+
 pub fn today_wib() -> String {
     time_policy::wib_date_from_epoch(storage::now_epoch_seconds())
 }
@@ -700,6 +780,7 @@ fn to_status(evaluation: Evaluation, device_code: String) -> LicenseStatus {
         license: evaluation.payload,
         days_left,
         device_code,
+        device_name: device_name(),
         device_bound,
         build_date: BUILD_DATE.to_owned(),
     }
@@ -1362,6 +1443,30 @@ mod tests {
         assert!(!is_device_code("W-1A2B-3C4D-5E6F-7A8"));
         assert!(!is_device_code("X-1A2B-3C4D-5E6F-7A8B"));
         assert!(!is_device_code("W-1A2B-3C4D-5E6F-7a8b"));
+    }
+
+    #[test]
+    fn device_name_is_tidied_and_android_label_is_readable() {
+        assert_eq!(tidy_device_name("  KANTOR-PC01\r\n"), Some("KANTOR-PC01".into()));
+        assert_eq!(tidy_device_name("a\tb\u{7}  c"), Some("a b c".into()));
+        assert_eq!(tidy_device_name(" \n "), None);
+        assert_eq!(tidy_device_name(&"x".repeat(100)).unwrap().chars().count(), 64);
+
+        assert_eq!(
+            android_device_label("Redmi Note 12\n", "Xiaomi", "23021RAAEG"),
+            Some("Redmi Note 12".into())
+        );
+        assert_eq!(
+            android_device_label("", "samsung\n", "SM-A515F\n"),
+            Some("Samsung SM-A515F".into())
+        );
+        // Model yang sudah memuat mereknya tidak diulang.
+        assert_eq!(
+            android_device_label("", "OPPO", "OPPO A57"),
+            Some("OPPO A57".into())
+        );
+        assert_eq!(android_device_label("", "", "Pixel 7"), Some("Pixel 7".into()));
+        assert_eq!(android_device_label("", "Google", ""), None);
     }
 
     #[test]

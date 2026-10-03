@@ -55,9 +55,16 @@ export function LicenseActivationPanel({
   const textId = useId();
   const fileId = useId();
 
+  const noun = licenseTargetNoun();
+  const deviceName = status.deviceName?.trim() || null;
+
+  // Nama ikut disalin supaya penerbit tahu kode itu milik PC atau HP yang mana.
   const copyDeviceCode = async () => {
+    const copyText = deviceName
+      ? `Nama ${noun}: ${deviceName}\nKode ${noun}: ${status.deviceCode}`
+      : status.deviceCode;
     try {
-      await navigator.clipboard.writeText(status.deviceCode);
+      await navigator.clipboard.writeText(copyText);
       setCopied(true);
     } catch {
       setError(
@@ -125,8 +132,18 @@ export function LicenseActivationPanel({
       {status.message ? <p className={tone}>{status.message}</p> : null}
 
       <div className="space-y-1.5">
+        {deviceName ? (
+          <>
+            <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+              Nama {noun}
+            </p>
+            <p className="select-all break-words rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-2.5 text-center text-sm font-bold text-white">
+              {deviceName}
+            </p>
+          </>
+        ) : null}
         <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
-          Kode {licenseTargetNoun()} ini
+          Kode {noun} ini
         </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 select-all rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-2.5 text-center font-mono text-sm font-bold tracking-wider text-white">
@@ -135,14 +152,17 @@ export function LicenseActivationPanel({
           <button
             type="button"
             onClick={copyDeviceCode}
+            aria-label={
+              deviceName ? `Salin nama dan kode ${noun}` : `Salin kode ${noun}`
+            }
             className="min-h-10 rounded-xl border border-slate-700 bg-slate-800/80 px-3 text-xs font-bold text-slate-300 transition hover:bg-slate-700"
           >
             {copied ? "Tersalin" : "Salin"}
           </button>
         </div>
         <p className="text-[11px] text-slate-500">
-          Kirim kode ini kepada {LICENSE_ISSUER} saat meminta atau memperpanjang
-          lisensi.
+          Kirim {deviceName ? "nama dan kode" : "kode"} ini kepada{" "}
+          {LICENSE_ISSUER} saat meminta atau memperpanjang lisensi.
         </p>
       </div>
 
