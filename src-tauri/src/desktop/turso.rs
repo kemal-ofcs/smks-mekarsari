@@ -5671,9 +5671,17 @@ impl TursoClient {
             ));
         }
 
+        let flag = |key: &str| i64::from(draft.get(key).and_then(Value::as_bool) == Some(true));
         let mut statements = vec![Statement::new(
-            "INSERT INTO app_role (role_key, nama_role, deskripsi, is_superadmin, status, created_at, updated_at) VALUES (?, ?, ?, 0, 'Aktif', datetime('now'), datetime('now'));",
-            vec![json!(role_key), json!(nama_role), json!(deskripsi)],
+            "INSERT INTO app_role (role_key, nama_role, deskripsi, is_superadmin, status, require_totp, require_scan_photo, require_scan_ip_allowlist, created_at, updated_at) VALUES (?, ?, ?, 0, 'Aktif', ?, ?, ?, datetime('now'), datetime('now'));",
+            vec![
+                json!(role_key),
+                json!(nama_role),
+                json!(deskripsi),
+                json!(flag("require_totp")),
+                json!(flag("require_scan_photo")),
+                json!(flag("require_scan_ip_allowlist")),
+            ],
         )];
         if let Some(perms) = draft.get("permissions").and_then(Value::as_array) {
             statements.extend(perms
@@ -5762,6 +5770,19 @@ impl TursoClient {
             if let Some(deskripsi) = draft.get("deskripsi").and_then(Value::as_str) {
                 updates.push("deskripsi = ?");
                 args.push(json!(deskripsi));
+            }
+            // Cermin `validateRoleDraft` + `editRole` di Web. Dulu kunci ini
+            // diabaikan, sehingga menonaktifkan role dari Desktop/Mobile
+            // melapor berhasil tanpa mengubah apa pun.
+            if let Some(status) = draft.get("status").and_then(Value::as_str) {
+                if !matches!(status, "Aktif" | "Nonaktif") {
+                    return Err(CommandError::new(
+                        "VALIDATION_ERROR",
+                        "Status role tidak valid.",
+                    ));
+                }
+                updates.push("status = ?");
+                args.push(json!(status));
             }
         }
 

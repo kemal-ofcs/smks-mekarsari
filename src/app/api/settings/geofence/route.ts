@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { AuthorizationError } from "@/lib/auth/permission-assertion";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
 import { ensureServerDatabaseInitialized } from "@/lib/server/db";
 import {
@@ -50,7 +51,15 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    await prepare(request);
+    const actor = await prepare(request);
+    // Cermin `desktop_update_geofence_settings`. Membaca tetap cukup
+    // `branding.manage` karena halaman Pengaturan memuatnya untuk semua role.
+    if (!actor.isSuperadmin) {
+      throw new AuthorizationError(
+        "Pengaturan geofencing hanya dapat diakses Superadmin.",
+        403,
+      );
+    }
     const settings = parseSettings(await readJsonBody(request));
     const data = await updateGeofenceSettings(settings);
     return noStoreJson({ data });

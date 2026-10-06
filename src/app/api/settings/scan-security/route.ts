@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { AuthorizationError } from "@/lib/auth/permission-assertion";
 import {
   requireWebPermission,
   requireWebSession,
@@ -75,7 +76,16 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     assertSameOriginMutation(request);
-    await requireWebPermission(request, "settings.manage", true);
+    const actor = await requireWebPermission(request, "settings.manage", true);
+    // Cermin `desktop_update_scan_security`. Tombolnya memang hanya tampil
+    // untuk Superadmin, tetapi tanpa pemeriksaan ini pemegang `settings.manage`
+    // bisa mematikan kewajiban foto dan IP lewat satu request langsung.
+    if (!actor.isSuperadmin) {
+      throw new AuthorizationError(
+        "Pengaturan keamanan absensi hanya dapat diubah Superadmin.",
+        403,
+      );
+    }
     await ensureServerDatabaseInitialized();
     const body = await readJsonBody<ScanSecurityBody>(request);
     const data = await updateScanSecurity(

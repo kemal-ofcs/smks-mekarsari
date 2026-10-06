@@ -12,6 +12,12 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
   SUPERADMIN_ONLY_PERMISSIONS,
 } from "@/lib/rbac/catalog";
+import {
+  editRole,
+  insertRole,
+  listRoles,
+  parseRoleDraft,
+} from "@/lib/rbac/role-admin";
 
 let client: Client;
 
@@ -137,6 +143,59 @@ describe("dynamic RBAC migration", () => {
         ),
       ).toBe(false);
     }
+  });
+
+  test("sakelar keamanan absensi role bertahan saat dibuat dan disunting", async () => {
+    // Body persis seperti kiriman dialog Role di halaman Operator. Dulu parser
+    // route membuang kedua sakelar absensi, jadi setiap simpan menulis 0.
+    const actor = await client.execute(
+      "SELECT id FROM master_operator WHERE kode_operator = 'OP001';",
+    );
+    const actorId = Number(actor.rows[0]?.id);
+    const { id } = await insertRole(
+      client,
+      actorId,
+      parseRoleDraft({
+        name: "Piket Gerbang",
+        status: "Aktif",
+        requireTotp: true,
+        requireScanPhoto: true,
+        requireScanIpAllowlist: true,
+      }),
+    );
+    const flags = async (roleId: number) => {
+      const role = (await listRoles(client)).find((item) => item.id === roleId);
+      return [
+        role?.requireTotp,
+        role?.requireScanPhoto,
+        role?.requireScanIpAllowlist,
+      ];
+    };
+    expect(await flags(id)).toEqual([true, true, true]);
+
+    await editRole(
+      client,
+      id,
+      parseRoleDraft({
+        name: "Piket Gerbang",
+        status: "Aktif",
+        requireTotp: false,
+        requireScanPhoto: true,
+        requireScanIpAllowlist: false,
+      }),
+    );
+    expect(await flags(id)).toEqual([false, true, false]);
+
+    const superadmin = (await listRoles(client)).find(
+      (role) => role.isSuperadmin,
+    );
+    if (!superadmin) throw new Error("Role Superadmin tidak ada.");
+    await editRole(
+      client,
+      superadmin.id,
+      parseRoleDraft({ requireScanPhoto: true, requireScanIpAllowlist: true }),
+    );
+    expect((await flags(superadmin.id)).slice(1)).toEqual([true, true]);
   });
 });
 

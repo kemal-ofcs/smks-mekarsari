@@ -56,6 +56,21 @@ export async function listRoles(client: Client): Promise<RoleRecord[]> {
   }));
 }
 
+// Setiap sakelar yang tidak disalin di sini ditulis 0 oleh `editRole`, tanpa
+// error: dulu kedua sakelar keamanan absensi terlewat dan setiap simpan role
+// dari Web diam-diam mematikannya.
+export function parseRoleDraft(value: unknown): RoleDraft {
+  const draft = (value ?? {}) as Record<string, unknown>;
+  return {
+    name: typeof draft.name === "string" ? draft.name : "",
+    description: typeof draft.description === "string" ? draft.description : "",
+    status: String(draft.status) as RoleDraft["status"],
+    requireTotp: draft.requireTotp === true,
+    requireScanPhoto: draft.requireScanPhoto === true,
+    requireScanIpAllowlist: draft.requireScanIpAllowlist === true,
+  };
+}
+
 function validateRoleDraft(draft: RoleDraft) {
   const name = draft.name.trim();
   const roleKey = normalizeRoleKey(name);
@@ -89,10 +104,21 @@ export async function insertRole(
     sql: `
       INSERT INTO app_role (
         role_key, nama_role, deskripsi, is_system, is_superadmin,
-        status, created_at, updated_at, created_by
-      ) VALUES (?, ?, ?, 0, 0, 'Aktif', ?, ?, ?);
+        status, require_totp, require_scan_photo, require_scan_ip_allowlist,
+        created_at, updated_at, created_by
+      ) VALUES (?, ?, ?, 0, 0, 'Aktif', ?, ?, ?, ?, ?, ?);
     `,
-    args: [roleKey, name, draft.description?.trim() ?? "", now, now, actorCode],
+    args: [
+      roleKey,
+      name,
+      draft.description?.trim() ?? "",
+      draft.requireTotp ? 1 : 0,
+      draft.requireScanPhoto ? 1 : 0,
+      draft.requireScanIpAllowlist ? 1 : 0,
+      now,
+      now,
+      actorCode,
+    ],
   });
   const roleId = Number(result.lastInsertRowid);
   try {

@@ -1103,28 +1103,48 @@ pub fn get_geofence_settings(state: &DesktopState) -> Result<Value, CommandError
     }))
 }
 
+/// Cermin `validateGeofenceSettings` (`validations/geofence.ts`): urutan
+/// pemeriksaan dan pesannya sama, sehingga pesan pertama yang dilihat user
+/// identik di Web dan Desktop. Angka yang hilang dibaca sebagai NaN, seperti
+/// `Number(undefined)` di sana, bukan diam-diam menjadi 0.
+fn validate_geofence_settings(
+    enabled: bool,
+    latitude: f64,
+    longitude: f64,
+    radius: f64,
+) -> Result<(), CommandError> {
+    let error = |message: &str| Err(CommandError::new("VALIDATION_ERROR", message));
+    if !latitude.is_finite() || !(-90.0..=90.0).contains(&latitude) {
+        return error("Latitude harus berada antara -90 dan 90.");
+    }
+    if !longitude.is_finite() || !(-180.0..=180.0).contains(&longitude) {
+        return error("Longitude harus berada antara -180 dan 180.");
+    }
+    if radius.fract() != 0.0 || !(10.0..=10_000.0).contains(&radius) {
+        return error("Radius wajib berupa angka bulat antara 10-10.000 meter.");
+    }
+    if enabled && latitude == 0.0 && longitude == 0.0 {
+        return error("Tentukan koordinat kantor sebelum geofencing diaktifkan.");
+    }
+    Ok(())
+}
+
 pub fn save_geofence_settings(state: &DesktopState, settings: &Value) -> Result<(), CommandError> {
+    let number = |key: &str| settings.get(key).and_then(Value::as_f64).unwrap_or(f64::NAN);
+    let enabled = settings
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let latitude = number("latitude");
+    let longitude = number("longitude");
+    let radius_meter = number("radiusMeter");
+    validate_geofence_settings(enabled, latitude, longitude, radius_meter)?;
+    let radius = radius_meter as i64;
     let client_id = sync::ensure_client_id(state)?;
     let mut connection = storage::database(&state.data_dir)?;
     let transaction = connection
         .transaction()
         .map_err(|_| CommandError::internal())?;
-    let enabled = settings
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let latitude = settings
-        .get("latitude")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-    let longitude = settings
-        .get("longitude")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
-    let radius = settings
-        .get("radiusMeter")
-        .and_then(Value::as_i64)
-        .unwrap_or(100);
     for (key, value) in [
         ("geofence_enabled", enabled.to_string()),
         ("lat_kantor", latitude.to_string()),
@@ -4216,6 +4236,46 @@ pub fn force_enqueue_settings(state: &DesktopState) -> Result<Value, CommandErro
         "jumlahDienqueue": enqueued,
         "pesan": format!("{enqueued} data master (Shift, Template ID Card, Instansi, Libur, Pengaturan) berhasil dijadwalkan untuk sinkronisasi ke cloud."),
     }))
+}
+
+#[cfg(test)]
+mod tests_geofence_validation {
+    use super::validate_geofence_settings;
+
+    // Vektor yang sama dengan `geofence.test.ts`.
+    fn message(enabled: bool, lat: f64, lng: f64, radius: f64) -> Option<String> {
+        validate_geofence_settings(enabled, lat, lng, radius)
+            .err()
+            .map(|error| error.message)
+    }
+
+    #[test]
+    fn mengikuti_aturan_web() {
+        assert_eq!(message(true, -6.2, 106.8, 100.0), None);
+        assert_eq!(message(false, 0.0, 0.0, 100.0), None);
+        assert_eq!(
+            message(true, 0.0, 0.0, 100.0).as_deref(),
+            Some("Tentukan koordinat kantor sebelum geofencing diaktifkan.")
+        );
+        assert_eq!(
+            message(true, 91.0, 106.8, 100.0).as_deref(),
+            Some("Latitude harus berada antara -90 dan 90.")
+        );
+        assert_eq!(
+            message(true, -6.2, 181.0, 100.0).as_deref(),
+            Some("Longitude harus berada antara -180 dan 180.")
+        );
+        for radius in [9.0, 10_001.0, 100.5, f64::NAN] {
+            assert_eq!(
+                message(true, -6.2, 106.8, radius).as_deref(),
+                Some("Radius wajib berupa angka bulat antara 10-10.000 meter.")
+            );
+        }
+        assert_eq!(
+            message(true, f64::NAN, 106.8, 100.0).as_deref(),
+            Some("Latitude harus berada antara -90 dan 90.")
+        );
+    }
 }
 
 #[cfg(test)]

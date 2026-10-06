@@ -3,10 +3,10 @@ import type { PermissionKey } from "@/lib/rbac/catalog";
 import {
   editRole,
   insertRole,
+  parseRoleDraft,
   removeRole,
   replaceRolePermissions,
 } from "@/lib/rbac/role-admin";
-import type { RoleDraft } from "@/lib/rbac/types";
 import { requireWebPermission } from "@/lib/server/auth/authorize";
 import { getServerDatabase } from "@/lib/server/db";
 import {
@@ -23,16 +23,6 @@ interface RoleMutationBody {
   roleId?: unknown;
   draft?: unknown;
   permissionKeys?: unknown;
-}
-
-function parseDraft(value: unknown): RoleDraft {
-  const draft = (value ?? {}) as Record<string, unknown>;
-  return {
-    name: typeof draft.name === "string" ? draft.name : "",
-    description: typeof draft.description === "string" ? draft.description : "",
-    status: String(draft.status) as RoleDraft["status"],
-    requireTotp: draft.requireTotp === true,
-  };
 }
 
 function parsePermissionKeys(value: unknown) {
@@ -53,7 +43,7 @@ export async function POST(request: NextRequest) {
     const result = await insertRole(
       getServerDatabase(),
       actor.id,
-      parseDraft(body.draft),
+      parseRoleDraft(body.draft),
       parsePermissionKeys(body.permissionKeys),
     );
     return noStoreJson({ sukses: true, ...result }, 201);
@@ -69,7 +59,7 @@ export async function PATCH(request: NextRequest) {
     await editRole(
       getServerDatabase(),
       parsePositiveId(body.roleId, "ID role"),
-      parseDraft(body.draft),
+      parseRoleDraft(body.draft),
     );
     return noStoreJson({ sukses: true });
   } catch (error) {

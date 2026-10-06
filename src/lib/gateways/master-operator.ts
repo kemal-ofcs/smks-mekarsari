@@ -189,6 +189,9 @@ export async function createRole(
         nama_role: draft.name,
         deskripsi: draft.description,
         status: draft.status,
+        require_totp: draft.requireTotp === true,
+        require_scan_photo: draft.requireScanPhoto === true,
+        require_scan_ip_allowlist: draft.requireScanIpAllowlist === true,
       },
       permissionKeys: [...permissionKeys],
     });
