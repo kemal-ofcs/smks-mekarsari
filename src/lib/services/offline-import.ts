@@ -10,6 +10,10 @@ import {
   normalizeDate,
 } from "@/lib/attendance/time-policy";
 import { db, ensureDbInitialized } from "@/lib/db";
+import {
+  MAX_WALI_NOTIFICATIONS_PER_IMPORT,
+  queueWaliNotification,
+} from "@/lib/services/wa-notification";
 
 export interface OfflineImportRow {
   tanggal: string;
@@ -52,10 +56,16 @@ function timestamp(date: string, time: string, nextDay = false) {
   return `${value.toISOString().slice(0, 10)} ${normalized}`;
 }
 
+interface NotifikasiImport {
+  diantre: number;
+  dibatasi: boolean;
+}
+
 async function processRow(
   transaction: Transaction,
   row: OfflineImportRow,
   operator: string,
+  notifikasi: NotifikasiImport,
 ) {
   const eventKey = `IMP-${randomUUID()}`;
   const now = new Date().toISOString();
@@ -447,6 +457,26 @@ async function processRow(
       operator,
     ],
   });
+  // Cermin blok notifikasi di `administration.rs::import_offline`: hanya
+  // siswa, dibatasi per satu aksi import. Import-nya sendiri tidak pernah
+  // dibatasi; yang dilewati hanya notifikasinya.
+  if (notifikasi.diantre < MAX_WALI_NOTIFICATIONS_PER_IMPORT) {
+    const diantre = await queueWaliNotification(
+      transaction,
+      "import_manual",
+      id,
+      `import_manual:${id}:${date}:${statusAttendance}`,
+      () => ({
+        tanggal: date,
+        status: statusAttendance,
+        keterangan: row.keterangan?.trim() || "Import manual",
+      }),
+    );
+    if (diantre) notifikasi.diantre += 1;
+  } else {
+    notifikasi.dibatasi = true;
+  }
+
   return {
     sukses: true,
     eventKey,
@@ -462,10 +492,11 @@ export async function prosesImportOffline(
   await ensureDbInitialized();
 
   const results = [];
+  const notifikasi: NotifikasiImport = { diantre: 0, dibatasi: false };
   for (const row of rows) {
     const transaction = await db.transaction("write");
     try {
-      const result = await processRow(transaction, row, operator);
+      const result = await processRow(transaction, row, operator, notifikasi);
       await transaction.commit();
       results.push(result);
     } catch (error) {
@@ -482,6 +513,14 @@ export async function prosesImportOffline(
     sukses: results.some((item) => item.sukses),
     berhasil: results.filter((item) => item.sukses).length,
     gagal: results.filter((item) => !item.sukses).length,
+    notifikasiDiantre: notifikasi.diantre,
+    notifikasiDibatasi: notifikasi.dibatasi,
+    // Kalimat yang sama dengan `catatan_notif` di Rust.
+    catatanNotifikasi: notifikasi.dibatasi
+      ? ` Notifikasi wali: ${notifikasi.diantre} diantrekan; sisanya dilewati karena melebihi batas ${MAX_WALI_NOTIFICATIONS_PER_IMPORT} per satu aksi import.`
+      : notifikasi.diantre > 0
+        ? ` Notifikasi wali: ${notifikasi.diantre} diantrekan.`
+        : "",
     results,
   };
 }

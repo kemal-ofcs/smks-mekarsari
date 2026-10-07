@@ -10,8 +10,16 @@ import {
   simpanJadwalMengajar,
   type TeachingScheduleRow,
 } from "@/lib/gateways/academic";
+import {
+  getLessonPeriods,
+  type LessonPeriodRow,
+} from "@/lib/gateways/class-attendance";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
-import { susunJamKe } from "@/lib/validations/class-attendance";
+import {
+  jamKbmAktif,
+  pukulJamKe,
+  susunJamKe,
+} from "@/lib/validations/class-attendance";
 
 /**
  * Jadwal mengajar mingguan per rombel.
@@ -24,6 +32,10 @@ import { susunJamKe } from "@/lib/validations/class-attendance";
  *
  * Jadwal ini KETERANGAN: presensi kelas tetap bisa dicatat tanpa jadwal, dan
  * gunanya memberi tombol isi-cepat di layar presensi.
+ *
+ * Jam pelajaran dipilih dari jadwal bel (tab Jam Pelajaran). Selama sekolah
+ * belum mengisinya, kotak angka lama tetap dipakai supaya jadwal tetap bisa
+ * disusun.
  */
 
 const HARI = [
@@ -74,11 +86,20 @@ export function JadwalPanel({
   const [loading, setLoading] = useState(true);
   const [filterRombel, setFilterRombel] = useState("");
   const [draft, setDraft] = useState<JadwalDraft | null>(null);
+  const [periods, setPeriods] = useState<LessonPeriodRow[]>([]);
+  const jamKbm = jamKbmAktif(periods);
 
   const muat = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await getJadwalMengajar({ id_rombel: filterRombel || null }));
+      const [jadwal, bel] = await Promise.all([
+        getJadwalMengajar({ id_rombel: filterRombel || null }),
+        // Bel hanya memperindah pilihan; kegagalannya tidak boleh
+        // menyembunyikan jadwal.
+        getLessonPeriods().catch(() => [] as LessonPeriodRow[]),
+      ]);
+      setRows(jadwal);
+      setPeriods(bel);
     } catch (error: unknown) {
       onFeedback(
         "error",
@@ -109,10 +130,26 @@ export function JadwalPanel({
       id_mapel: String(mapelList[0]?.id_mapel ?? ""),
       id_guru: String(guruList[0]?.id_guru ?? ""),
       hari: 1,
-      jamDari: 1,
-      jamSampai: 2,
+      jamDari: jamKbm[0]?.jam_ke ?? 1,
+      jamSampai: jamKbm[0]?.jam_ke ?? 2,
       is_aktif: 1,
     });
+  };
+
+  // Pilihan jam dari jadwal bel, ditambah nomor tersimpan yang tidak ada di
+  // bel supaya jadwal lama tetap bisa dibuka tanpa diam-diam berubah.
+  const pilihanJam = (terpilih: number) => {
+    const opsi = jamKbm.map((row) => ({
+      nilai: row.jam_ke,
+      label: `Jam ke-${row.jam_ke} (${row.jam_mulai}–${row.jam_selesai})`,
+    }));
+    if (!opsi.some((item) => item.nilai === terpilih)) {
+      opsi.push({
+        nilai: terpilih,
+        label: `Jam ke-${terpilih} (tidak ada di jadwal bel)`,
+      });
+    }
+    return opsi;
   };
 
   const simpan = async (event: FormEvent) => {
@@ -269,6 +306,11 @@ export function JadwalPanel({
                   </td>
                   <td className="px-3 py-2 font-mono text-slate-300">
                     {row.jam_ke}
+                    {pukulJamKe(periods, row.jam_ke) ? (
+                      <span className="block text-[11px] text-slate-400">
+                        {pukulJamKe(periods, row.jam_ke)}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2 text-xs text-slate-400">
                     {row.nama_rombel || row.id_rombel}
@@ -420,36 +462,93 @@ export function JadwalPanel({
                 </select>
               </label>
 
-              <label className="grid gap-1.5 text-xs font-bold text-slate-400">
-                Jam pelajaran dari
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.jamDari}
-                  onChange={(event) =>
-                    setDraft({ ...draft, jamDari: Number(event.target.value) })
-                  }
-                  required
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 font-mono font-normal text-slate-200 focus:border-sky-500 focus:outline-none"
-                />
-              </label>
+              {jamKbm.length > 0 ? (
+                <>
+                  <label className="grid gap-1.5 text-xs font-bold text-slate-400">
+                    Jam pelajaran dari
+                    <select
+                      value={draft.jamDari}
+                      onChange={(event) => {
+                        const jamDari = Number(event.target.value);
+                        setDraft({
+                          ...draft,
+                          jamDari,
+                          jamSampai: Math.max(jamDari, draft.jamSampai),
+                        });
+                      }}
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 font-normal text-slate-200 focus:border-sky-500 focus:outline-none"
+                    >
+                      {pilihanJam(draft.jamDari).map((item) => (
+                        <option key={item.nilai} value={item.nilai}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label className="grid gap-1.5 text-xs font-bold text-slate-400">
-                Sampai jam ke
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.jamSampai}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      jamSampai: Number(event.target.value),
-                    })
-                  }
-                  required
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 font-mono font-normal text-slate-200 focus:border-sky-500 focus:outline-none"
-                />
-              </label>
+                  <label className="grid gap-1.5 text-xs font-bold text-slate-400">
+                    Sampai jam ke
+                    <select
+                      value={draft.jamSampai}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          jamSampai: Number(event.target.value),
+                        })
+                      }
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 font-normal text-slate-200 focus:border-sky-500 focus:outline-none"
+                    >
+                      {pilihanJam(draft.jamSampai)
+                        .filter((item) => item.nilai >= draft.jamDari)
+                        .map((item) => (
+                          <option key={item.nilai} value={item.nilai}>
+                            {item.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label className="grid gap-1.5 text-xs font-bold text-slate-400">
+                    Jam pelajaran dari
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.jamDari}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          jamDari: Number(event.target.value),
+                        })
+                      }
+                      required
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 font-mono font-normal text-slate-200 focus:border-sky-500 focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="grid gap-1.5 text-xs font-bold text-slate-400">
+                    Sampai jam ke
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.jamSampai}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          jamSampai: Number(event.target.value),
+                        })
+                      }
+                      required
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 font-mono font-normal text-slate-200 focus:border-sky-500 focus:outline-none"
+                    />
+                  </label>
+                  <p className="col-span-2 text-[11px] leading-4 text-slate-400">
+                    Isi tab Jam Pelajaran supaya jam bisa dipilih beserta
+                    pukulnya.
+                  </p>
+                </>
+              )}
             </div>
 
             <label className="flex items-center gap-3 text-xs font-semibold text-slate-300">

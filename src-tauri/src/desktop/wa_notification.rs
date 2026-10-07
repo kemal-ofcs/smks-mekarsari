@@ -260,17 +260,24 @@ pub fn wa_notify_enabled(settings: &HashMap<String, String>, jenis: &str) -> boo
 /// dengan vektor yang sama.
 pub const WA_TEMPLATE_KEY_PREFIX: &str = "wa_template_";
 pub const MAX_WA_TEMPLATE_CHARS: usize = 1000;
-pub const WA_TEMPLATE_KINDS: [&str; 6] = [
+/// Keenam jenis antrean ditambah dua pesan manual tombol "Hubungi Wali" di
+/// Rekonsiliasi KBM. Dua yang terakhir tidak pernah diantre, jadi tidak punya
+/// sakelar `wa_notify_*` dan tidak ada di CHECK `notifikasi_wa.jenis`.
+pub const WA_TEMPLATE_KINDS: [&str; 8] = [
     "scan_masuk",
     "scan_pulang",
     "bolos",
     "ambang_alfa",
     "koreksi_admin",
     "import_manual",
+    "rekonsiliasi_bolos",
+    "rekonsiliasi_tanpa_scan",
 ];
 
 pub fn wa_template_key(jenis: &str) -> Option<String> {
-    wa_notify_setting_key(jenis).map(|_| format!("{WA_TEMPLATE_KEY_PREFIX}{jenis}"))
+    WA_TEMPLATE_KINDS
+        .contains(&jenis)
+        .then(|| format!("{WA_TEMPLATE_KEY_PREFIX}{jenis}"))
 }
 
 pub fn wa_template_label(jenis: &str) -> &'static str {
@@ -281,6 +288,8 @@ pub fn wa_template_label(jenis: &str) -> &'static str {
         "ambang_alfa" => "Ambang alfa",
         "koreksi_admin" => "Koreksi admin",
         "import_manual" => "Input manual",
+        "rekonsiliasi_bolos" => "Rekonsiliasi: siswa bolos",
+        "rekonsiliasi_tanpa_scan" => "Rekonsiliasi: tanpa scan gerbang",
         _ => "Pesan",
     }
 }
@@ -294,6 +303,8 @@ pub fn default_wa_template(jenis: &str) -> Option<&'static str> {
         "ambang_alfa" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa ananda telah tercatat tidak hadir tanpa keterangan (Alfa) sebanyak {total_alfa} kali dalam {hari} hari terakhir. Mohon perhatian dan konfirmasi dari Bapak/Ibu Wali Murid.",
         "koreksi_admin" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} telah dikoreksi oleh admin sekolah menjadi: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
         "import_manual" => "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} dimasukkan secara manual oleh admin sekolah dengan status: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
+        "rekonsiliasi_bolos" => "Yth. Bapak/Ibu Wali dari {nama}, diberitahukan bahwa ananda tercatat hadir di gerbang sekolah (pukul {jam_gerbang}), namun TIDAK HADIR (Alfa) pada {mapel} jam ke-{jam_ke} ({guru}). Mohon konfirmasi kehadiran siswa. Terima kasih.",
+        "rekonsiliasi_tanpa_scan" => "Yth. Bapak/Ibu Wali dari {nama}, ananda tercatat HADIR pada {mapel} jam ke-{jam_ke} ({guru}), namun tidak ditemukan catatan scan di gerbang sekolah hari ini. Mohon dipastikan ananda membawa kartu pelajarnya dan memindai di gerbang saat tiba. Terima kasih.",
         _ => return None,
     })
 }
@@ -306,6 +317,8 @@ pub fn wa_template_placeholders(jenis: &str) -> &'static [&'static str] {
         "bolos" => &["nama", "rombel", "mapel", "jam_ke", "tanggal"],
         "ambang_alfa" => &["nama", "rombel", "total_alfa", "hari"],
         "koreksi_admin" | "import_manual" => &["nama", "rombel", "tanggal", "status", "keterangan"],
+        "rekonsiliasi_bolos" => &["nama", "rombel", "mapel", "jam_ke", "guru", "jam_gerbang", "tanggal"],
+        "rekonsiliasi_tanpa_scan" => &["nama", "rombel", "mapel", "jam_ke", "guru", "tanggal"],
         _ => &[],
     }
 }
@@ -385,8 +398,14 @@ pub fn compose_wa_message(connection: &Connection, jenis: &str, vars: &[(&str, S
             .ok()
             .flatten()
     });
-    let template = tersimpan
-        .and_then(|value| validate_wa_template(jenis, &value).ok())
+    compose_from_stored(jenis, tersimpan.as_deref(), vars)
+}
+
+/// Bagian murni `compose_wa_message`: template tersimpan yang sah, atau teks
+/// bawaan. Cermin `composeWaMessage` di TypeScript.
+pub fn compose_from_stored(jenis: &str, stored: Option<&str>, vars: &[(&str, String)]) -> String {
+    let template = stored
+        .and_then(|value| validate_wa_template(jenis, value).ok())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default_wa_template(jenis).unwrap_or_default().to_owned());
     render_wa_template(&template, vars)
@@ -411,7 +430,7 @@ pub fn get_wa_templates(state: &DesktopState) -> Result<Value, CommandError> {
     Ok(Value::Object(hasil))
 }
 
-/// Simpan keenam template sekaligus lewat rute kanonik `setting/update`.
+/// Simpan seluruh template sekaligus lewat rute kanonik `setting/update`.
 ///
 /// Semuanya divalidasi dulu; satu yang salah membatalkan seluruh penyimpanan
 /// supaya tidak ada setengah-tersimpan yang membingungkan.

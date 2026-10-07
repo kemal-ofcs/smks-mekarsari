@@ -64,6 +64,8 @@ export interface AttendanceAnomalyItem {
   nama_wali?: string | null;
   anomaly_type: "BOLOS_DI_SEKOLAH" | "HADIR_TANPA_SCAN_GERBANG";
   anomaly_label: string;
+  /** Pesan "Hubungi Wali" yang sudah disusun backend dari template tersimpan. */
+  pesan_wali: string;
 }
 
 export interface ClassAttendanceFilter {

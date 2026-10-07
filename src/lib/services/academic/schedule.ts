@@ -3,6 +3,7 @@ import "server-only";
 import { db, ensureDbInitialized } from "@/lib/db";
 import { ApiRequestError } from "@/lib/server/http/api-response";
 import {
+  aturNomorJamBel,
   JENIS_JAM_PELAJARAN,
   type JenisJamPelajaran,
   JP_MAX_PER_DAY_SETTING_KEY,
@@ -35,7 +36,7 @@ export async function getLessonPeriods() {
     `SELECT id_jam_pelajaran, jam_ke, jam_mulai, jam_selesai, jenis,
             COALESCE(keterangan, '') AS keterangan, is_aktif, created_at, updated_at
      FROM akademik_jam_pelajaran
-     ORDER BY jam_ke, jam_mulai;`,
+     ORDER BY jam_mulai, jam_ke;`,
   );
   return res.rows;
 }
@@ -88,33 +89,28 @@ export async function saveLessonPeriod(draft: {
   const batas = parseJpMaxPerDay(
     batasRow.rows[0] ? String(batasRow.rows[0].value ?? "") : null,
   );
-  if (
-    !Number.isInteger(draft.jam_ke) ||
-    draft.jam_ke < 1 ||
-    draft.jam_ke > batas
-  ) {
-    throw new ApiRequestError(
-      `Jam pelajaran harus di antara 1 dan ${batas}, sesuai Pengaturan.`,
-      400,
-    );
-  }
+  const nomor = aturNomorJamBel(jenis, draft.jam_ke, batas);
+  if (!nomor.ok) throw new ApiRequestError(nomor.pesan, 400);
+  const jamKe = nomor.jamKe;
 
   const id =
     draft.id_jam_pelajaran?.trim() ||
     `jp_${crypto.randomUUID().replace(/-/g, "")}`;
 
   // Keunikan jam pelajaran ditegakkan di APLIKASI, bukan skema: tabelnya
-  // sengaja tanpa UNIQUE supaya push dari perangkat offline tidak macet.
-  if (isAktif === 1) {
+  // sengaja tanpa UNIQUE supaya push dari perangkat offline tidak macet. Hanya
+  // antar baris KBM, karena baris lain tidak bernomor (`aturNomorJamBel`).
+  if (isAktif === 1 && jenis === "KBM") {
     const bentrok = await db.execute({
       sql: `SELECT 1 FROM akademik_jam_pelajaran
             WHERE jam_ke = ? AND id_jam_pelajaran <> ? AND is_aktif = 1
+              AND jenis = 'KBM'
             LIMIT 1;`,
-      args: [draft.jam_ke, id],
+      args: [jamKe, id],
     });
     if (bentrok.rows.length > 0) {
       throw new ApiRequestError(
-        `Jam pelajaran ke-${draft.jam_ke} sudah terdaftar pada jadwal bel.`,
+        `Jam pelajaran ke-${jamKe} sudah terdaftar pada jadwal bel.`,
         409,
       );
     }
@@ -139,7 +135,7 @@ export async function saveLessonPeriod(draft: {
     `,
     args: [
       id,
-      draft.jam_ke,
+      jamKe,
       jamMulai,
       jamSelesai,
       jenis,

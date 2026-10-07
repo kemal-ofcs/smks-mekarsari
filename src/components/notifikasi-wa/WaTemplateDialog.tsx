@@ -10,10 +10,10 @@ import {
   DEFAULT_WA_TEMPLATES,
   renderWaTemplate,
   validateWaTemplate,
-  WA_NOTIFICATION_KINDS,
+  WA_TEMPLATE_KINDS,
   WA_TEMPLATE_LABELS,
   WA_TEMPLATE_PLACEHOLDERS,
-  type WaNotificationKind,
+  type WaTemplateKind,
   type WaTemplateMap,
 } from "@/lib/validations/wa-notification";
 
@@ -29,10 +29,16 @@ const CONTOH: Record<string, string> = {
   total_alfa: "3",
   hari: "30",
   keterangan: "Sakit, surat menyusul",
+  guru: "Bu Rina",
+  jam_gerbang: "06:45",
 };
 
 /**
- * Dialog penyunting teks pesan WhatsApp otomatis.
+ * Dialog penyunting teks pesan WhatsApp.
+ *
+ * `kinds` hanya membatasi yang DITAMPILKAN. Muat, periksa, dan simpan selalu
+ * memakai seluruh `WA_TEMPLATE_KINDS`, karena penyimpanannya menulis setiap
+ * jenis: jenis yang tidak dikirim akan tersimpan kosong.
  *
  * Disalin apa adanya ke Mobile lewat `filesToCopy` di `sync-frontend-lib.ts`,
  * jadi hanya memakai kelas slate padat yang dibalik benar oleh tema terang di
@@ -42,13 +48,15 @@ export function WaTemplateDialog({
   isOpen,
   onClose,
   onSaved,
+  kinds = WA_TEMPLATE_KINDS,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSaved: (message: string) => void;
+  kinds?: readonly WaTemplateKind[];
 }) {
   const [drafts, setDrafts] = useState<WaTemplateMap | null>(null);
-  const [jenis, setJenis] = useState<WaNotificationKind>("scan_masuk");
+  const [jenis, setJenis] = useState<WaTemplateKind>(kinds[0]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const isSubmittingRef = useRef(false);
@@ -59,13 +67,14 @@ export function WaTemplateDialog({
     let cancelled = false;
     setDrafts(null);
     setError(null);
+    setJenis(kinds[0]);
     getWaTemplatesGateway()
       .then((stored) => {
         if (cancelled) return;
         // Yang kosong ditampilkan sebagai teks bawaan supaya admin menyunting
         // dari kalimat yang sekarang benar-benar terkirim.
         const awal = {} as WaTemplateMap;
-        for (const kind of WA_NOTIFICATION_KINDS) {
+        for (const kind of WA_TEMPLATE_KINDS) {
           awal[kind] = stored[kind] || DEFAULT_WA_TEMPLATES[kind];
         }
         setDrafts(awal);
@@ -80,10 +89,10 @@ export function WaTemplateDialog({
     return () => {
       cancelled = true;
     };
-  }, [isOpen]);
+  }, [isOpen, kinds]);
 
   const checks = drafts
-    ? WA_NOTIFICATION_KINDS.map((kind) => ({
+    ? WA_TEMPLATE_KINDS.map((kind) => ({
         kind,
         check: validateWaTemplate(kind, drafts[kind]),
       }))
@@ -116,13 +125,13 @@ export function WaTemplateDialog({
       // Teks yang sama dengan bawaan disimpan kosong, supaya perbaikan teks
       // bawaan di versi berikutnya tetap sampai ke sekolah ini.
       const payload = {} as WaTemplateMap;
-      for (const kind of WA_NOTIFICATION_KINDS) {
+      for (const kind of WA_TEMPLATE_KINDS) {
         const value = drafts[kind].trim();
         payload[kind] = value === DEFAULT_WA_TEMPLATES[kind] ? "" : value;
       }
       await saveWaTemplatesGateway(payload);
       onSaved(
-        "Teks pesan WhatsApp tersimpan. Pesan yang sudah di antrean tidak berubah.",
+        "Teks pesan WhatsApp tersimpan. Pesan yang sudah diantrekan tidak berubah.",
       );
       onClose();
     } catch (err: unknown) {
@@ -140,7 +149,7 @@ export function WaTemplateDialog({
       isOpen={isOpen}
       onClose={onClose}
       title="Ubah Teks Pesan WhatsApp"
-      subtitle="Berlaku untuk pesan yang diantrekan setelah disimpan"
+      subtitle="Berlaku untuk pesan yang disusun setelah disimpan"
       maxWidth="max-w-2xl"
       footer={
         <div className="flex flex-wrap justify-end gap-3">
@@ -178,10 +187,10 @@ export function WaTemplateDialog({
             <select
               id="wa-template-jenis"
               value={jenis}
-              onChange={(e) => setJenis(e.target.value as WaNotificationKind)}
+              onChange={(e) => setJenis(e.target.value as WaTemplateKind)}
               className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200"
             >
-              {WA_NOTIFICATION_KINDS.map((kind) => (
+              {kinds.map((kind) => (
                 <option key={kind} value={kind}>
                   {WA_TEMPLATE_LABELS[kind]}
                   {validateWaTemplate(kind, drafts[kind]).ok

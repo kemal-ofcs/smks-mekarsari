@@ -8,11 +8,14 @@ import {
 import { ApiRequestError } from "@/lib/server/http/api-response";
 import { generateWaNotificationId } from "@/lib/services/wa-notification";
 import {
+  composeReconciliationMessage,
   JP_MAX_PER_DAY_SETTING_KEY,
   jamKeBeririsan,
   MAX_JAM_KE,
   normalizeJamKe,
+  type ParentNotificationSource,
   parseJpMaxPerDay,
+  REKONSILIASI_TEMPLATE_KINDS,
   rentangJamKe,
 } from "@/lib/validations/class-attendance";
 import {
@@ -728,8 +731,30 @@ export async function getAttendanceReconciliation(filter?: {
     args: [tanggal, idRombel, idRombel],
   });
 
+  // Pesan wali disusun di sini, bukan di halaman: guru yang membuka
+  // rekonsiliasi tidak perlu izin notifikasi untuk membaca template-nya.
+  const templateRes = await db.execute({
+    sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
+    args: REKONSILIASI_TEMPLATE_KINDS.map(waTemplateKey),
+  });
+  const tersimpan = new Map(
+    templateRes.rows.map((row) => [String(row.key), String(row.value ?? "")]),
+  );
+  const templates = Object.fromEntries(
+    REKONSILIASI_TEMPLATE_KINDS.map((jenis) => [
+      jenis,
+      tersimpan.get(waTemplateKey(jenis)) ?? "",
+    ]),
+  );
+
   return {
     tanggal,
-    anomalies: [...bolosRes.rows, ...tanpaScanRes.rows],
+    anomalies: [...bolosRes.rows, ...tanpaScanRes.rows].map((row) => ({
+      ...row,
+      pesan_wali: composeReconciliationMessage(
+        row as ParentNotificationSource,
+        templates,
+      ),
+    })),
   };
 }

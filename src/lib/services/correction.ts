@@ -12,6 +12,7 @@ import {
   parseTimeToMinutes,
 } from "@/lib/attendance/time-policy";
 import { db, ensureDbInitialized } from "@/lib/db";
+import { queueWaliNotification } from "@/lib/services/wa-notification";
 
 export interface KoreksiInput {
   tanggal: string; // YYYY-MM-DD
@@ -700,6 +701,26 @@ async function _prosesKoreksiMutasi(
       input.kode_operator,
     ],
   });
+
+  // Cermin blok notifikasi di `administration.rs`. Status akhir ikut ke kunci
+  // deduplikasi: koreksi ulang dengan hasil yang sama tidak mengirim dua kali,
+  // sementara koreksi yang mengubah hasilnya tetap memberi tahu wali.
+  const akhir = await transaction.execute({
+    sql: "SELECT status_kehadiran FROM absensi_harian WHERE id_sesi = ? LIMIT 1;",
+    args: [idSesi],
+  });
+  const statusAkhir = String(akhir.rows[0]?.status_kehadiran ?? "");
+  await queueWaliNotification(
+    transaction,
+    "koreksi_admin",
+    idUnik,
+    `koreksi_admin:${idSesi}:${statusAkhir}`,
+    () => ({
+      tanggal: targetDate,
+      status: statusAkhir || "-",
+      keterangan: input.keterangan_admin || input.jenis_koreksi,
+    }),
+  );
 }
 
 export async function getDaftarKoreksi(filter?: {

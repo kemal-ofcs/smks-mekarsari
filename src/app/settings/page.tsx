@@ -1,11 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { DatabaseBackupCard } from "@/components/DatabaseBackupCard";
-import { JamPelajaranCard } from "@/components/JamPelajaranCard";
 import { LicenseCard } from "@/components/license/LicenseCard";
 import { MailSettingsCard } from "@/components/MailSettingsCard";
 import { PasswordRecoveryCard } from "@/components/PasswordRecoveryCard";
@@ -1219,7 +1219,22 @@ export default function SettingsPage() {
 
       {hasPermission(user, "settings.manage") ? <MailSettingsCard /> : null}
 
-      {hasPermission(user, "settings.manage") ? <JamPelajaranCard /> : null}
+      {hasPermission(user, "settings.manage") ? (
+        <section className="app-panel rounded-3xl p-5 sm:p-7">
+          <h2 className="text-base font-black text-white">Jam Pelajaran</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
+            Jadwal bel dan jumlah jam pelajaran kini dikelola di halaman
+            Akademik, tab Jam Pelajaran, bersebelahan dengan Jadwal Mengajar
+            yang memakainya.
+          </p>
+          <Link
+            href="/akademik"
+            className="mt-4 inline-flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-800 px-4 text-sm font-semibold text-slate-200 transition hover:bg-slate-700"
+          >
+            Buka halaman Akademik
+          </Link>
+        </section>
+      ) : null}
 
       {hasPermission(user, "settings.manage") ? (
         <ProfilInstansiCard

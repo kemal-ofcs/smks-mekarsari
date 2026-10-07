@@ -14,6 +14,7 @@ import {
   tentukanTanggalKerja,
 } from "@/lib/attendance/time-policy";
 import type { AttendanceSource, ScanResult } from "@/lib/contracts/scanner";
+import { queueWaliNotification } from "@/lib/services/wa-notification";
 import { evaluateHolidayScan } from "@/lib/validations/holiday-whitelist";
 import {
   IP_ALLOWLIST_SETTING_KEY,
@@ -707,6 +708,33 @@ async function processInTransaction(
     idReferensi: session.idBackup,
     kodeOperator,
   });
+
+  // Cermin blok notifikasi di `scanner.rs`: kunci deduplikasi, isian, dan
+  // syaratnya sama, sehingga sesi yang sama tidak diantrekan dua kali walau
+  // dipindai dari build berbeda. Kegagalan mengantre tidak boleh menggagalkan
+  // scan — gerbang tetap jalan, yang hilang hanya satu pesan.
+  const jenisNotifikasi =
+    keputusan.jenisScan === "Masuk" ? "scan_masuk" : "scan_pulang";
+  try {
+    await queueWaliNotification(
+      transaction,
+      jenisNotifikasi,
+      employee.id,
+      `scan:${idSesi}:${jenisNotifikasi}`,
+      () => ({
+        jam: formatJamOperasional(waktuScan),
+        tanggal: tanggalKerja,
+        status:
+          keputusan.jenisScan === "Masuk"
+            ? "Belum Pulang"
+            : keputusan.statusProses === "Perlu Verifikasi"
+              ? "Perlu Verifikasi"
+              : "Lengkap",
+      }),
+    );
+  } catch {
+    // Sengaja diabaikan, sama seperti `let _ =` di Rust.
+  }
 
   // Foto bukti disimpan setelah absensi tercatat, di dalam transaksi yang sama:
   // baris foto tanpa absensi yang berhasil hanya akan menjadi bukti palsu.

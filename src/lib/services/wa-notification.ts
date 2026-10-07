@@ -1,15 +1,17 @@
 import "server-only";
 
 import crypto from "node:crypto";
-import type { Client } from "@libsql/client";
+import type { Client, InStatement, ResultSet } from "@libsql/client";
 import {
   isValidOperatorPhone,
   normalizeOperatorPhone,
 } from "@/lib/operators/contact";
 import { ApiRequestError } from "@/lib/server/http/api-response";
 import {
+  composeWaMessage,
   isValidWaNotificationStatus,
   isWaNotificationKind,
+  isWaTemplateKind,
   parseAmbangAlfaDays,
   parseAmbangAlfaLimit,
   settingEnabled,
@@ -25,8 +27,12 @@ import {
   WA_NOTIFY_KOREKSI_ADMIN_KEY,
   WA_NOTIFY_SCAN_MASUK_KEY,
   WA_NOTIFY_SCAN_PULANG_KEY,
+  WA_TEMPLATE_KINDS,
   WA_TEMPLATE_LABELS,
+  type WaNotificationKind,
   type WaTemplateMap,
+  waNotifyEnabled,
+  waNotifySettingKey,
   waTemplateKey,
 } from "@/lib/validations/wa-notification";
 import type {
@@ -109,6 +115,99 @@ export async function listWaNotifications(
   return { items };
 }
 
+/** Cermin `MAX_WALI_NOTIFICATIONS_PER_IMPORT` di `wa_notification.rs`. */
+export const MAX_WALI_NOTIFICATIONS_PER_IMPORT = 25;
+
+/** `Client` maupun `Transaction` libsql, supaya pemanggil di dalam transaksi bisa memakainya. */
+interface SqlExecutor {
+  execute(statement: InStatement): Promise<ResultSet>;
+}
+
+/**
+ * Antrekan notifikasi ke wali BILA personilnya siswa dan jenisnya dinyalakan.
+ *
+ * Cermin `queue_wali_notification_tx` (`wa_notification.rs`), dengan empat
+ * syarat yang sama: sakelar `wa_notify_<jenis>` menyala, personilnya siswa
+ * (predikat `LOWER(TRIM(...))` yang sama dengan scanner), nomor walinya valid,
+ * dan `dedupe_key`-nya belum pernah diantrekan. Mengembalikan `true` hanya bila
+ * sebuah baris benar-benar diantrekan.
+ *
+ * Sebelum fungsi ini ada, scanner, koreksi, dan import di Web tidak pernah
+ * mengantre apa pun, sehingga sakelarnya menyala di Pengaturan sementara
+ * antrean tetap kosong.
+ */
+export async function queueWaliNotification(
+  db: SqlExecutor,
+  jenis: WaNotificationKind,
+  idPersonil: string,
+  dedupeKey: string,
+  isian: (wali: { nama: string; rombel: string }) => Record<string, string>,
+): Promise<boolean> {
+  const key = waNotifySettingKey(jenis);
+  if (!key) return false;
+  const settingRows = await db.execute({
+    sql: "SELECT key, value FROM setting_gex_system WHERE key IN (?, ?);",
+    args: [key, waTemplateKey(jenis)],
+  });
+  const settings = new Map(
+    settingRows.rows.map((row) => [String(row.key), String(row.value ?? "")]),
+  );
+  if (!waNotifyEnabled(settings, jenis)) return false;
+
+  const sudah = await db.execute({
+    sql: "SELECT 1 FROM notifikasi_wa WHERE dedupe_key = ? LIMIT 1;",
+    args: [dedupeKey],
+  });
+  if (sudah.rows.length > 0) return false;
+
+  const info = await db.execute({
+    sql: `
+      SELECT COALESCE(s.no_whatsapp_wali, m.no_hp, '') AS no_wa,
+             COALESCE(s.nama_lengkap, m.nama, '') AS nama,
+             COALESCE(r.nama_rombel, m.divisi, '') AS rombel
+      FROM master_data m
+      LEFT JOIN siswa_data s ON s.id_siswa = m.id_unik
+      LEFT JOIN akademik_rombel r ON r.id_rombel = s.id_rombel
+      WHERE m.id_unik = ?
+        AND (LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'siswa'
+             OR s.id_siswa IS NOT NULL)
+      LIMIT 1;
+    `,
+    args: [idPersonil],
+  });
+  const row = info.rows[0];
+  if (!row) return false;
+  const nomor = normalizeOperatorPhone(String(row.no_wa ?? ""));
+  if (!isValidOperatorPhone(nomor)) return false;
+
+  const wali = {
+    nama: String(row.nama ?? "") || "Siswa",
+    rombel: String(row.rombel ?? "") || "-",
+  };
+  const pesan = composeWaMessage(jenis, settings.get(waTemplateKey(jenis)), {
+    nama: wali.nama,
+    rombel: wali.rombel,
+    ...isian(wali),
+  });
+  await db.execute({
+    sql: `
+      INSERT INTO notifikasi_wa (
+        id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor,
+        isi_pesan, status, attempt_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'Menunggu', 0, datetime('now'), datetime('now'));
+    `,
+    args: [
+      generateWaNotificationId(),
+      dedupeKey,
+      jenis,
+      idPersonil,
+      nomor,
+      pesan,
+    ],
+  });
+  return true;
+}
+
 export async function queueWaNotification(
   client: Client,
   draft: WaNotificationDraft,
@@ -119,9 +218,10 @@ export async function queueWaNotification(
     throw new Error("Kunci deduplikasi (dedupe_key) wajib diisi.");
   }
 
-  const validJenis = ["scan_masuk", "scan_pulang", "bolos", "ambang_alfa"];
-  if (!validJenis.includes(draft.jenis)) {
-    throw new Error("Jenis notifikasi tidak valid.");
+  if (!isWaNotificationKind(draft.jenis)) {
+    throw new Error(
+      `Jenis notifikasi tidak valid. Pilihan: ${WA_NOTIFICATION_KINDS.join(", ")}.`,
+    );
   }
 
   // SENGAJA tidak memeriksa sakelar `wa_notify_*`.
@@ -418,14 +518,14 @@ export async function saveWaConfig(
 /** Template tersimpan per jenis; string kosong berarti teks bawaan. */
 export async function getWaTemplates(client: Client): Promise<WaTemplateMap> {
   const result = await client.execute({
-    sql: `SELECT key, value FROM setting_gex_system WHERE key IN (${WA_NOTIFICATION_KINDS.map(() => "?").join(", ")});`,
-    args: WA_NOTIFICATION_KINDS.map(waTemplateKey),
+    sql: `SELECT key, value FROM setting_gex_system WHERE key IN (${WA_TEMPLATE_KINDS.map(() => "?").join(", ")});`,
+    args: WA_TEMPLATE_KINDS.map(waTemplateKey),
   });
   const tersimpan = new Map(
     result.rows.map((row) => [String(row.key), String(row.value ?? "")]),
   );
   return Object.fromEntries(
-    WA_NOTIFICATION_KINDS.map((jenis) => [
+    WA_TEMPLATE_KINDS.map((jenis) => [
       jenis,
       tersimpan.get(waTemplateKey(jenis)) ?? "",
     ]),
@@ -444,12 +544,12 @@ export async function saveWaTemplates(
     throw new ApiRequestError("Format template tidak valid.", 400);
   }
   const input = body as Record<string, unknown>;
-  const asing = Object.keys(input).find((key) => !isWaNotificationKind(key));
+  const asing = Object.keys(input).find((key) => !isWaTemplateKind(key));
   if (asing) {
     throw new ApiRequestError(`Jenis notifikasi tidak dikenal: ${asing}.`, 400);
   }
   const hasil = {} as WaTemplateMap;
-  for (const jenis of WA_NOTIFICATION_KINDS) {
+  for (const jenis of WA_TEMPLATE_KINDS) {
     const raw = typeof input[jenis] === "string" ? input[jenis] : "";
     const check = validateWaTemplate(jenis, raw as string);
     if (!check.ok) {
@@ -461,7 +561,7 @@ export async function saveWaTemplates(
     hasil[jenis] = check.value;
   }
   await client.batch(
-    WA_NOTIFICATION_KINDS.map((jenis) => ({
+    WA_TEMPLATE_KINDS.map((jenis) => ({
       sql: `
         INSERT INTO setting_gex_system (key, value) VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value;

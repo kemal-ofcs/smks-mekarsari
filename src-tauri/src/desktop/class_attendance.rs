@@ -1,5 +1,6 @@
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use super::{config::DesktopState, models::CommandError, storage, sync};
 
@@ -179,7 +180,7 @@ pub fn list_lesson_periods(state: &DesktopState) -> Result<Value, CommandError> 
             SELECT id_jam_pelajaran, jam_ke, jam_mulai, jam_selesai, jenis,
                    COALESCE(keterangan, ''), is_aktif, created_at, updated_at
             FROM akademik_jam_pelajaran
-            ORDER BY jam_ke, jam_mulai;
+            ORDER BY jam_mulai, jam_ke;
             "#,
         )
         .map_err(|_| CommandError::internal())?;
@@ -203,6 +204,27 @@ pub fn list_lesson_periods(state: &DesktopState) -> Result<Value, CommandError> 
     Ok(Value::Array(rows.flatten().collect()))
 }
 
+/// Nomor `jam_ke` yang disimpan untuk sebuah baris jadwal bel.
+///
+/// Hanya baris KBM yang bernomor: Istirahat dan Upacara tidak memakan nomor jam
+/// pelajaran, kalau tidak, pelajaran jam 3-5 yang melewati istirahat terhitung
+/// 3 JP. Baris non-KBM diurutkan menurut pukulnya dan disimpan dengan nomor 1
+/// hanya karena kolomnya wajib terisi (CHECK `jam_ke >= 1`).
+///
+/// Cerminan `aturNomorJamBel` di `validations/class-attendance.ts`; keduanya
+/// diuji dengan vektor yang sama.
+pub fn atur_nomor_jam_bel(jenis: &str, jam_ke: i64, batas: i64) -> Result<i64, String> {
+    if jenis != "KBM" {
+        return Ok(1);
+    }
+    if jam_ke < 1 || jam_ke > batas {
+        return Err(format!(
+            "Jam pelajaran harus di antara 1 dan {batas}, sesuai Pengaturan."
+        ));
+    }
+    Ok(jam_ke)
+}
+
 /// Menyimpan satu baris jadwal bel.
 pub fn save_lesson_period(state: &DesktopState, draft: &Value) -> Result<Value, CommandError> {
     let id_masuk = text(draft, "id_jam_pelajaran").to_owned();
@@ -213,7 +235,7 @@ pub fn save_lesson_period(state: &DesktopState, draft: &Value) -> Result<Value, 
         id_masuk
     };
 
-    let jam_ke = integer(draft, "jam_ke", 0);
+    let jam_ke_masuk = integer(draft, "jam_ke", 0);
     let jam_mulai = normalize_jam_bel(text(draft, "jam_mulai")).ok_or_else(|| {
         CommandError::new(
             "VALIDATION_ERROR",
@@ -242,12 +264,8 @@ pub fn save_lesson_period(state: &DesktopState, draft: &Value) -> Result<Value, 
 
     let mut conn = storage::database(&state.data_dir)?;
     let batas = configured_jp_max(&conn)?;
-    if jam_ke < 1 || jam_ke > i64::from(batas) {
-        return Err(CommandError::new(
-            "VALIDATION_ERROR",
-            format!("Jam pelajaran harus di antara 1 dan {batas}, sesuai Pengaturan."),
-        ));
-    }
+    let jam_ke = atur_nomor_jam_bel(&jenis, jam_ke_masuk, i64::from(batas))
+        .map_err(|pesan| CommandError::new("VALIDATION_ERROR", pesan))?;
     // Jam selesai yang lebih awal daripada jam mulai bukan sekadar salah ketik:
     // ia membuat durasi negatif di layar dan pengurutan bel yang tidak masuk
     // akal. Bel yang melewati tengah malam tidak didukung — sekolah tidak
@@ -263,17 +281,19 @@ pub fn save_lesson_period(state: &DesktopState, draft: &Value) -> Result<Value, 
     let tx = conn.transaction().map_err(|_| CommandError::internal())?;
 
     // Keunikan jam pelajaran ditegakkan di APLIKASI, bukan skema: tabelnya
-    // sengaja tanpa UNIQUE supaya push dari perangkat offline tidak macet.
+    // sengaja tanpa UNIQUE supaya push dari perangkat offline tidak macet. Hanya
+    // antar baris KBM, karena baris lain tidak bernomor (`atur_nomor_jam_bel`).
     let bentrok: bool = tx
         .prepare(
             "SELECT 1 FROM akademik_jam_pelajaran
              WHERE jam_ke = ?1 AND id_jam_pelajaran <> ?2 AND is_aktif = 1
+               AND jenis = 'KBM'
              LIMIT 1;",
         )
         .map_err(|_| CommandError::internal())?
         .exists(params![jam_ke, id])
         .map_err(|_| CommandError::internal())?;
-    if bentrok && is_aktif == 1 {
+    if bentrok && is_aktif == 1 && jenis == "KBM" {
         return Err(CommandError::new(
             "DUPLICATE_PERIOD",
             format!("Jam pelajaran ke-{jam_ke} sudah terdaftar pada jadwal bel."),
@@ -1596,10 +1616,136 @@ pub fn get_attendance_reconciliation(
 
     anomalies.append(&mut anomalies2);
 
+    // Pesan wali disusun di sini, bukan di halaman: guru yang membuka
+    // rekonsiliasi tidak perlu izin notifikasi untuk membaca template-nya.
+    let mut templates = HashMap::new();
+    for jenis in ["rekonsiliasi_bolos", "rekonsiliasi_tanpa_scan"] {
+        let Some(key) = super::wa_notification::wa_template_key(jenis) else {
+            continue;
+        };
+        let value: Option<String> = conn
+            .query_row(
+                "SELECT value FROM setting_gex_system WHERE key = ?1 LIMIT 1;",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| CommandError::internal())?;
+        if let Some(value) = value {
+            templates.insert(jenis.to_owned(), value);
+        }
+    }
+    for item in &mut anomalies {
+        let pesan = reconciliation_message(item, &templates);
+        item["pesan_wali"] = json!(pesan);
+    }
+
     Ok(json!({
         "tanggal": tanggal,
         "anomalies": anomalies,
     }))
+}
+
+/// Pesan "Hubungi Wali" untuk satu baris anomali, dibedakan per jenisnya.
+///
+/// Dua anomali rekonsiliasi artinya berlawanan; satu kalimat untuk keduanya
+/// pernah membuat wali menerima fakta yang terbalik tentang anaknya. Template
+/// tersimpan yang kosong atau tidak sah jatuh ke teks bawaan. Cermin
+/// `composeReconciliationMessage` (`validations/class-attendance.ts`), diuji
+/// dengan vektor yang sama.
+pub fn reconciliation_message(item: &Value, templates: &HashMap<String, String>) -> String {
+    let teks = |key: &str, cadangan: &str| {
+        let value = item.get(key).and_then(Value::as_str).unwrap_or("").trim();
+        if value.is_empty() { cadangan.to_owned() } else { value.to_owned() }
+    };
+    let jenis = if item.get("anomaly_type").and_then(Value::as_str) == Some("HADIR_TANPA_SCAN_GERBANG") {
+        "rekonsiliasi_tanpa_scan"
+    } else {
+        "rekonsiliasi_bolos"
+    };
+    // `jam_masuk` di absensi_harian berupa stempel lengkap "YYYY-MM-DD HH:MM:SS";
+    // wali cukup membaca jam dan menitnya.
+    let jam_gerbang: String = item
+        .get("jam_masuk_gerbang")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .rsplit(' ')
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(5)
+        .collect();
+    super::wa_notification::compose_from_stored(
+        jenis,
+        templates.get(jenis).map(String::as_str),
+        &[
+            ("nama", teks("nama_siswa", "ananda")),
+            ("rombel", teks("nama_rombel", "-")),
+            ("mapel", teks("nama_mapel", "mata pelajaran")),
+            ("jam_ke", teks("jam_ke", "-")),
+            ("guru", teks("nama_guru", "-")),
+            ("jam_gerbang", if jam_gerbang.is_empty() { "-".to_owned() } else { jam_gerbang }),
+            ("tanggal", teks("tanggal", "-")),
+        ],
+    )
+}
+
+#[cfg(test)]
+mod tests_reconciliation_message {
+    use super::reconciliation_message;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    // Vektor yang sama dengan `composeReconciliationMessage` di
+    // `class-attendance.test.ts`.
+    const BOLOS_BAWAAN: &str = "Yth. Bapak/Ibu Wali dari Budi Santoso, diberitahukan bahwa ananda tercatat hadir di gerbang sekolah (pukul 07:01), namun TIDAK HADIR (Alfa) pada Matematika jam ke-1-2 (Bu Rina). Mohon konfirmasi kehadiran siswa. Terima kasih.";
+
+    fn dasar(anomaly: &str, jam: Option<&str>) -> serde_json::Value {
+        json!({
+            "anomaly_type": anomaly,
+            "nama_siswa": "Budi Santoso",
+            "nama_rombel": "VII-A",
+            "nama_mapel": "Matematika",
+            "jam_ke": "1-2",
+            "nama_guru": "Bu Rina",
+            "jam_masuk_gerbang": jam,
+            "tanggal": "2026-10-07",
+        })
+    }
+
+    #[test]
+    fn mengikuti_vektor_typescript() {
+        let kosong = HashMap::new();
+        assert_eq!(
+            reconciliation_message(&dasar("BOLOS_DI_SEKOLAH", Some("2026-10-07 07:01:30")), &kosong),
+            BOLOS_BAWAAN
+        );
+        assert_eq!(
+            reconciliation_message(&dasar("HADIR_TANPA_SCAN_GERBANG", None), &kosong),
+            "Yth. Bapak/Ibu Wali dari Budi Santoso, ananda tercatat HADIR pada Matematika jam ke-1-2 (Bu Rina), namun tidak ditemukan catatan scan di gerbang sekolah hari ini. Mohon dipastikan ananda membawa kartu pelajarnya dan memindai di gerbang saat tiba. Terima kasih."
+        );
+
+        let tersimpan = HashMap::from([(
+            "rekonsiliasi_bolos".to_owned(),
+            "Halo wali {nama} ({rombel}), {mapel} jam {jam_ke} pukul {jam_gerbang} tgl {tanggal}".to_owned(),
+        )]);
+        assert_eq!(
+            reconciliation_message(&dasar("BOLOS_DI_SEKOLAH", Some("06:30:00")), &tersimpan),
+            "Halo wali Budi Santoso (VII-A), Matematika jam 1-2 pukul 06:30 tgl 2026-10-07"
+        );
+
+        let rusak = HashMap::from([("rekonsiliasi_bolos".to_owned(), "Halo {rombel}".to_owned())]);
+        assert_eq!(
+            reconciliation_message(&dasar("BOLOS_DI_SEKOLAH", Some("2026-10-07 07:01:30")), &rusak),
+            BOLOS_BAWAAN
+        );
+
+        assert_eq!(
+            reconciliation_message(&json!({ "anomaly_type": "BOLOS_DI_SEKOLAH" }), &kosong),
+            "Yth. Bapak/Ibu Wali dari ananda, diberitahukan bahwa ananda tercatat hadir di gerbang sekolah (pukul -), namun TIDAK HADIR (Alfa) pada mata pelajaran jam ke-- (-). Mohon konfirmasi kehadiran siswa. Terima kasih."
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2083,6 +2229,27 @@ mod tests {
             assert!(
                 normalize_jam_ke(masukan).is_err(),
                 "seharusnya ditolak: {masukan}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_atur_nomor_jam_bel {
+    use super::atur_nomor_jam_bel;
+
+    // Vektor yang sama dengan `aturNomorJamBel` di `class-attendance.test.ts`.
+    // Angka pecahan (2.5) hanya diuji di sisi TS: `integer()` di Rust
+    // membacanya sebagai 0, sehingga tetap ditolak lewat cabang yang sama.
+    #[test]
+    fn hanya_kbm_yang_bernomor() {
+        assert_eq!(atur_nomor_jam_bel("KBM", 3, 12), Ok(3));
+        assert_eq!(atur_nomor_jam_bel("Istirahat", 4, 12), Ok(1));
+        assert_eq!(atur_nomor_jam_bel("Upacara", 0, 12), Ok(1));
+        for jam_ke in [0, 13] {
+            assert_eq!(
+                atur_nomor_jam_bel("KBM", jam_ke, 12),
+                Err("Jam pelajaran harus di antara 1 dan 12, sesuai Pengaturan.".to_owned())
             );
         }
     }

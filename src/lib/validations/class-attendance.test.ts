@@ -1,17 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildParentNotificationText,
+  aturNomorJamBel,
   buildPresentWithoutGateScanWarning,
+  composeReconciliationMessage,
   findPresentWithoutGateScan,
   hasUnsavedAttendanceMarks,
   hitungJp,
   jamKeBeririsan,
+  jamKeSekarang,
+  nomorJamKbmKosong,
   normalizeJamBel,
   normalizeJamKe,
   parseJpDuration,
   parseJpMaxPerDay,
+  pukulJamKe,
   rentangJamKe,
   susunJamKe,
+  usulkanSesiSekarang,
 } from "@/lib/validations/class-attendance";
 
 /**
@@ -198,64 +203,76 @@ describe("peringatan Hadir tanpa scan gerbang", () => {
   });
 });
 
-describe("buildParentNotificationText", () => {
+// Vektor yang sama dengan `tests_reconciliation_message` di `class_attendance.rs`.
+describe("composeReconciliationMessage", () => {
   const dasar = {
     nama_siswa: "Budi Santoso",
+    nama_rombel: "VII-A",
     nama_mapel: "Matematika",
     jam_ke: "1-2",
     nama_guru: "Bu Rina",
-    jam_masuk_gerbang: "07:01",
+    jam_masuk_gerbang: "2026-10-07 07:01:30",
+    tanggal: "2026-10-07",
   };
+  const BOLOS_BAWAAN =
+    "Yth. Bapak/Ibu Wali dari Budi Santoso, diberitahukan bahwa ananda tercatat hadir di gerbang sekolah (pukul 07:01), namun TIDAK HADIR (Alfa) pada Matematika jam ke-1-2 (Bu Rina). Mohon konfirmasi kehadiran siswa. Terima kasih.";
 
-  test("BOLOS_DI_SEKOLAH: hadir di gerbang, Alfa di kelas", () => {
-    const pesan = buildParentNotificationText({
-      ...dasar,
-      anomaly_type: "BOLOS_DI_SEKOLAH",
-    });
-    expect(pesan).toContain("hadir di gerbang sekolah (pukul 07:01)");
-    expect(pesan).toContain("TIDAK HADIR (Alfa) pada Matematika jam ke-1-2");
-  });
-
-  /**
-   * Regresi: kedua anomali sempat memakai kalimat yang sama, sehingga wali dari
-   * siswa HADIR_TANPA_SCAN_GERBANG menerima fakta yang setiap klausanya
-   * terbalik dari kejadian sebenarnya.
-   */
-  test("HADIR_TANPA_SCAN_GERBANG: kebalikannya, dan tidak menuduh", () => {
-    const pesan = buildParentNotificationText({
-      ...dasar,
-      anomaly_type: "HADIR_TANPA_SCAN_GERBANG",
-      jam_masuk_gerbang: null,
-    });
-    expect(pesan).toContain("tercatat HADIR pada Matematika jam ke-1-2");
-    expect(pesan).toContain("tidak ditemukan catatan scan di gerbang");
-    // Klausa milik anomali lain TIDAK BOLEH bocor ke sini.
-    expect(pesan).not.toContain("TIDAK HADIR (Alfa)");
-    expect(pesan).not.toContain("hadir di gerbang sekolah");
-  });
-
-  test("dua anomali menghasilkan pesan yang berbeda", () => {
+  test("tanpa template tersimpan memakai teks bawaan per anomali", () => {
     expect(
-      buildParentNotificationText({
-        ...dasar,
-        anomaly_type: "BOLOS_DI_SEKOLAH",
-      }),
-    ).not.toBe(
-      buildParentNotificationText({
-        ...dasar,
-        anomaly_type: "HADIR_TANPA_SCAN_GERBANG",
-      }),
+      composeReconciliationMessage(
+        { ...dasar, anomaly_type: "BOLOS_DI_SEKOLAH" },
+        {},
+      ),
+    ).toBe(BOLOS_BAWAAN);
+    // Regresi: kedua anomali sempat memakai kalimat yang sama, sehingga wali
+    // siswa HADIR_TANPA_SCAN_GERBANG menerima fakta yang terbalik.
+    expect(
+      composeReconciliationMessage(
+        {
+          ...dasar,
+          anomaly_type: "HADIR_TANPA_SCAN_GERBANG",
+          jam_masuk_gerbang: null,
+        },
+        {},
+      ),
+    ).toBe(
+      "Yth. Bapak/Ibu Wali dari Budi Santoso, ananda tercatat HADIR pada Matematika jam ke-1-2 (Bu Rina), namun tidak ditemukan catatan scan di gerbang sekolah hari ini. Mohon dipastikan ananda membawa kartu pelajarnya dan memindai di gerbang saat tiba. Terima kasih.",
     );
   });
 
-  test("bertahan ketika kolom pelengkapnya kosong", () => {
-    const pesan = buildParentNotificationText({
-      anomaly_type: "BOLOS_DI_SEKOLAH",
-    });
-    expect(pesan).toContain("ananda");
-    expect(pesan).not.toContain("undefined");
-    expect(pesan).not.toContain("null");
-    expect(pesan).not.toContain("jam ke-,");
+  test("template tersimpan dipakai, dan jam gerbang hanya jam:menit", () => {
+    expect(
+      composeReconciliationMessage(
+        {
+          ...dasar,
+          anomaly_type: "BOLOS_DI_SEKOLAH",
+          jam_masuk_gerbang: "06:30:00",
+        },
+        {
+          rekonsiliasi_bolos:
+            "Halo wali {nama} ({rombel}), {mapel} jam {jam_ke} pukul {jam_gerbang} tgl {tanggal}",
+        },
+      ),
+    ).toBe(
+      "Halo wali Budi Santoso (VII-A), Matematika jam 1-2 pukul 06:30 tgl 2026-10-07",
+    );
+  });
+
+  test("template tersimpan yang tidak sah jatuh ke bawaan", () => {
+    expect(
+      composeReconciliationMessage(
+        { ...dasar, anomaly_type: "BOLOS_DI_SEKOLAH" },
+        { rekonsiliasi_bolos: "Halo {rombel}" },
+      ),
+    ).toBe(BOLOS_BAWAAN);
+  });
+
+  test("kolom kosong diisi cadangan, bukan undefined", () => {
+    expect(
+      composeReconciliationMessage({ anomaly_type: "BOLOS_DI_SEKOLAH" }, {}),
+    ).toBe(
+      "Yth. Bapak/Ibu Wali dari ananda, diberitahukan bahwa ananda tercatat hadir di gerbang sekolah (pukul -), namun TIDAK HADIR (Alfa) pada mata pelajaran jam ke-- (-). Mohon konfirmasi kehadiran siswa. Terima kasih.",
+    );
   });
 });
 
@@ -390,4 +407,88 @@ describe("normalizeJamBel", () => {
       expect(normalizeJamBel(masukan)).toBeNull();
     });
   }
+});
+
+// Vektor yang sama dengan `tests_atur_nomor_jam_bel` di `class_attendance.rs`.
+describe("aturNomorJamBel", () => {
+  test("hanya KBM yang bernomor", () => {
+    expect(aturNomorJamBel("KBM", 3, 12)).toEqual({ ok: true, jamKe: 3 });
+    expect(aturNomorJamBel("Istirahat", 4, 12)).toEqual({ ok: true, jamKe: 1 });
+    expect(aturNomorJamBel("Upacara", 0, 12)).toEqual({ ok: true, jamKe: 1 });
+    for (const jamKe of [0, 13, 2.5]) {
+      expect(aturNomorJamBel("KBM", jamKe, 12)).toEqual({
+        ok: false,
+        pesan: "Jam pelajaran harus di antara 1 dan 12, sesuai Pengaturan.",
+      });
+    }
+  });
+});
+
+describe("jadwal bel untuk jadwal mengajar dan presensi", () => {
+  const bel = [
+    {
+      jam_ke: 1,
+      jam_mulai: "07:00",
+      jam_selesai: "07:40",
+      jenis: "KBM",
+      is_aktif: 1,
+    },
+    {
+      jam_ke: 2,
+      jam_mulai: "07:40",
+      jam_selesai: "08:20",
+      jenis: "KBM",
+      is_aktif: 1,
+    },
+    // Data lama: Istirahat masih memakan nomor 3, sehingga KBM lompat ke 4.
+    {
+      jam_ke: 3,
+      jam_mulai: "08:20",
+      jam_selesai: "08:35",
+      jenis: "Istirahat",
+      is_aktif: 1,
+    },
+    {
+      jam_ke: 4,
+      jam_mulai: "08:35",
+      jam_selesai: "09:15",
+      jenis: "KBM",
+      is_aktif: 1,
+    },
+    {
+      jam_ke: 5,
+      jam_mulai: "09:15",
+      jam_selesai: "09:55",
+      jenis: "KBM",
+      is_aktif: 0,
+    },
+  ];
+
+  test("celah penomoran KBM ditandai, baris nonaktif diabaikan", () => {
+    expect(nomorJamKbmKosong(bel)).toEqual([3]);
+    expect(nomorJamKbmKosong([])).toEqual([]);
+  });
+
+  test("pukul rentang hanya dari baris KBM aktif", () => {
+    expect(pukulJamKe(bel, "1-2")).toBe("07:00–08:20");
+    expect(pukulJamKe(bel, "3")).toBeNull();
+    expect(pukulJamKe(bel, "5")).toBeNull();
+  });
+
+  test("jam yang sedang berlangsung", () => {
+    expect(jamKeSekarang(bel, "07:00")).toBe(1);
+    expect(jamKeSekarang(bel, "07:40")).toBe(2);
+    expect(jamKeSekarang(bel, "08:25")).toBeNull(); // istirahat
+    expect(jamKeSekarang(bel, "06:30")).toBeNull();
+  });
+
+  test("sesi yang diusulkan mengikuti rentang jadwal", () => {
+    const jadwal = [
+      { id: "a", jam_ke: "1-2" },
+      { id: "b", jam_ke: "4" },
+    ];
+    expect(usulkanSesiSekarang(jadwal, bel, "07:50")?.id).toBe("a");
+    expect(usulkanSesiSekarang(jadwal, bel, "08:40")?.id).toBe("b");
+    expect(usulkanSesiSekarang(jadwal, bel, "08:25")).toBeNull();
+  });
 });

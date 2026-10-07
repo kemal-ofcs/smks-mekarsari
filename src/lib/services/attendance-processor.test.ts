@@ -4,6 +4,7 @@ import {
   beforeEach,
   describe,
   expect,
+  mock,
   test,
 } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -11,10 +12,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Client, createClient } from "@libsql/client";
 import { initDatabaseSchema } from "@/lib/db-schema";
-import {
-  processWebAttendanceScan,
-  type ScanPayload,
-} from "./attendance-processor";
+import type { ScanPayload } from "./attendance-processor";
+
+// Pemroses scan kini mengantre notifikasi wali lewat `wa-notification.ts`,
+// modul yang bertanda `server-only`.
+mock.module("server-only", () => ({}));
+const { processWebAttendanceScan } = await import("./attendance-processor");
 
 let client: Client;
 let testDirectory: string;
@@ -379,6 +382,79 @@ describe("integrasi Web mesin aturan scan", () => {
       status_absen: "Lengkap",
       jam_kerja: 240,
     });
+  });
+});
+
+describe("notifikasi wali dari scanner Web", () => {
+  const SISWA = { id: "SIS_WEB_001", token: "TOKEN-SIS-001" };
+
+  async function siapkanSiswa(sakelarMasuk: "true" | "false") {
+    await client.batch(
+      [
+        "DELETE FROM notifikasi_wa;",
+        "DELETE FROM siswa_data;",
+        {
+          // Ejaan huruf besar dari alur akademik, yang dulu lolos dari
+          // perbandingan mentah `= 'Siswa'`.
+          sql: `INSERT INTO master_data (
+                  id_unik, kode_karyawan, nama, divisi, id_shift, status_aktif,
+                  token_absensi, status_backup, jenis_personil
+                ) VALUES (?, 'NIS001', 'Siswa Web', 'X-1', 1, 'Aktif', ?, 'NORMAL', 'SISWA');`,
+          args: [SISWA.id, SISWA.token],
+        },
+        {
+          sql: `INSERT INTO siswa_data (
+                  id_siswa, nama_lengkap, id_rombel, no_whatsapp_wali,
+                  angkatan, created_at, updated_at
+                ) VALUES (?, 'Siswa Web', 'R-X1', '081234567890', 2026, '', '');`,
+          args: [SISWA.id],
+        },
+        {
+          sql: `INSERT INTO setting_gex_system (key, value) VALUES ('wa_notify_scan_masuk', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
+          args: [sakelarMasuk],
+        },
+      ],
+      "write",
+    );
+  }
+
+  async function antrean() {
+    return (
+      await client.execute(
+        "SELECT jenis, dedupe_key, id_siswa, tujuan_nomor, status FROM notifikasi_wa;",
+      )
+    ).rows;
+  }
+
+  test("scan masuk siswa mengantre satu pesan ke nomor wali", async () => {
+    await siapkanSiswa("true");
+    const hasil = await scanAt(jakarta("2026-08-12", "06:30"), {
+      qrText: `${SISWA.id}|${SISWA.token}`,
+    });
+    expect(hasil.sukses).toBe(true);
+    expect(await antrean()).toEqual([
+      expect.objectContaining({
+        jenis: "scan_masuk",
+        dedupe_key: `scan:${hasil.idSesi}:scan_masuk`,
+        id_siswa: SISWA.id,
+        tujuan_nomor: "+6281234567890",
+        status: "Menunggu",
+      }),
+    ]);
+
+    // Pegawai tidak punya wali, jadi scan-nya tidak pernah mengantre.
+    await scanAt(jakarta("2026-08-12", "06:31"));
+    expect(await antrean()).toHaveLength(1);
+  });
+
+  test("sakelar mati berarti tidak ada antrean", async () => {
+    await siapkanSiswa("false");
+    const hasil = await scanAt(jakarta("2026-08-12", "06:30"), {
+      qrText: `${SISWA.id}|${SISWA.token}`,
+    });
+    expect(hasil.sukses).toBe(true);
+    expect(await antrean()).toHaveLength(0);
   });
 });
 

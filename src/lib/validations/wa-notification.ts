@@ -192,19 +192,39 @@ export function parseAmbangAlfaDays(input: unknown): number {
 export const WA_TEMPLATE_KEY_PREFIX = "wa_template_";
 export const MAX_WA_TEMPLATE_CHARS = 1000;
 
-export type WaTemplateMap = Record<WaNotificationKind, string>;
+/**
+ * Jenis yang punya template: keenam jenis antrean ditambah dua pesan manual
+ * tombol "Hubungi Wali" di Rekonsiliasi KBM. Dua yang terakhir tidak pernah
+ * diantre, jadi sengaja di luar `WA_NOTIFICATION_KINDS` (dan di luar CHECK
+ * `notifikasi_wa.jenis`). Cermin `WA_TEMPLATE_KINDS` di Rust.
+ */
+export const WA_TEMPLATE_KINDS = [
+  ...WA_NOTIFICATION_KINDS,
+  "rekonsiliasi_bolos",
+  "rekonsiliasi_tanpa_scan",
+] as const;
 
-export function waTemplateKey(jenis: WaNotificationKind): string {
+export type WaTemplateKind = (typeof WA_TEMPLATE_KINDS)[number];
+
+export type WaTemplateMap = Record<WaTemplateKind, string>;
+
+export function isWaTemplateKind(value: string): value is WaTemplateKind {
+  return (WA_TEMPLATE_KINDS as readonly string[]).includes(value);
+}
+
+export function waTemplateKey(jenis: WaTemplateKind): string {
   return `${WA_TEMPLATE_KEY_PREFIX}${jenis}`;
 }
 
-export const WA_TEMPLATE_LABELS: Record<WaNotificationKind, string> = {
+export const WA_TEMPLATE_LABELS: Record<WaTemplateKind, string> = {
   scan_masuk: "Scan masuk",
   scan_pulang: "Scan pulang",
   bolos: "Tidak ikut pelajaran",
   ambang_alfa: "Ambang alfa",
   koreksi_admin: "Koreksi admin",
   import_manual: "Input manual",
+  rekonsiliasi_bolos: "Rekonsiliasi: siswa bolos",
+  rekonsiliasi_tanpa_scan: "Rekonsiliasi: tanpa scan gerbang",
 };
 
 /** Teks bawaan, sama persis dengan pesan sebelum template bisa disunting. */
@@ -221,11 +241,15 @@ export const DEFAULT_WA_TEMPLATES: WaTemplateMap = {
     "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} telah dikoreksi oleh admin sekolah menjadi: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
   import_manual:
     "Yth. Wali Murid dari {nama} ({rombel}). Kami informasikan bahwa catatan kehadiran ananda pada {tanggal} dimasukkan secara manual oleh admin sekolah dengan status: {status}. Keterangan: {keterangan}. Mohon konfirmasi bila ada yang tidak sesuai.",
+  rekonsiliasi_bolos:
+    "Yth. Bapak/Ibu Wali dari {nama}, diberitahukan bahwa ananda tercatat hadir di gerbang sekolah (pukul {jam_gerbang}), namun TIDAK HADIR (Alfa) pada {mapel} jam ke-{jam_ke} ({guru}). Mohon konfirmasi kehadiran siswa. Terima kasih.",
+  rekonsiliasi_tanpa_scan:
+    "Yth. Bapak/Ibu Wali dari {nama}, ananda tercatat HADIR pada {mapel} jam ke-{jam_ke} ({guru}), namun tidak ditemukan catatan scan di gerbang sekolah hari ini. Mohon dipastikan ananda membawa kartu pelajarnya dan memindai di gerbang saat tiba. Terima kasih.",
 };
 
 /** Isian yang tersedia untuk sebuah jenis. Isian lain ditolak saat disimpan. */
 export const WA_TEMPLATE_PLACEHOLDERS: Record<
-  WaNotificationKind,
+  WaTemplateKind,
   readonly string[]
 > = {
   scan_masuk: ["nama", "rombel", "jam", "tanggal", "status"],
@@ -234,6 +258,23 @@ export const WA_TEMPLATE_PLACEHOLDERS: Record<
   ambang_alfa: ["nama", "rombel", "total_alfa", "hari"],
   koreksi_admin: ["nama", "rombel", "tanggal", "status", "keterangan"],
   import_manual: ["nama", "rombel", "tanggal", "status", "keterangan"],
+  rekonsiliasi_bolos: [
+    "nama",
+    "rombel",
+    "mapel",
+    "jam_ke",
+    "guru",
+    "jam_gerbang",
+    "tanggal",
+  ],
+  rekonsiliasi_tanpa_scan: [
+    "nama",
+    "rombel",
+    "mapel",
+    "jam_ke",
+    "guru",
+    "tanggal",
+  ],
 };
 
 export function isWaNotificationKind(
@@ -275,7 +316,7 @@ export function validateWaTemplate(
   jenis: string,
   raw: string,
 ): WaTemplateCheck {
-  if (!isWaNotificationKind(jenis)) {
+  if (!isWaTemplateKind(jenis)) {
     return { ok: false, pesan: "Jenis notifikasi tidak dikenal." };
   }
   const text = raw.trim();
@@ -317,7 +358,7 @@ export function validateWaTemplate(
  * boleh menerima `{nmaa}`.
  */
 export function composeWaMessage(
-  jenis: WaNotificationKind,
+  jenis: WaTemplateKind,
   stored: string | null | undefined,
   vars: Record<string, string>,
 ): string {

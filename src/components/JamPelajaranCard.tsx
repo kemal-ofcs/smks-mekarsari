@@ -17,7 +17,9 @@ import {
   DEFAULT_JP_DURATION_MINUTES,
   DEFAULT_JP_MAX_PER_DAY,
   JENIS_JAM_PELAJARAN,
+  jamKbmAktif,
   MAX_JAM_KE,
+  nomorJamKbmKosong,
 } from "@/lib/validations/class-attendance";
 
 /**
@@ -52,6 +54,7 @@ export function JamPelajaranCard() {
   const [periods, setPeriods] = useState<LessonPeriodRow[]>([]);
   const [modalBel, setModalBel] = useState(false);
   const [draftBel, setDraftBel] = useState<Partial<LessonPeriodRow>>({});
+  const nomorKosong = nomorJamKbmKosong(periods);
 
   const muat = useCallback(async () => {
     try {
@@ -102,7 +105,10 @@ export function JamPelajaranCard() {
     if (
       !(await konfirmasi({
         title: "Hapus jam bel ini?",
-        description: `Jam bel ke-${row.jam_ke} dihapus dari daftar jam pelajaran.`,
+        description:
+          row.jenis === "KBM"
+            ? `Jam pelajaran ke-${row.jam_ke} dihapus dari jadwal bel.`
+            : `${row.jenis} pukul ${row.jam_mulai}–${row.jam_selesai} dihapus dari jadwal bel.`,
         preserved:
           "Presensi mapel yang sudah tercatat pada jam itu tidak ikut terhapus.",
         confirmLabel: "Ya, hapus",
@@ -162,8 +168,8 @@ export function JamPelajaranCard() {
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
             Menentukan sampai jam ke berapa presensi kelas boleh dicatat, dan
             berapa menit satu jam pelajaran. Honor mengajar dibayar per jam
-            pelajaran, jadi lama menit di sini tidak mengubah nominal gaji —
-            hanya menerangkan durasinya di layar presensi.
+            pelajaran, jadi lama menit di sini tidak mengubah nominal gaji.
+            Angka ini hanya menerangkan durasinya di layar presensi.
           </p>
         </div>
       </div>
@@ -228,18 +234,21 @@ export function JamPelajaranCard() {
           <div>
             <h3 className="text-sm font-black text-white">Jadwal Bel</h3>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
-              Pukul berapa setiap jam pelajaran berlangsung. Ini keterangan:
-              presensi tetap menyimpan jam ke berapa, jadi jadwal yang belum
-              lengkap tidak pernah menghalangi guru mencatat presensi.
+              Pukul berapa setiap jam pelajaran berlangsung. Jadwal Mengajar
+              memilih jam dari daftar ini, dan Presensi KBM memakainya untuk
+              mengusulkan sesi yang sedang berjalan. Istirahat dan Upacara tidak
+              memakai nomor jam pelajaran.
             </p>
           </div>
           <button
             type="button"
             onClick={() => {
+              const kbm = jamKbmAktif(periods);
+              const terakhir = periods.at(-1);
               setDraftBel({
-                jam_ke: periods.length + 1,
-                jam_mulai: "07:00",
-                jam_selesai: "07:45",
+                jam_ke: (kbm.at(-1)?.jam_ke ?? 0) + 1,
+                jam_mulai: terakhir?.jam_selesai ?? "07:00",
+                jam_selesai: "",
                 jenis: "KBM",
                 keterangan: "",
                 is_aktif: 1,
@@ -251,6 +260,15 @@ export function JamPelajaranCard() {
             Tambah Jam Bel
           </button>
         </div>
+
+        {nomorKosong.length > 0 ? (
+          <p className="mt-4 rounded-xl border border-amber-300/25 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100">
+            Nomor jam pelajaran ke-{nomorKosong.join(", ")} belum terisi. Bila
+            nomor itu dulu dipakai untuk Istirahat atau Upacara, ubah nomor jam
+            KBM sesudahnya supaya berurutan. Jadwal Mengajar yang memakai nomor
+            lama perlu disesuaikan juga.
+          </p>
+        ) : null}
 
         <div className="mt-4 overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full text-left text-sm text-slate-300">
@@ -272,14 +290,14 @@ export function JamPelajaranCard() {
                     className="px-3 py-6 text-center text-slate-500"
                   >
                     Belum ada jadwal bel. Layar presensi tetap berjalan tanpa
-                    ini — pukulnya saja yang belum ditampilkan.
+                    ini, hanya pukulnya yang belum ditampilkan.
                   </td>
                 </tr>
               ) : (
                 periods.map((row) => (
                   <tr key={row.id_jam_pelajaran}>
                     <td className="px-3 py-2 font-semibold text-slate-200">
-                      {row.jam_ke}
+                      {row.jenis === "KBM" ? row.jam_ke : "-"}
                     </td>
                     <td className="px-3 py-2 font-mono text-slate-300">
                       {row.jam_mulai}–{row.jam_selesai}
@@ -288,7 +306,7 @@ export function JamPelajaranCard() {
                       {row.jenis}
                     </td>
                     <td className="px-3 py-2 text-xs text-slate-500">
-                      {row.keterangan || "—"}
+                      {row.keterangan || "-"}
                     </td>
                     <td className="px-3 py-2 text-center">
                       <span
@@ -336,23 +354,29 @@ export function JamPelajaranCard() {
         >
           <form onSubmit={simpanBel} className="space-y-4 text-sm">
             <div className="grid grid-cols-2 gap-4">
-              <label className="grid gap-1.5 text-xs font-bold text-slate-300">
-                Jam pelajaran ke
-                <input
-                  type="number"
-                  min={1}
-                  max={maxPerHari}
-                  value={draftBel.jam_ke ?? 1}
-                  onChange={(event) =>
-                    setDraftBel((prev) => ({
-                      ...prev,
-                      jam_ke: Number(event.target.value),
-                    }))
-                  }
-                  required
-                  className="app-input font-mono"
-                />
-              </label>
+              {(draftBel.jenis ?? "KBM") === "KBM" ? (
+                <label className="grid gap-1.5 text-xs font-bold text-slate-300">
+                  Jam pelajaran ke
+                  <input
+                    type="number"
+                    min={1}
+                    max={maxPerHari}
+                    value={draftBel.jam_ke ?? 1}
+                    onChange={(event) =>
+                      setDraftBel((prev) => ({
+                        ...prev,
+                        jam_ke: Number(event.target.value),
+                      }))
+                    }
+                    required
+                    className="app-input font-mono"
+                  />
+                </label>
+              ) : (
+                <p className="self-end text-xs leading-5 text-slate-400">
+                  {draftBel.jenis} tidak memakai nomor jam pelajaran.
+                </p>
+              )}
               <label className="grid gap-1.5 text-xs font-bold text-slate-300">
                 Jenis
                 <select
@@ -391,7 +415,7 @@ export function JamPelajaranCard() {
                 Jam selesai
                 <input
                   type="time"
-                  value={draftBel.jam_selesai ?? "07:45"}
+                  value={draftBel.jam_selesai ?? ""}
                   onChange={(event) =>
                     setDraftBel((prev) => ({
                       ...prev,

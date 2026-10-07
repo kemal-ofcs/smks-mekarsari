@@ -3,11 +3,15 @@
 import { redirect } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { WaTemplateDialog } from "@/components/notifikasi-wa/WaTemplateDialog";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
+import {
+  formatJamOperasional,
+  formatTanggalOperasional,
+} from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { openWhatsAppChat } from "@/lib/client/open-url";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -37,15 +41,17 @@ import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
 import {
-  buildParentNotificationText,
   buildPresentWithoutGateScanWarning,
   DEFAULT_JP_DURATION_MINUTES,
   DEFAULT_JP_MAX_PER_DAY,
   hasUnsavedAttendanceMarks,
   hitungJp,
   MAX_JAM_KE,
+  pukulJamKe,
+  REKONSILIASI_TEMPLATE_KINDS,
   rentangJamKe,
   susunJamKe,
+  usulkanSesiSekarang,
 } from "@/lib/validations/class-attendance";
 
 type TabKey = "input" | "reconciliation" | "history";
@@ -54,8 +60,10 @@ export default function PresensiKelasPage() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const canManage = hasPermission(user, "class_attendance.manage");
   const canDelete = hasPermission(user, "class_attendance.delete");
+  const canEditTemplate = hasPermission(user, "notification.template");
 
   const [activeTab, setActiveTab] = useState<TabKey>("input");
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error" | "warning";
@@ -105,16 +113,15 @@ export default function PresensiKelasPage() {
   // Jadwal bel hanya KETERANGAN: kalau sekolah belum mengisinya, layar ini
   // tetap berjalan dan pukulnya saja yang tidak muncul.
   const [lessonPeriods, setLessonPeriods] = useState<LessonPeriodRow[]>([]);
-  const pukulBel = (() => {
-    const awal = lessonPeriods.find(
-      (row) => row.jam_ke === jamKeDari && row.is_aktif === 1,
-    );
-    const akhir = lessonPeriods.find(
-      (row) => row.jam_ke === jamKeSampai && row.is_aktif === 1,
-    );
-    if (!awal || !akhir) return null;
-    return `${awal.jam_mulai}–${akhir.jam_selesai}`;
-  })();
+  const pukulBel =
+    selectedJamKe === null ? null : pukulJamKe(lessonPeriods, selectedJamKe);
+
+  // Sesi yang sedang berjalan menurut jadwal guru yang login, hanya sebagai
+  // USULAN: guru tetap menekan "Pakai sesi ini" lalu menyimpan sendiri. Jam
+  // sekarang dibaca dari perangkat dalam zona WIB, sama seperti tanggal bawaan
+  // layar ini; tidak ada yang disimpan dari nilai itu.
+  const [guruSaya, setGuruSaya] = useState("");
+  const [usulan, setUsulan] = useState<TeachingScheduleRow | null>(null);
   const [materiPokok, setMateriPokok] = useState<string>("");
   const [catatanSesi, setCatatanSesi] = useState<string>("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -210,6 +217,7 @@ export default function PresensiKelasPage() {
         );
         if (matchingGuru) {
           setSelectedGuru(String(matchingGuru.id_guru));
+          setGuruSaya(String(matchingGuru.id_guru));
         } else if (guruData.length > 0 && !selectedGuruRef.current) {
           setSelectedGuru(String(guruData[0]?.id_guru));
         }
@@ -223,6 +231,30 @@ export default function PresensiKelasPage() {
       });
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!guruSaya || lessonPeriods.length === 0) return;
+    let batal = false;
+    const sekarang = new Date();
+    getJadwalMengajar({
+      id_guru: guruSaya,
+      tanggal: formatTanggalOperasional(sekarang),
+    })
+      .then((rows) => {
+        if (batal) return;
+        setUsulan(
+          usulkanSesiSekarang(
+            rows.filter((row) => row.is_aktif === 1),
+            lessonPeriods,
+            formatJamOperasional(sekarang).slice(0, 5),
+          ),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      batal = true;
+    };
+  }, [guruSaya, lessonPeriods]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -298,6 +330,7 @@ export default function PresensiKelasPage() {
         id_rombel: reconRombel || undefined,
       });
       setAnomalies(res.anomalies);
+      return true;
     } catch (err: unknown) {
       setFeedback({
         tone: "error",
@@ -306,6 +339,7 @@ export default function PresensiKelasPage() {
             ? err.message
             : "Gagal memuat rekonsiliasi presensi.",
       });
+      return false;
     } finally {
       setLoadingRecon(false);
     }
@@ -653,6 +687,39 @@ export default function PresensiKelasPage() {
         {/* TAB 1: INPUT PRESENSI KBM */}
         {activeTab === "input" ? (
           <div className="space-y-6">
+            {usulan && !editingSessionId ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-500/30 bg-sky-500/10 p-4">
+                {/* `text-sky-200` dibalik tema terang di globals.css; sky-100 tidak. */}
+                <p className="text-xs leading-5 text-sky-200">
+                  <span className="font-bold">
+                    Sesi sekarang menurut jadwal:
+                  </span>{" "}
+                  Jam {usulan.jam_ke}
+                  {pukulJamKe(lessonPeriods, usulan.jam_ke)
+                    ? ` (${pukulJamKe(lessonPeriods, usulan.jam_ke)})`
+                    : ""}{" "}
+                  · {usulan.nama_mapel || usulan.id_mapel} ·{" "}
+                  {usulan.nama_rombel || usulan.id_rombel}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rentang = rentangJamKe(usulan.jam_ke);
+                    setSelectedRombel(usulan.id_rombel);
+                    setSelectedMapel(usulan.id_mapel);
+                    setSelectedGuru(usulan.id_guru);
+                    setSelectedDate(formatTanggalOperasional(new Date()));
+                    if (rentang) {
+                      setJamKeDari(rentang.awal);
+                      setJamKeSampai(rentang.akhir);
+                    }
+                  }}
+                  className="min-h-11 rounded-xl bg-sky-500 px-4 text-xs font-bold text-slate-950 transition hover:bg-sky-400"
+                >
+                  Pakai sesi ini
+                </button>
+              </div>
+            ) : null}
             {/* Header Configuration Panel */}
             <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur-xl space-y-4">
               <div className="flex items-center justify-between">
@@ -1190,6 +1257,16 @@ export default function PresensiKelasPage() {
                         : "Periksa Rekonsiliasi"}
                     </span>
                   </button>
+                  {canEditTemplate ? (
+                    <button
+                      type="button"
+                      onClick={() => setTemplateDialogOpen(true)}
+                      className="ml-2 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-800 px-4 py-2 text-xs font-bold text-slate-200 transition hover:bg-slate-700"
+                    >
+                      <Icon name="whatsapp" className="size-3.5" />
+                      <span>Ubah Teks Pesan</span>
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -1326,11 +1403,9 @@ export default function PresensiKelasPage() {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  const text =
-                                    buildParentNotificationText(item);
                                   void openWhatsAppChat(
                                     item.no_whatsapp_wali || "",
-                                    text,
+                                    item.pesan_wali,
                                   );
                                 }}
                                 className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-200 transition hover:bg-emerald-500/30 shadow cursor-pointer"
@@ -1573,6 +1648,18 @@ export default function PresensiKelasPage() {
           </Modal>
         ) : null}
       </div>
+      <WaTemplateDialog
+        isOpen={templateDialogOpen}
+        onClose={() => setTemplateDialogOpen(false)}
+        kinds={REKONSILIASI_TEMPLATE_KINDS}
+        onSaved={async (message) => {
+          // Pesan disusun backend; muat ulang supaya tombol memakai teks baru.
+          // Pemuatan ulang mengosongkan banner, jadi pesan sukses menyusul.
+          if (anomalies.length === 0 || (await handleLoadReconciliation())) {
+            setFeedback({ tone: "success", message });
+          }
+        }}
+      />
       {dialogKonfirmasi}
     </AppShell>
   );

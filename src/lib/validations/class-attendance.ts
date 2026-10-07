@@ -1,3 +1,8 @@
+import {
+  composeWaMessage,
+  type WaTemplateKind,
+} from "@/lib/validations/wa-notification";
+
 /**
  * Peringatan sebelum menyimpan presensi kelas.
  *
@@ -219,6 +224,113 @@ export function susunJamKe(dari: number, sampai: number): string | null {
 }
 
 /**
+ * Nomor `jam_ke` yang disimpan untuk sebuah baris jadwal bel.
+ *
+ * Hanya baris KBM yang bernomor: Istirahat dan Upacara tidak memakan nomor jam
+ * pelajaran, kalau tidak, pelajaran jam 3-5 yang melewati istirahat terhitung
+ * 3 JP. Baris non-KBM diurutkan menurut pukulnya dan disimpan dengan nomor 1
+ * hanya karena kolomnya wajib terisi (CHECK `jam_ke >= 1`).
+ *
+ * Cerminan `atur_nomor_jam_bel` di `class_attendance.rs`; keduanya diuji dengan
+ * vektor yang sama.
+ */
+export function aturNomorJamBel(
+  jenis: string,
+  jamKe: number,
+  batas: number,
+): { ok: true; jamKe: number } | { ok: false; pesan: string } {
+  if (jenis !== "KBM") return { ok: true, jamKe: 1 };
+  if (!Number.isInteger(jamKe) || jamKe < 1 || jamKe > batas) {
+    return {
+      ok: false,
+      pesan: `Jam pelajaran harus di antara 1 dan ${batas}, sesuai Pengaturan.`,
+    };
+  }
+  return { ok: true, jamKe };
+}
+
+/** Bentuk minimal satu baris jadwal bel yang dibutuhkan fungsi di bawah. */
+export interface JamBelLike {
+  jam_ke: number;
+  jam_mulai: string;
+  jam_selesai: string;
+  jenis: string;
+  is_aktif: number;
+}
+
+/** Baris KBM yang aktif, urut nomor jam pelajarannya. */
+export function jamKbmAktif<T extends JamBelLike>(periods: readonly T[]): T[] {
+  return periods
+    .filter((row) => row.jenis === "KBM" && row.is_aktif === 1)
+    .sort((a, b) => a.jam_ke - b.jam_ke);
+}
+
+/**
+ * Nomor jam KBM yang terlewat, misalnya `[4]` untuk 1, 2, 3, 5.
+ *
+ * Sebelum Istirahat berhenti memakan nomor, sekolah mengisinya sebagai "jam
+ * ke-4". Data lama itu tidak diubah otomatis; celahnya ditandai di layar supaya
+ * admin merapikan penomorannya sendiri.
+ */
+export function nomorJamKbmKosong(periods: readonly JamBelLike[]): number[] {
+  const nomor = new Set(jamKbmAktif(periods).map((row) => row.jam_ke));
+  const tertinggi = Math.max(0, ...nomor);
+  const kosong: number[] = [];
+  for (let n = 1; n < tertinggi; n += 1) {
+    if (!nomor.has(n)) kosong.push(n);
+  }
+  return kosong;
+}
+
+/** Pukul sebuah rentang `jam_ke` menurut jadwal bel, misalnya `07:00–08:20`. */
+export function pukulJamKe(
+  periods: readonly JamBelLike[],
+  jamKe: string,
+): string | null {
+  const rentang = rentangJamKe(jamKe);
+  if (!rentang) return null;
+  const kbm = jamKbmAktif(periods);
+  const awal = kbm.find((row) => row.jam_ke === rentang.awal);
+  const akhir = kbm.find((row) => row.jam_ke === rentang.akhir);
+  return awal && akhir ? `${awal.jam_mulai}–${akhir.jam_selesai}` : null;
+}
+
+/** Nomor jam KBM yang sedang berlangsung pada pukul `HH:MM`, atau `null`. */
+export function jamKeSekarang(
+  periods: readonly JamBelLike[],
+  pukul: string,
+): number | null {
+  const row = jamKbmAktif(periods).find(
+    (item) => item.jam_mulai <= pukul && pukul < item.jam_selesai,
+  );
+  return row ? row.jam_ke : null;
+}
+
+/**
+ * Baris jadwal mengajar yang sedang berlangsung, untuk DIUSULKAN di layar
+ * presensi. Tidak pernah dipakai untuk menyimpan apa pun: guru tetap memilih
+ * dan menekan simpan sendiri.
+ */
+export function usulkanSesiSekarang<T extends { jam_ke: string }>(
+  jadwal: readonly T[],
+  periods: readonly JamBelLike[],
+  pukul: string,
+): T | null {
+  const sekarang = jamKeSekarang(periods, pukul);
+  if (sekarang === null) return null;
+  return (
+    jadwal.find((row) => {
+      const rentang = rentangJamKe(row.jam_ke);
+      return (
+        rentang !== null &&
+        rentang.awal <= sekarang &&
+        sekarang <= rentang.akhir
+      );
+    }) ?? null
+  );
+}
+
+/**
  * Status awal setiap baris roster.
  *
  * Dieja di sini — modul netral yang dipakai UI maupun service — supaya nilainya
@@ -253,11 +365,19 @@ export function hasUnsavedAttendanceMarks(
 export interface ParentNotificationSource {
   anomaly_type?: string | null;
   nama_siswa?: string | null;
+  nama_rombel?: string | null;
   nama_mapel?: string | null;
   jam_ke?: string | null;
   nama_guru?: string | null;
   jam_masuk_gerbang?: string | null;
+  tanggal?: string | null;
 }
+
+/** Dua template yang dipakai tombol "Hubungi Wali" di Rekonsiliasi KBM. */
+export const REKONSILIASI_TEMPLATE_KINDS = [
+  "rekonsiliasi_bolos",
+  "rekonsiliasi_tanpa_scan",
+] as const satisfies readonly WaTemplateKind[];
 
 /**
  * Pesan WhatsApp untuk wali murid, DIBEDAKAN per jenis anomali.
@@ -266,37 +386,39 @@ export interface ParentNotificationSource {
  * pesannya sempat dipaku untuk salah satu saja. Akibatnya wali dari siswa
  * `HADIR_TANPA_SCAN_GERBANG` menerima kalimat yang setiap klausanya terbalik —
  * "tercatat hadir di gerbang … namun TIDAK HADIR di kelas" — padahal yang
- * terjadi justru sebaliknya. Mengabari orang tua dengan fakta terbalik tentang
- * anaknya adalah kesalahan yang jauh lebih mahal daripada tidak mengabari.
+ * terjadi justru sebaliknya. Karena itu tiap anomali punya template sendiri.
  *
- * Nada `HADIR_TANPA_SCAN_GERBANG` sengaja tidak menuduh: penyebab paling lazim
- * adalah kartu tertinggal atau antrean scanner, bukan pelanggaran.
+ * `templates` berisi teks tersimpan (`wa_template_<jenis>`); yang kosong atau
+ * tidak sah jatuh ke teks bawaan. Cermin `reconciliation_message` di
+ * `class_attendance.rs`, diuji dengan vektor yang sama.
  */
-export function buildParentNotificationText(
+export function composeReconciliationMessage(
   item: ParentNotificationSource,
+  templates: Partial<Record<WaTemplateKind, string>>,
 ): string {
-  const nama = String(item.nama_siswa ?? "").trim() || "ananda";
-  const mapel = String(item.nama_mapel ?? "").trim() || "mata pelajaran";
-  const jamKe = String(item.jam_ke ?? "").trim();
-  const guru = String(item.nama_guru ?? "").trim();
-  const pelajaran = jamKe ? `${mapel} jam ke-${jamKe}` : mapel;
-  const pengampu = guru ? ` (${guru})` : "";
-
-  if (item.anomaly_type === "HADIR_TANPA_SCAN_GERBANG") {
-    return (
-      `Yth. Bapak/Ibu Wali dari ${nama}, ananda tercatat HADIR pada ${pelajaran}${pengampu}, ` +
-      "namun tidak ditemukan catatan scan di gerbang sekolah hari ini. " +
-      "Mohon dipastikan ananda membawa kartu pelajarnya dan memindai di gerbang saat tiba. Terima kasih."
-    );
-  }
-
-  const jamGerbang = String(item.jam_masuk_gerbang ?? "").trim();
-  const waktu = jamGerbang ? `pukul ${jamGerbang}` : "pagi hari";
-  return (
-    `Yth. Bapak/Ibu Wali dari ${nama}, diberitahukan bahwa ananda tercatat hadir di gerbang sekolah (${waktu}), ` +
-    `namun TIDAK HADIR (Alfa) pada ${pelajaran}${pengampu}. ` +
-    "Mohon konfirmasi kehadiran siswa. Terima kasih."
-  );
+  const teks = (value: string | null | undefined, cadangan: string) =>
+    String(value ?? "").trim() || cadangan;
+  const jenis: WaTemplateKind =
+    item.anomaly_type === "HADIR_TANPA_SCAN_GERBANG"
+      ? "rekonsiliasi_tanpa_scan"
+      : "rekonsiliasi_bolos";
+  // `jam_masuk` di absensi_harian berupa stempel lengkap "YYYY-MM-DD HH:MM:SS";
+  // wali cukup membaca jam dan menitnya.
+  const jamGerbang =
+    String(item.jam_masuk_gerbang ?? "")
+      .trim()
+      .split(" ")
+      .pop()
+      ?.slice(0, 5) ?? "";
+  return composeWaMessage(jenis, templates[jenis], {
+    nama: teks(item.nama_siswa, "ananda"),
+    rombel: teks(item.nama_rombel, "-"),
+    mapel: teks(item.nama_mapel, "mata pelajaran"),
+    jam_ke: teks(item.jam_ke, "-"),
+    guru: teks(item.nama_guru, "-"),
+    jam_gerbang: jamGerbang || "-",
+    tanggal: teks(item.tanggal, "-"),
+  });
 }
 
 /** Bentuk minimal satu baris roster yang dibutuhkan pemeriksaan ini. */

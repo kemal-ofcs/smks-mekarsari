@@ -55,7 +55,11 @@ type TabKey =
   | "rombel"
   | "mapel"
   | "penugasan"
-  | "jadwal";
+  | "jadwal"
+  | "jam_pelajaran";
+
+/** Tab yang memakai modal halaman ini; Jam Pelajaran punya modalnya sendiri. */
+type ModalKey = Exclude<TabKey, "jam_pelajaran">;
 
 /**
  * Kelima panel tab dimuat terpisah.
@@ -120,10 +124,21 @@ const JadwalPanel = dynamic(
   { ssr: false },
 );
 
+const JamPelajaranCard = dynamic(
+  () =>
+    import("@/components/JamPelajaranCard").then((mod) => ({
+      default: mod.JamPelajaranCard,
+    })),
+  { ssr: false },
+);
+
 export default function AkademikPage() {
   const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const canManage = hasPermission(user, "academic.manage");
+  // Jadwal bel dan jumlah jam pelajaran adalah pengaturan sekolah; izinnya
+  // tetap `settings.manage` seperti saat kartunya masih di Pengaturan.
+  const canManageJamPelajaran = hasPermission(user, "settings.manage");
 
   const [activeTab, setActiveTab] = useState<TabKey>("tahun_ajaran");
   const [loading, setLoading] = useState(true);
@@ -168,7 +183,7 @@ export default function AkademikPage() {
   });
 
   // Modal states
-  const [modalType, setModalType] = useState<TabKey | null>(null);
+  const [modalType, setModalType] = useState<ModalKey | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Form states
@@ -542,7 +557,8 @@ export default function AkademikPage() {
                 <Icon name="refresh" className="size-4" />
                 <span>Muat Ulang</span>
               </button>
-              {canManage ? (
+              {/* Tab Jam Pelajaran punya tombol tambahnya sendiri. */}
+              {canManage && activeTab !== "jam_pelajaran" ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -656,7 +672,7 @@ export default function AkademikPage() {
           <button
             type="button"
             onClick={() => setActiveTab("tahun_ajaran")}
-            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "tahun_ajaran"
                 ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
                 : "text-slate-300 hover:bg-white/5 hover:text-white"
@@ -668,7 +684,7 @@ export default function AkademikPage() {
           <button
             type="button"
             onClick={() => setActiveTab("unit")}
-            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "unit"
                 ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
                 : "text-slate-300 hover:bg-white/5 hover:text-white"
@@ -680,7 +696,7 @@ export default function AkademikPage() {
           <button
             type="button"
             onClick={() => setActiveTab("jurusan")}
-            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "jurusan"
                 ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
                 : "text-slate-300 hover:bg-white/5 hover:text-white"
@@ -692,7 +708,7 @@ export default function AkademikPage() {
           <button
             type="button"
             onClick={() => setActiveTab("rombel")}
-            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "rombel"
                 ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
                 : "text-slate-300 hover:bg-white/5 hover:text-white"
@@ -704,7 +720,7 @@ export default function AkademikPage() {
           <button
             type="button"
             onClick={() => setActiveTab("mapel")}
-            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "mapel"
                 ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
                 : "text-slate-300 hover:bg-white/5 hover:text-white"
@@ -716,7 +732,7 @@ export default function AkademikPage() {
           <button
             type="button"
             onClick={() => setActiveTab("penugasan")}
-            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "penugasan"
                 ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
                 : "text-slate-300 hover:bg-white/5 hover:text-white"
@@ -728,7 +744,7 @@ export default function AkademikPage() {
           <button
             type="button"
             onClick={() => setActiveTab("jadwal")}
-            className={`flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+            className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
               activeTab === "jadwal"
                 ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
                 : "text-slate-300 hover:bg-white/5 hover:text-white"
@@ -737,6 +753,20 @@ export default function AkademikPage() {
             <Icon name="calendar" className="size-4" />
             <span>Jadwal Mengajar</span>
           </button>
+          {canManageJamPelajaran ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("jam_pelajaran")}
+              className={`flex min-h-11 items-center gap-2 rounded-xl px-4 text-xs font-bold transition sm:text-sm ${
+                activeTab === "jam_pelajaran"
+                  ? "bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20"
+                  : "text-slate-300 hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              <Icon name="tools" className="size-4" />
+              <span>Jam Pelajaran</span>
+            </button>
+          ) : null}
         </div>
 
         {/* Tab 1: Tahun Ajaran */}
@@ -826,6 +856,10 @@ export default function AkademikPage() {
             canManage={canManage}
             onFeedback={(tone, message) => setFeedback({ tone, message })}
           />
+        ) : null}
+
+        {activeTab === "jam_pelajaran" && canManageJamPelajaran ? (
+          <JamPelajaranCard />
         ) : null}
 
         {/* Modal Form */}
