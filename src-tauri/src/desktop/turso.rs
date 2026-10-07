@@ -14,6 +14,11 @@ use zeroize::Zeroizing;
 
 use super::{
     models::{CommandError, OperatorUser},
+    // Validasi payload inventaris di cloud memakai daftar enum yang sama
+    // dengan validasi lokal.
+    inventory,
+    // Bentuk payload kunjungan UKS dicek dengan aturan yang sama dengan lokal.
+    uks,
     // Normalisasi cakupan whitelist hari libur hidup di `scanner` bersama
     // penilaiannya, supaya jalur cloud dan jalur scan tidak pernah bisa drift.
     scanner,
@@ -978,6 +983,17 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
         table: "nilai_siswa",
         sql: "SELECT * FROM nilai_siswa ORDER BY id_penilaian, id_siswa\n-- sengaja-utuh: skor yang hilang dari snapshot tidak bisa dibedakan dari skor yang memang belum diisi, dan gurunya akan menilai ulang seluruh kelas.\n;",
     },
+    // ── v35: Inventaris ──
+    SnapshotSource {
+        payload_key: "inventoryItems",
+        table: "inventory_barang",
+        sql: "SELECT * FROM inventory_barang ORDER BY id_barang;",
+    },
+    SnapshotSource {
+        payload_key: "inventoryMutations",
+        table: "inventory_mutasi",
+        sql: "SELECT * FROM inventory_mutasi ORDER BY tanggal, created_at, id_mutasi\n-- sengaja-utuh: stok adalah jumlah SELURUH riwayat mutasi; jendela waktu atau LIMIT membuat setiap perangkat menghitung stok yang salah tanpa tahu datanya terpotong.\n;",
+    },
 ];
 
 pub struct TursoClient {
@@ -1519,24 +1535,47 @@ impl TursoClient {
         let Some(existing) = existing else {
             return Ok(());
         };
-        if existing.contains("'koreksi_admin'") {
+        if existing.contains("'uks'") {
             return Ok(());
         }
 
-        const KOLOM: &str =
-            "id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor, isi_pesan, status, attempt_count, last_error, sent_at, created_at, updated_at";
+        // Irisan kolom, bukan daftar tetap: lihat cerminannya di `storage.rs`.
+        // Antrean cloud bisa sedang diklaim pengirim (`klaim_oleh`), dan
+        // daftar 12 kolom versi lama akan membuang klaim itu sehingga pesan
+        // yang sama terkirim dua kali.
+        const TARGET: [&str; 14] = [
+            "id_notifikasi", "dedupe_key", "jenis", "id_siswa", "tujuan_nomor", "isi_pesan",
+            "status", "attempt_count", "last_error", "sent_at", "created_at", "updated_at",
+            "klaim_oleh", "klaim_sampai",
+        ];
+        let info = self
+            .query_one("PRAGMA table_info(notifikasi_wa);", vec![])
+            .await?;
+        let ada: Vec<String> = info
+            .to_objects()
+            .iter()
+            .filter_map(|row| row.get("name").and_then(Value::as_str).map(str::to_owned))
+            .collect();
+        let kolom = TARGET
+            .iter()
+            .filter(|nama| ada.iter().any(|kolom| kolom == *nama))
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
         // Nama staging dirakit saat runtime dengan alasan yang sama seperti
         // `ensure_payroll_calc_type_values`: tabel itu hanya hidup di tengah
         // rebuild, dan `audit:sql` tidak perlu mencoba menyiapkannya.
         let staging = format!("notifikasi_wa{}", "__rebuild");
 
-        self.execute_pipeline(vec![
+        // SATU transaksi: gagal di tengah tidak boleh meninggalkan cloud tanpa
+        // tabel antrean.
+        self.execute_atomic(vec![
             Statement::new(format!("DROP TABLE IF EXISTS {staging};"), vec![]),
             Statement::new(
                 r#"CREATE TABLE notifikasi_wa__rebuild (
                     id_notifikasi TEXT PRIMARY KEY,
                     dedupe_key TEXT NOT NULL,
-                    jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+                    jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual', 'uks')),
                     id_siswa TEXT,
                     tujuan_nomor TEXT NOT NULL,
                     isi_pesan TEXT NOT NULL,
@@ -1545,13 +1584,15 @@ impl TursoClient {
                     last_error TEXT,
                     sent_at TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    klaim_oleh TEXT,
+                    klaim_sampai TEXT
                 );"#
                 .to_string(),
                 vec![],
             ),
             Statement::new(
-                format!("INSERT INTO {staging} ({KOLOM}) SELECT {KOLOM} FROM notifikasi_wa;"),
+                format!("INSERT INTO {staging} ({kolom}) SELECT {kolom} FROM notifikasi_wa;"),
                 vec![],
             ),
             Statement::new("DROP TABLE notifikasi_wa;".to_string(), vec![]),
@@ -1966,6 +2007,101 @@ impl TursoClient {
             ),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_hari_libur_whitelist_scope ON hari_libur_whitelist(scope_type, scope_value, status_aktif);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_hari_libur_whitelist_tanggal ON hari_libur_whitelist(tanggal_libur, status_aktif);", vec![]),
+            // Inventaris (v35). WAJIB identik dengan `storage.rs` dan
+            // `db-migrations.ts`. Tanpa kolom stok dan tanpa UNIQUE selain PK:
+            // stok dihitung dari mutasi lewat view `inventory_saldo`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS inventory_barang (
+                    id_barang TEXT PRIMARY KEY,
+                    kode_barang TEXT NOT NULL,
+                    nama_barang TEXT NOT NULL,
+                    kategori TEXT,
+                    tipe TEXT NOT NULL CHECK (tipe IN ('Aset', 'Habis Pakai')),
+                    satuan TEXT NOT NULL,
+                    bisa_expired INTEGER NOT NULL DEFAULT 0 CHECK (bisa_expired IN (0, 1)),
+                    stok_minimum INTEGER NOT NULL DEFAULT 0 CHECK (stok_minimum >= 0),
+                    tempat_utama TEXT,
+                    catatan TEXT,
+                    status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS inventory_mutasi (
+                    id_mutasi TEXT PRIMARY KEY,
+                    id_barang TEXT NOT NULL,
+                    jenis TEXT NOT NULL CHECK (jenis IN ('Masuk', 'Keluar', 'Pindah')),
+                    alasan TEXT NOT NULL CHECK (alasan IN (
+                        'Saldo Awal', 'Pengadaan', 'Hibah', 'Pengembalian',
+                        'Pemakaian', 'Peminjaman', 'Rusak/Afkir', 'Hilang', 'Kedaluwarsa',
+                        'Distribusi', 'Perubahan Kondisi',
+                        'Selisih Opname', 'Pembatalan')),
+                    tanggal TEXT NOT NULL,
+                    jumlah INTEGER NOT NULL CHECK (jumlah > 0),
+                    tempat_asal TEXT,
+                    kondisi_asal TEXT CHECK (kondisi_asal IN ('Baik', 'Rusak Ringan', 'Rusak Berat')),
+                    tempat_tujuan TEXT,
+                    kondisi_tujuan TEXT CHECK (kondisi_tujuan IN ('Baik', 'Rusak Ringan', 'Rusak Berat')),
+                    id_batch TEXT,
+                    tanggal_expired TEXT,
+                    id_ref TEXT,
+                    penerima_tipe TEXT CHECK (penerima_tipe IN ('Personil', 'Rombel', 'Unit', 'Umum')),
+                    penerima_id TEXT,
+                    penerima_nama TEXT,
+                    keperluan TEXT,
+                    sumber_dana TEXT,
+                    nomor_dokumen TEXT,
+                    harga_satuan INTEGER CHECK (harga_satuan IS NULL OR harga_satuan >= 0),
+                    catatan TEXT,
+                    dicatat_oleh TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_barang_tanggal ON inventory_mutasi(id_barang, tanggal);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_batch ON inventory_mutasi(id_batch);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_ref ON inventory_mutasi(id_ref);", vec![]),
+            Statement::new(
+                r#"CREATE VIEW IF NOT EXISTS inventory_saldo AS
+                    SELECT id_barang, MIN(tempat) AS tempat, kondisi, id_batch, SUM(delta) AS saldo
+                    FROM (
+                        SELECT id_barang, tempat_tujuan AS tempat, kondisi_tujuan AS kondisi, id_batch, jumlah AS delta
+                            FROM inventory_mutasi WHERE tempat_tujuan IS NOT NULL
+                        UNION ALL
+                        SELECT id_barang, tempat_asal, kondisi_asal, id_batch, -jumlah
+                            FROM inventory_mutasi WHERE tempat_asal IS NOT NULL
+                    )
+                    GROUP BY id_barang, LOWER(tempat), kondisi, id_batch;"#,
+                vec![],
+            ),
+            // Buku Kunjungan UKS (v36). Di luar SNAPSHOT_SOURCES: barisnya
+            // didorong dari perangkat pencatat dan tidak pernah ditarik ke
+            // perangkat lain. WAJIB identik dengan `storage.rs` dan
+            // `db-migrations.ts`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS uks_kunjungan (
+                    id_kunjungan TEXT PRIMARY KEY,
+                    id_personil TEXT NOT NULL,
+                    nama_personil TEXT NOT NULL,
+                    kelas TEXT,
+                    tanggal TEXT NOT NULL,
+                    jam_masuk TEXT NOT NULL,
+                    jam_keluar TEXT,
+                    keluhan TEXT NOT NULL,
+                    tindakan TEXT,
+                    tindak_lanjut TEXT,
+                    catatan TEXT,
+                    dicatat_oleh TEXT NOT NULL,
+                    ditutup_oleh TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_uks_kunjungan_tanggal ON uks_kunjungan(tanggal);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_uks_kunjungan_personil ON uks_kunjungan(id_personil, tanggal);", vec![]),
             Statement::new(
                 r#"CREATE TABLE IF NOT EXISTS company_profile (
                     id TEXT PRIMARY KEY DEFAULT 'default_company',
@@ -2233,7 +2369,14 @@ impl TursoClient {
                 ('grades.delete', 'Hapus Penilaian Beserta Nilainya', 'Akademik', 'Menghapus penilaian beserta seluruh nilai siswa di dalamnya.', 1, 802),
                 ('content.view', 'Lihat Konten & Berita CMS', 'Situs Publik', 'Melihat daftar berita dan konten situs publik.', 1, 900),
                 ('content.manage', 'Kelola Konten & Berita CMS', 'Situs Publik', 'Membuat atau mengedit berita dan konten situs publik.', 1, 901),
-                ('content.delete', 'Hapus Konten & Berita CMS', 'Situs Publik', 'Menghapus berita atau artikel dari CMS situs publik.', 1, 902);"#,
+                ('content.delete', 'Hapus Konten & Berita CMS', 'Situs Publik', 'Menghapus berita atau artikel dari CMS situs publik.', 1, 902),
+                ('inventory.view', 'Lihat Inventaris', 'Sarpras', 'Melihat barang, stok, dan kartu stok inventaris.', 1, 1000),
+                ('inventory.manage', 'Kelola Master Barang', 'Sarpras', 'Menambah dan mengubah data barang inventaris.', 1, 1001),
+                ('inventory.record', 'Catat Barang Masuk, Keluar & Pindah', 'Sarpras', 'Mencatat barang masuk, pemakaian, dan perpindahan tempat atau kondisi.', 1, 1002),
+                ('inventory.adjust', 'Koreksi & Batalkan Mutasi Inventaris', 'Sarpras', 'Membatalkan mutasi, stock opname, dan menghapus stok rusak, hilang, atau kedaluwarsa.', 1, 1003),
+                ('uks.view', 'Lihat Buku Kunjungan UKS', 'UKS', 'Melihat riwayat dan rekap kunjungan UKS, termasuk keluhan siswa.', 1, 1100),
+                ('uks.record', 'Catat Kunjungan UKS & Obat', 'UKS', 'Mencatat dan menutup kunjungan UKS serta mengeluarkan obat untuknya.', 1, 1101),
+                ('uks.delete', 'Hapus Kunjungan UKS', 'UKS', 'Menghapus catatan kunjungan UKS.', 1, 1102);"#,
                 vec![],
             ),
             // Seed Default Role Permissions untuk Role Superadmin (Role 1)
@@ -2713,7 +2856,7 @@ impl TursoClient {
                 r#"CREATE TABLE IF NOT EXISTS notifikasi_wa (
                     id_notifikasi TEXT PRIMARY KEY,
                     dedupe_key TEXT NOT NULL,
-                    jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+                    jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual', 'uks')),
                     id_siswa TEXT,
                     tujuan_nomor TEXT NOT NULL,
                     isi_pesan TEXT NOT NULL,
@@ -2743,6 +2886,7 @@ impl TursoClient {
                     ambang_alfa_enabled INTEGER NOT NULL DEFAULT 1,
                     koreksi_admin_enabled INTEGER NOT NULL DEFAULT 0,
                     import_manual_enabled INTEGER NOT NULL DEFAULT 0,
+                    uks_enabled INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );"#,
@@ -3053,7 +3197,9 @@ impl TursoClient {
                 (31, 'cms-landing-page', datetime('now')),
                 (32, 'personnel-photo', datetime('now')),
                 (33, 'employee-identity-history', datetime('now')),
-                (34, 'wa-send-claim', datetime('now'));"#,
+                (34, 'wa-send-claim', datetime('now')),
+                (35, 'inventory-foundation', datetime('now')),
+                (36, 'uks-visit-book', datetime('now'));"#,
                 vec![],
             ),
         ];
@@ -3187,6 +3333,7 @@ impl TursoClient {
             // diperbarui.
             ("app_wa_config", "koreksi_admin_enabled", "ALTER TABLE app_wa_config ADD COLUMN koreksi_admin_enabled INTEGER NOT NULL DEFAULT 0;"),
             ("app_wa_config", "import_manual_enabled", "ALTER TABLE app_wa_config ADD COLUMN import_manual_enabled INTEGER NOT NULL DEFAULT 0;"),
+            ("app_wa_config", "uks_enabled", "ALTER TABLE app_wa_config ADD COLUMN uks_enabled INTEGER NOT NULL DEFAULT 0;"),
         ] {
             self.ensure_column(table, column, sql).await?;
         }
@@ -5915,7 +6062,7 @@ impl TursoClient {
         self.ensure_schema_current().await?;
         let res = self
             .query_one(
-                "SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit, scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled, koreksi_admin_enabled, import_manual_enabled, created_at, updated_at FROM app_wa_config WHERE id = 'default' LIMIT 1;",
+                "SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit, scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled, koreksi_admin_enabled, import_manual_enabled, uks_enabled, created_at, updated_at FROM app_wa_config WHERE id = 'default' LIMIT 1;",
                 vec![],
             )
             .await?;
@@ -5947,6 +6094,7 @@ impl TursoClient {
                 "ambangAlfaEnabled": on("ambang_alfa_enabled"),
                 "koreksiAdminEnabled": on("koreksi_admin_enabled"),
                 "importManualEnabled": on("import_manual_enabled"),
+                "uksEnabled": on("uks_enabled"),
                 "createdAt": text("created_at"),
                 "updatedAt": text("updated_at"),
             });
@@ -6013,6 +6161,7 @@ impl TursoClient {
                 "ambangAlfaEnabled": false,
                 "koreksiAdminEnabled": false,
                 "importManualEnabled": false,
+                "uksEnabled": false,
                 "ambangAlfaLimit": super::wa_notification::DEFAULT_AMBANG_ALFA_LIMIT,
                 "ambangAlfaDays": super::wa_notification::DEFAULT_AMBANG_ALFA_DAYS,
                 "autoSendEnabled": false,
@@ -6067,6 +6216,7 @@ impl TursoClient {
         let ambang_alfa_enabled = switches.ambang_alfa;
         let koreksi_admin_enabled = switches.koreksi_admin;
         let import_manual_enabled = switches.import_manual;
+        let uks_enabled = switches.uks;
 
         let new_key = draft
             .get("apiKey")
@@ -6104,9 +6254,9 @@ impl TursoClient {
             r#"INSERT INTO app_wa_config (
                 id, provider, api_key, api_url, sender_number, is_active, daily_limit,
                 scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled,
-                koreksi_admin_enabled, import_manual_enabled,
+                koreksi_admin_enabled, import_manual_enabled, uks_enabled,
                 created_at, updated_at
-            ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
             ON CONFLICT(id) DO UPDATE SET
                 provider = excluded.provider,
                 api_key = excluded.api_key,
@@ -6120,6 +6270,7 @@ impl TursoClient {
                 ambang_alfa_enabled = excluded.ambang_alfa_enabled,
                 koreksi_admin_enabled = excluded.koreksi_admin_enabled,
                 import_manual_enabled = excluded.import_manual_enabled,
+                uks_enabled = excluded.uks_enabled,
                 updated_at = datetime('now');"#,
             vec![
                 json!(provider),
@@ -6140,6 +6291,7 @@ impl TursoClient {
                 json!(ambang_alfa_enabled),
                 json!(koreksi_admin_enabled),
                 json!(import_manual_enabled),
+                json!(uks_enabled),
             ],
         )];
 
@@ -7799,6 +7951,10 @@ fn canonical_sync_route(domain: &str, operation: &str) -> Option<(&'static str, 
         ("holiday-whitelist" | "holiday_whitelist", "create") => ("holiday-whitelist", "create"),
         ("holiday-whitelist" | "holiday_whitelist", "update") => ("holiday-whitelist", "update"),
         ("holiday-whitelist" | "holiday_whitelist", "delete") => ("holiday-whitelist", "delete"),
+        ("inventory-item", "save") => ("inventory-item", "save"),
+        ("inventory-mutation", "create") => ("inventory-mutation", "create"),
+        ("uks-visit", "save") => ("uks-visit", "save"),
+        ("uks-visit", "delete") => ("uks-visit", "delete"),
         ("attendance", "scan") => ("attendance", "scan"),
         ("attendance", "create") => ("attendance", "create"),
         ("attendance", "update") => ("attendance", "update"),
@@ -8703,6 +8859,40 @@ async fn apply_event_to_turso(
                         "DELETE FROM hari_libur_whitelist WHERE id = ?;",
                         vec![json!(id)],
                     )
+                    .await?;
+            }
+        }
+        ("inventory-item", "save") => {
+            if let Some(values) = inventory::cloud_item_values(payload, entity_key) {
+                turso
+                    .query_one(inventory::CLOUD_UPSERT_ITEM_SQL, values)
+                    .await?;
+            }
+        }
+        ("uks-visit", "save") => {
+            if let Some(values) = uks::cloud_visit_values(payload, entity_key) {
+                turso.query_one(uks::CLOUD_UPSERT_VISIT_SQL, values).await?;
+            }
+        }
+        ("uks-visit", "delete") => {
+            let id = payload
+                .get("id_kunjungan")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(entity_key);
+            if !id.trim().is_empty() {
+                turso
+                    .query_one(
+                        "DELETE FROM uks_kunjungan WHERE id_kunjungan = ?;",
+                        vec![json!(id)],
+                    )
+                    .await?;
+            }
+        }
+        ("inventory-mutation", "create") => {
+            if let Some(values) = inventory::cloud_mutation_values(payload, entity_key) {
+                turso
+                    .query_one(inventory::CLOUD_INSERT_MUTATION_SQL, values)
                     .await?;
             }
         }

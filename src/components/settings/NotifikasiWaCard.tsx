@@ -35,6 +35,7 @@ export function NotifikasiWaCard({
   const [ambangAlfa, setAmbangAlfa] = useState(false);
   const [koreksiAdmin, setKoreksiAdmin] = useState(false);
   const [importManual, setImportManual] = useState(false);
+  const [uks, setUks] = useState(false);
   const [ambangLimit, setAmbangLimit] = useState(DEFAULT_AMBANG_ALFA_LIMIT);
   const [ambangDays, setAmbangDays] = useState(DEFAULT_AMBANG_ALFA_DAYS);
   const [isDirty, setIsDirty] = useState(false);
@@ -47,6 +48,7 @@ export function NotifikasiWaCard({
       setAmbangAlfa(config.ambangAlfaEnabled);
       setKoreksiAdmin(config.koreksiAdminEnabled);
       setImportManual(config.importManualEnabled);
+      setUks(config.uksEnabled);
       setAmbangLimit(config.ambangAlfaLimit ?? DEFAULT_AMBANG_ALFA_LIMIT);
       setAmbangDays(config.ambangAlfaDays ?? DEFAULT_AMBANG_ALFA_DAYS);
       setIsDirty(false);
@@ -68,6 +70,7 @@ export function NotifikasiWaCard({
       ambangAlfaEnabled: ambangAlfa,
       koreksiAdminEnabled: koreksiAdmin,
       importManualEnabled: importManual,
+      uksEnabled: uks,
       ambangAlfaLimit: ambangLimit,
       ambangAlfaDays: ambangDays,
       autoSendEnabled: config.autoSendEnabled,
@@ -368,6 +371,41 @@ export function NotifikasiWaCard({
           ) : (
             <span className="text-xs font-semibold text-slate-400">
               {importManual ? "Aktif" : "Nonaktif"}
+            </span>
+          )}
+        </div>
+
+        {/* Sakelar 7: Kunjungan UKS */}
+        <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-950/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="text-sm font-bold text-white">
+              Notifikasi Kunjungan UKS
+            </span>
+            <p className="text-xs text-slate-400">
+              Menampilkan kotak centang "Kabari wali lewat WhatsApp" saat
+              petugas UKS menutup kunjungan seorang siswa. Pesan hanya diantre
+              bila kotak itu dicentang.
+            </p>
+          </div>
+          {canManage ? (
+            <label className="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                checked={uks}
+                disabled={busy}
+                onChange={(e) => {
+                  setUks(e.target.checked);
+                  setIsDirty(true);
+                }}
+                className="sr-only peer"
+                id="toggle-wa-uks"
+                aria-label="Notifikasi kunjungan UKS"
+              />
+              <div className="h-6 w-11 rounded-full bg-slate-800 peer peer-checked:bg-emerald-500 peer-focus:outline-none after:absolute after:top-0.5 after:left-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white disabled:opacity-50" />
+            </label>
+          ) : (
+            <span className="text-xs font-semibold text-slate-400">
+              {uks ? "Aktif" : "Nonaktif"}
             </span>
           )}
         </div>

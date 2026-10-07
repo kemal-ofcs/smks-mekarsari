@@ -19,7 +19,7 @@ use super::{
 /// `CURRENT_SCHEMA_VERSION` di `web-desktop/src/lib/db-schema.ts` setiap kali
 /// migrasi baru ditambahkan, karena keduanya membaca tabel `schema_migration`
 /// yang sama di Turso.
-pub const CLIENT_SCHEMA_VERSION: i64 = 34;
+pub const CLIENT_SCHEMA_VERSION: i64 = 36;
 
 /// Hanya `cloud > client` yang berbahaya; `cloud <= client` adalah kondisi normal.
 fn is_client_schema_outdated(cloud_version: i64) -> bool {
@@ -894,6 +894,67 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
         entity_column: "id_nilai",
         delete_missing: false,
     },
+    // ── v35: Inventaris ──
+    //
+    // Keduanya `delete_missing: false`: barang hanya dinonaktifkan dan mutasi
+    // tidak pernah dihapus, jadi ketiadaan baris di snapshot tidak pernah
+    // berarti "dihapus".
+    SnapshotTable {
+        payload_key: "inventoryItems",
+        domain: "inventory-item",
+        table: "inventory_barang",
+        columns: &[
+            "id_barang",
+            "kode_barang",
+            "nama_barang",
+            "kategori",
+            "tipe",
+            "satuan",
+            "bisa_expired",
+            "stok_minimum",
+            "tempat_utama",
+            "catatan",
+            "status_aktif",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id_barang",
+        entity_column: "id_barang",
+        delete_missing: false,
+    },
+    SnapshotTable {
+        payload_key: "inventoryMutations",
+        domain: "inventory-mutation",
+        table: "inventory_mutasi",
+        columns: &[
+            "id_mutasi",
+            "id_barang",
+            "jenis",
+            "alasan",
+            "tanggal",
+            "jumlah",
+            "tempat_asal",
+            "kondisi_asal",
+            "tempat_tujuan",
+            "kondisi_tujuan",
+            "id_batch",
+            "tanggal_expired",
+            "id_ref",
+            "penerima_tipe",
+            "penerima_id",
+            "penerima_nama",
+            "keperluan",
+            "sumber_dana",
+            "nomor_dokumen",
+            "harga_satuan",
+            "catatan",
+            "dicatat_oleh",
+            "created_at",
+        ],
+        conflict_column: "id_mutasi",
+        entity_column: "id_mutasi",
+        delete_missing: false,
+    },
 ];
 
 const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
@@ -951,6 +1012,10 @@ const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
     ("holiday-whitelist", "update"),
     ("id-card", "update"),
     ("id-card-template", "save"),
+    ("inventory-item", "save"),
+    ("inventory-mutation", "create"),
+    ("uks-visit", "delete"),
+    ("uks-visit", "save"),
     ("log-scan", "delete"),
     ("offline-import", "delete"),
     ("offline-import", "row"),

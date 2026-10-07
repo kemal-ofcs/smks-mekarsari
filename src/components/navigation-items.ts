@@ -28,6 +28,18 @@ export const NAVIGATION: readonly NavigationItem[] = [
     label: "Hari Libur",
   },
   {
+    area: "inventaris",
+    href: "/inventaris",
+    icon: "box",
+    label: "Inventaris",
+  },
+  {
+    area: "uks",
+    href: "/uks",
+    icon: "document",
+    label: "Kunjungan UKS",
+  },
+  {
     area: "operational",
     href: "/operational",
     icon: "tools",
@@ -209,6 +221,7 @@ export const NAVIGATION_GROUPS: readonly NavigationGroupSpec[] = [
       "/bimbingan-konseling",
     ],
   },
+  { label: "Sarpras", hrefs: ["/inventaris", "/uks"] },
   {
     label: "Penggajian & Aturan Kerja",
     hrefs: ["/payroll", "/shift", "/holidays"],

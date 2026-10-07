@@ -27,6 +27,7 @@ import {
   WA_NOTIFY_KOREKSI_ADMIN_KEY,
   WA_NOTIFY_SCAN_MASUK_KEY,
   WA_NOTIFY_SCAN_PULANG_KEY,
+  WA_NOTIFY_UKS_KEY,
   WA_TEMPLATE_KINDS,
   WA_TEMPLATE_LABELS,
   type WaNotificationKind,
@@ -311,7 +312,7 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
     sql: `
       SELECT id, provider, api_key, api_url, sender_number, is_active, daily_limit,
              scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled,
-      koreksi_admin_enabled, import_manual_enabled,
+      koreksi_admin_enabled, import_manual_enabled, uks_enabled,
              created_at, updated_at
       FROM app_wa_config
       WHERE id = 'default'
@@ -359,6 +360,7 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
       ambangAlfaEnabled: false,
       koreksiAdminEnabled: false,
       importManualEnabled: false,
+      uksEnabled: false,
       ambangAlfaLimit,
       ambangAlfaDays,
       autoSendEnabled: settingEnabled(settingsMap.get(WA_AUTO_SEND_KEY)),
@@ -403,6 +405,7 @@ export async function getWaConfig(client: Client): Promise<WaConfig> {
     ambangAlfaEnabled: Number(row.ambang_alfa_enabled ?? 0) === 1,
     koreksiAdminEnabled: Number(row.koreksi_admin_enabled ?? 0) === 1,
     importManualEnabled: Number(row.import_manual_enabled ?? 0) === 1,
+    uksEnabled: Number(row.uks_enabled ?? 0) === 1,
     ambangAlfaLimit,
     ambangAlfaDays,
     autoSendEnabled: settingEnabled(settingsMap.get(WA_AUTO_SEND_KEY)),
@@ -440,9 +443,9 @@ export async function saveWaConfig(
       INSERT INTO app_wa_config (
         id, provider, api_key, api_url, sender_number, is_active, daily_limit,
         scan_masuk_enabled, scan_pulang_enabled, bolos_enabled, ambang_alfa_enabled,
-        koreksi_admin_enabled, import_manual_enabled,
+        koreksi_admin_enabled, import_manual_enabled, uks_enabled,
         created_at, updated_at
-      ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
         provider = excluded.provider,
         api_key = excluded.api_key,
@@ -456,6 +459,7 @@ export async function saveWaConfig(
         ambang_alfa_enabled = excluded.ambang_alfa_enabled,
         koreksi_admin_enabled = excluded.koreksi_admin_enabled,
         import_manual_enabled = excluded.import_manual_enabled,
+        uks_enabled = excluded.uks_enabled,
         updated_at = datetime('now');
     `,
     args: [
@@ -471,6 +475,7 @@ export async function saveWaConfig(
       draft.ambangAlfaEnabled ? 1 : 0,
       draft.koreksiAdminEnabled ? 1 : 0,
       draft.importManualEnabled ? 1 : 0,
+      draft.uksEnabled ? 1 : 0,
     ],
   };
 
@@ -489,6 +494,7 @@ export async function saveWaConfig(
         WA_NOTIFY_IMPORT_MANUAL_KEY,
         draft.importManualEnabled ? "true" : "false",
       ],
+      [WA_NOTIFY_UKS_KEY, draft.uksEnabled ? "true" : "false"],
       [
         WA_NOTIFY_AMBANG_ALFA_LIMIT_KEY,
         String(parseAmbangAlfaLimit(draft.ambangAlfaLimit)),

@@ -29,7 +29,9 @@ export type AppArea =
   | "bimbingan_konseling"
   | "pmb"
   | "nilai"
-  | "konten";
+  | "konten"
+  | "inventaris"
+  | "uks";
 
 export interface AccessSubject {
   isSuperadmin: boolean;
@@ -56,6 +58,8 @@ const AREA_PERMISSION: Record<
   pmb: "pmb.view",
   nilai: "grades.view",
   konten: "content.view",
+  inventaris: "inventory.view",
+  uks: "uks.view",
   karyawan: "employees.view",
   idcards: "employees.manage",
   shift: "shifts.view",

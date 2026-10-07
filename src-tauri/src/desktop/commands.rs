@@ -6,13 +6,13 @@ use zeroize::Zeroizing;
 use super::{
     academic, administration, attendance_dashboard, attendance_ledger, class_attendance,
     config::DesktopState,
-    license,
+    inventory, license,
     models::{
         CommandError, DesktopLoginResult, DesktopRuntimeStatus, DesktopSession, DesktopSyncStatus,
         OperatorUser, SessionMode,
     },
     operational, portability,
-    scanner, secrets, storage, sync, teaching_journal, turso, wa_notification,
+    scanner, secrets, storage, sync, teaching_journal, turso, uks, wa_notification,
 };
 
 /// Sesi login yang sah, tanpa menuntut izin tertentu.
@@ -2667,6 +2667,188 @@ pub fn desktop_delete_teaching_journal(
 ) -> Result<Value, CommandError> {
     require_permission(&state, "teaching_journal.delete")?;
     teaching_journal::delete_teaching_journal(&state, &id_jurnal)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_list(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.view")?;
+    inventory::list_inventory(&state)
+}
+
+/// Penerima dibaca dengan izin mencatat, bukan `students.view`: petugas UKS
+/// perlu memilih siswa yang diberi obat tanpa melihat seluruh data siswa.
+#[tauri::command]
+pub fn desktop_inventory_recipients(
+    state: State<'_, DesktopState>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.record")?;
+    inventory::list_recipients(&state)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_save_item(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.manage")?;
+    inventory::save_item(&state, draft)
+}
+
+/// Daftar awalan kode barang. Diatur oleh pemegang `inventory.manage`, bukan
+/// `branding.manage`, supaya petugas Sarpras bisa mengelolanya sendiri.
+#[tauri::command]
+pub fn desktop_inventory_save_code_prefixes(
+    state: State<'_, DesktopState>,
+    prefixes: Vec<String>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.manage")?;
+    inventory::save_code_prefixes(&state, prefixes)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_record_mutation(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    // Izinnya ditentukan alasan: penghapusan stok (Rusak/Afkir, Hilang,
+    // Kedaluwarsa) menuntut `inventory.adjust`, dan diperiksa sebelum apa pun
+    // ditulis.
+    let alasan = draft.get("alasan").and_then(Value::as_str).unwrap_or("");
+    let operator = require_permission(&state, inventory::izin_untuk_alasan(alasan))?;
+    inventory::record_mutation(&state, &operator.username, draft)
+}
+
+/// Isi berita acara, termasuk kop sekolah. Izinnya `inventory.view` karena
+/// isinya sama dengan yang sudah terlihat di kartu stok.
+#[tauri::command]
+pub fn desktop_inventory_document(
+    state: State<'_, DesktopState>,
+    id_mutasi: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.view")?;
+    inventory::document(&state, &id_mutasi)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_opname_history(
+    state: State<'_, DesktopState>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.view")?;
+    inventory::opname_history(&state)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_procurement(
+    state: State<'_, DesktopState>,
+    dari: String,
+    sampai: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.view")?;
+    inventory::procurement(&state, &dari, &sampai)
+}
+
+/// Riwayat kunjungan UKS dan daftar "Sedang di UKS". Membaca cloud bila
+/// terhubung, lalu menggabungkan salinan lokal yang belum terkirim.
+#[tauri::command]
+pub async fn desktop_uks_list(
+    state: State<'_, DesktopState>,
+    dari: String,
+    sampai: String,
+    cari: Option<String>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "uks.view")?;
+    uks::list_visits(&state, &dari, &sampai, cari).await
+}
+
+#[tauri::command]
+pub fn desktop_uks_form_data(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
+    require_permission(&state, "uks.record")?;
+    uks::form_data(&state)
+}
+
+#[tauri::command]
+pub fn desktop_uks_open(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "uks.record")?;
+    uks::open_visit(&state, &operator.username, draft)
+}
+
+#[tauri::command]
+pub fn desktop_uks_save(
+    state: State<'_, DesktopState>,
+    id_kunjungan: String,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "uks.record")?;
+    uks::save_visit(&state, &operator.username, &id_kunjungan, draft)
+}
+
+#[tauri::command]
+pub fn desktop_uks_delete(
+    state: State<'_, DesktopState>,
+    id_kunjungan: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "uks.delete")?;
+    uks::delete_visit(&state, &id_kunjungan)
+}
+
+/// Mengambil salinan kunjungan perangkat lain dari cloud sebelum diubah atau
+/// dihapus. Boleh untuk pemegang izin mencatat maupun menghapus.
+#[tauri::command]
+pub async fn desktop_uks_adopt(
+    state: State<'_, DesktopState>,
+    id_kunjungan: String,
+) -> Result<Value, CommandError> {
+    require_any_permission(&state, &["uks.record", "uks.delete"])?;
+    uks::adopt_visit(&state, &id_kunjungan).await
+}
+
+#[tauri::command]
+pub fn desktop_uks_medicines(
+    state: State<'_, DesktopState>,
+    id_kunjungan: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "uks.view")?;
+    uks::visit_medicines(&state, &id_kunjungan)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_loans(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.view")?;
+    inventory::list_loans(&state)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_record_opname(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "inventory.adjust")?;
+    inventory::record_opname(&state, &operator.username, draft)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_cancel_mutation(
+    state: State<'_, DesktopState>,
+    id_mutasi: String,
+    alasan: String,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "inventory.adjust")?;
+    inventory::cancel_mutation(&state, &operator.username, &id_mutasi, &alasan)
+}
+
+#[tauri::command]
+pub fn desktop_inventory_stock_card(
+    state: State<'_, DesktopState>,
+    id_barang: String,
+    tempat: Option<String>,
+    dari: String,
+    sampai: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.view")?;
+    inventory::stock_card(&state, &id_barang, tempat, &dari, &sampai)
 }
 
 #[tauri::command]

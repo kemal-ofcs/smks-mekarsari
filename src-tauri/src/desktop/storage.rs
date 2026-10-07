@@ -239,19 +239,40 @@ fn ensure_wa_notification_kind_values(connection: &Connection) -> Result<(), Str
     let Some(existing) = existing else {
         return Ok(());
     };
-    if existing.contains("'koreksi_admin'") {
+    if existing.contains("'uks'") {
         return Ok(());
     }
 
-    // Pola yang sama dengan `ensure_payroll_calc_type_values`: `CREATE TABLE IF
-    // NOT EXISTS` tidak pernah memperbaiki tabel yang sudah ada, sehingga
-    // menambah nilai pada DDL saja tidak mengubah apa pun di pemasangan yang
-    // sudah berjalan — barisnya ditolak CHECK lama, lalu ditolak lagi saat push
-    // dan mengunci outbox secara permanen.
+    // `CREATE TABLE IF NOT EXISTS` tidak pernah memperbaiki tabel yang sudah
+    // ada, jadi jenis baru (`koreksi_admin`, `import_manual`, lalu `uks` di
+    // v36) hanya sampai ke pemasangan lama lewat bangun ulang ini. Tanpanya
+    // barisnya ditolak CHECK lama, lalu ditolak lagi saat push dan mengunci
+    // outbox selamanya.
     //
-    // Idempoten lewat pemeriksaan teks DDL-nya sendiri, dan tidak ada baris
-    // yang perlu diperbaiki lebih dulu: keempat nilai lama tetap sah.
-    const KOLOM: &str = "id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor, isi_pesan, status, attempt_count, last_error, sent_at, created_at, updated_at";
+    // Yang disalin adalah IRISAN kolom tabel lama dengan daftar target, bukan
+    // daftar tetap: tabel lama bisa belum punya `klaim_oleh`/`klaim_sampai`
+    // (v34), sementara tabel yang sudah punya tidak boleh kehilangan klaimnya.
+    // Versi sebelumnya menyalin 12 kolom tetap dan akan membuang klaim
+    // pengiriman yang sedang berjalan. Semua nilai lama tetap sah di CHECK baru.
+    const TARGET: [&str; 14] = [
+        "id_notifikasi", "dedupe_key", "jenis", "id_siswa", "tujuan_nomor", "isi_pesan",
+        "status", "attempt_count", "last_error", "sent_at", "created_at", "updated_at",
+        "klaim_oleh", "klaim_sampai",
+    ];
+    let mut statement = connection
+        .prepare("PRAGMA table_info(notifikasi_wa);")
+        .map_err(|_| "Kolom notifikasi_wa tidak dapat dibaca.".to_string())?;
+    let ada: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| "Kolom notifikasi_wa tidak dapat dibaca.".to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|_| "Kolom notifikasi_wa tidak dapat dibaca.".to_string())?;
+    let kolom = TARGET
+        .iter()
+        .filter(|nama| ada.iter().any(|kolom| kolom == *nama))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let script = format!(
         "BEGIN;
@@ -259,7 +280,7 @@ fn ensure_wa_notification_kind_values(connection: &Connection) -> Result<(), Str
         CREATE TABLE notifikasi_wa__rebuild (
           id_notifikasi TEXT PRIMARY KEY,
           dedupe_key TEXT NOT NULL,
-          jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+          jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual', 'uks')),
           id_siswa TEXT,
           tujuan_nomor TEXT NOT NULL,
           isi_pesan TEXT NOT NULL,
@@ -268,10 +289,12 @@ fn ensure_wa_notification_kind_values(connection: &Connection) -> Result<(), Str
           last_error TEXT,
           sent_at TEXT,
           created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+          updated_at TEXT NOT NULL,
+          klaim_oleh TEXT,
+          klaim_sampai TEXT
         );
-        INSERT INTO notifikasi_wa__rebuild ({KOLOM})
-          SELECT {KOLOM} FROM notifikasi_wa;
+        INSERT INTO notifikasi_wa__rebuild ({kolom})
+          SELECT {kolom} FROM notifikasi_wa;
         DROP TABLE notifikasi_wa;
         ALTER TABLE notifikasi_wa__rebuild RENAME TO notifikasi_wa;
         CREATE INDEX IF NOT EXISTS idx_local_notifikasi_wa_status ON notifikasi_wa(status, created_at);
@@ -639,6 +662,96 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         ON hari_libur_whitelist(scope_type, scope_value, status_aktif);
       CREATE INDEX IF NOT EXISTS idx_local_hari_libur_whitelist_tanggal
         ON hari_libur_whitelist(tanggal_libur, status_aktif);
+      -- Inventaris (v35). DDL ketiga lapis WAJIB identik: `turso.rs` dan
+      -- `db-migrations.ts`. Tidak ada kolom stok — stok dihitung dari mutasi
+      -- lewat view `inventory_saldo`, karena kolom stok yang ikut sync ditimpa
+      -- siapa terakhir menang saat dua perangkat offline.
+      CREATE TABLE IF NOT EXISTS inventory_barang (
+        id_barang TEXT PRIMARY KEY,
+        kode_barang TEXT NOT NULL,
+        nama_barang TEXT NOT NULL,
+        kategori TEXT,
+        tipe TEXT NOT NULL CHECK (tipe IN ('Aset', 'Habis Pakai')),
+        satuan TEXT NOT NULL,
+        bisa_expired INTEGER NOT NULL DEFAULT 0 CHECK (bisa_expired IN (0, 1)),
+        stok_minimum INTEGER NOT NULL DEFAULT 0 CHECK (stok_minimum >= 0),
+        tempat_utama TEXT,
+        catatan TEXT,
+        status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      -- Append-only. Pembatalan adalah baris kebalikan berid 'batal-' || id_ref.
+      CREATE TABLE IF NOT EXISTS inventory_mutasi (
+        id_mutasi TEXT PRIMARY KEY,
+        id_barang TEXT NOT NULL,
+        jenis TEXT NOT NULL CHECK (jenis IN ('Masuk', 'Keluar', 'Pindah')),
+        alasan TEXT NOT NULL CHECK (alasan IN (
+          'Saldo Awal', 'Pengadaan', 'Hibah', 'Pengembalian',
+          'Pemakaian', 'Peminjaman', 'Rusak/Afkir', 'Hilang', 'Kedaluwarsa',
+          'Distribusi', 'Perubahan Kondisi',
+          'Selisih Opname', 'Pembatalan')),
+        tanggal TEXT NOT NULL,
+        jumlah INTEGER NOT NULL CHECK (jumlah > 0),
+        tempat_asal TEXT,
+        kondisi_asal TEXT CHECK (kondisi_asal IN ('Baik', 'Rusak Ringan', 'Rusak Berat')),
+        tempat_tujuan TEXT,
+        kondisi_tujuan TEXT CHECK (kondisi_tujuan IN ('Baik', 'Rusak Ringan', 'Rusak Berat')),
+        id_batch TEXT,
+        tanggal_expired TEXT,
+        id_ref TEXT,
+        penerima_tipe TEXT CHECK (penerima_tipe IN ('Personil', 'Rombel', 'Unit', 'Umum')),
+        penerima_id TEXT,
+        penerima_nama TEXT,
+        keperluan TEXT,
+        sumber_dana TEXT,
+        nomor_dokumen TEXT,
+        harga_satuan INTEGER CHECK (harga_satuan IS NULL OR harga_satuan >= 0),
+        catatan TEXT,
+        dicatat_oleh TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_barang_tanggal
+        ON inventory_mutasi(id_barang, tanggal);
+      CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_batch ON inventory_mutasi(id_batch);
+      CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_ref ON inventory_mutasi(id_ref);
+      -- Satu-satunya rumus stok. `CREATE VIEW IF NOT EXISTS` tidak pernah
+      -- memperbarui view lama: mengubah rumusnya berarti DROP VIEW lalu buat
+      -- ulang, di ketiga lapis sekaligus.
+      CREATE VIEW IF NOT EXISTS inventory_saldo AS
+        SELECT id_barang, MIN(tempat) AS tempat, kondisi, id_batch, SUM(delta) AS saldo
+        FROM (
+          SELECT id_barang, tempat_tujuan AS tempat, kondisi_tujuan AS kondisi, id_batch, jumlah AS delta
+            FROM inventory_mutasi WHERE tempat_tujuan IS NOT NULL
+          UNION ALL
+          SELECT id_barang, tempat_asal, kondisi_asal, id_batch, -jumlah
+            FROM inventory_mutasi WHERE tempat_asal IS NOT NULL
+        )
+        GROUP BY id_barang, LOWER(tempat), kondisi, id_batch;
+      -- Buku Kunjungan UKS (v36). SENGAJA di luar SNAPSHOT_TABLES, pola
+      -- `absensi_foto`: ditulis lokal, didorong ke cloud lewat outbox, tidak
+      -- pernah ditarik ke perangkat lain. Isinya data kesehatan anak, jadi
+      -- tidak boleh tersalin ke terminal pemindai di lobi. DDL WAJIB identik
+      -- dengan `turso.rs` dan `db-migrations.ts`.
+      CREATE TABLE IF NOT EXISTS uks_kunjungan (
+        id_kunjungan TEXT PRIMARY KEY,
+        id_personil TEXT NOT NULL,
+        nama_personil TEXT NOT NULL,
+        kelas TEXT,
+        tanggal TEXT NOT NULL,
+        jam_masuk TEXT NOT NULL,
+        jam_keluar TEXT,
+        keluhan TEXT NOT NULL,
+        tindakan TEXT,
+        tindak_lanjut TEXT,
+        catatan TEXT,
+        dicatat_oleh TEXT NOT NULL,
+        ditutup_oleh TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_uks_kunjungan_tanggal ON uks_kunjungan(tanggal);
+      CREATE INDEX IF NOT EXISTS idx_uks_kunjungan_personil ON uks_kunjungan(id_personil, tanggal);
       -- Unit satuan pendidikan (TK, SD, SMP, ...), dikelola user di halaman
       -- Akademik. PK TEXT dibuat klien — bukan AUTOINCREMENT, yang akan
       -- menunjuk unit berbeda di tiap perangkat begitu tersinkronisasi.
@@ -1154,7 +1267,7 @@ pub fn initialize(path: &Path) -> Result<(), String> {
       CREATE TABLE IF NOT EXISTS notifikasi_wa (
         id_notifikasi TEXT PRIMARY KEY,
         dedupe_key TEXT NOT NULL,
-        jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+        jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual', 'uks')),
         id_siswa TEXT,
         tujuan_nomor TEXT NOT NULL,
         isi_pesan TEXT NOT NULL,
@@ -1601,6 +1714,10 @@ pub(crate) const CLOUD_MIRRORED_TABLES: &[&str] = &[
     "tbl_shift",
     "tbl_hari_libur",
     "hari_libur_whitelist",
+    "inventory_barang",
+    "inventory_mutasi",
+    // Di luar snapshot, tetapi milik database asalnya seperti `absensi_foto`.
+    "uks_kunjungan",
     "company_profile",
     "payroll_audit_logs",
     "payroll_items",
@@ -2096,6 +2213,59 @@ mod tests {
         );
         assert!(!credentials.join("operator-lama.stronghold").is_file());
         assert!(credentials.join("turso_config.vault").is_file());
+    }
+
+    /// Bangun ulang `notifikasi_wa` untuk jenis `uks` (v36) WAJIB menyimpan
+    /// klaim pengiriman yang sedang berjalan, dan tetap jalan pada tabel lama
+    /// yang belum punya kolom klaim. Versi sebelumnya menyalin 12 kolom tetap,
+    /// sehingga klaim terbuang dan pesan yang sama bisa terkirim dua kali.
+    #[test]
+    fn notifikasi_wa_rebuild_keeps_claims_and_accepts_uks() {
+        let lama_check = "jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual'))";
+        for punya_klaim in [true, false] {
+            let connection = rusqlite::Connection::open_in_memory().expect("database memori");
+            let klaim_ddl = if punya_klaim { ", klaim_oleh TEXT, klaim_sampai TEXT" } else { "" };
+            connection
+                .execute_batch(&format!(
+                    "CREATE TABLE notifikasi_wa (
+                        id_notifikasi TEXT PRIMARY KEY, dedupe_key TEXT NOT NULL, {lama_check},
+                        id_siswa TEXT, tujuan_nomor TEXT NOT NULL, isi_pesan TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'Menunggu', attempt_count INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT, sent_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL{klaim_ddl}
+                    );
+                    INSERT INTO notifikasi_wa (id_notifikasi, dedupe_key, jenis, tujuan_nomor, isi_pesan, created_at, updated_at)
+                    VALUES ('wa-1', 'bolos:1', 'bolos', '+6281234567890', 'Pesan lama', '2026-10-01', '2026-10-01');"
+                ))
+                .expect("tabel lama");
+            if punya_klaim {
+                connection
+                    .execute(
+                        "UPDATE notifikasi_wa SET klaim_oleh = 'pengirim-a', klaim_sampai = '2026-10-07 10:05:00';",
+                        [],
+                    )
+                    .expect("klaim");
+            }
+
+            super::ensure_wa_notification_kind_values(&connection).expect("bangun ulang");
+            super::ensure_wa_notification_kind_values(&connection).expect("idempoten");
+
+            let (isi, klaim): (String, Option<String>) = connection
+                .query_row(
+                    "SELECT isi_pesan, klaim_oleh FROM notifikasi_wa WHERE id_notifikasi = 'wa-1';",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("baris lama tetap ada");
+            assert_eq!(isi, "Pesan lama");
+            assert_eq!(klaim.as_deref(), punya_klaim.then_some("pengirim-a"));
+            connection
+                .execute(
+                    "INSERT INTO notifikasi_wa (id_notifikasi, dedupe_key, jenis, tujuan_nomor, isi_pesan, created_at, updated_at)
+                     VALUES ('wa-2', 'uks:1', 'uks', '+6281234567890', 'Pesan UKS', '2026-10-07', '2026-10-07');",
+                    [],
+                )
+                .expect("jenis uks diterima CHECK baru");
+        }
     }
 
     /// Setiap tabel lokal wajib diputuskan nasibnya saat pindah database:

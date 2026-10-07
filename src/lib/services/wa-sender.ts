@@ -244,6 +244,7 @@ export async function drainWaQueue(
         ambang_alfa: config.ambangAlfaEnabled,
         koreksi_admin: config.koreksiAdminEnabled,
         import_manual: config.importManualEnabled,
+        uks: config.uksEnabled,
       },
       seenDedupeKeys,
       String(row.dedupe_key),

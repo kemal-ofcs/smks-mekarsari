@@ -119,6 +119,10 @@ describe("dynamic RBAC migration", () => {
       33,
       // v34 — klaim pengiriman WhatsApp antar-pengirim.
       34,
+      // v35 — inventaris: `inventory_barang`, `inventory_mutasi`, view saldo.
+      35,
+      // v36 — Buku Kunjungan UKS (`uks_kunjungan`, di luar snapshot).
+      36,
     ]);
 
     const sessionColumns = await client.execute(

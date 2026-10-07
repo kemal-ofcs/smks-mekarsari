@@ -250,6 +250,7 @@ export default function NotifikasiWaPage() {
       ambangAlfaEnabled: config.ambangAlfaEnabled,
       koreksiAdminEnabled: config.koreksiAdminEnabled,
       importManualEnabled: config.importManualEnabled,
+      uksEnabled: config.uksEnabled,
       // Ikut dibawa walau formulir ini tidak menampilkannya: draft yang
       // menghilangkannya menyimpan ulang ambang alfa ke bawaan 3/30.
       ambangAlfaLimit: config.ambangAlfaLimit,
@@ -357,6 +358,12 @@ export default function NotifikasiWaPage() {
         return (
           <span className="inline-flex items-center rounded-md bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-400 ring-1 ring-inset ring-violet-500/20">
             Import Manual
+          </span>
+        );
+      case "uks":
+        return (
+          <span className="inline-flex items-center rounded-md bg-teal-500/10 px-2 py-0.5 text-xs font-semibold text-teal-400 ring-1 ring-inset ring-teal-500/20">
+            Kunjungan UKS
           </span>
         );
     }
@@ -561,6 +568,7 @@ export default function NotifikasiWaPage() {
                 <option value="ambang_alfa">Peringatan Ambang Alfa</option>
                 <option value="koreksi_admin">Koreksi Admin</option>
                 <option value="import_manual">Import Manual</option>
+                <option value="uks">Kunjungan UKS</option>
               </select>
             </div>
 

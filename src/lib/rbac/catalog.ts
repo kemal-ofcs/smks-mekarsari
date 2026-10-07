@@ -316,6 +316,41 @@ export const PERMISSION_CATALOG = [
     name: "Hapus Konten & Berita CMS",
     group: "Situs Publik",
   },
+  {
+    key: "inventory.view",
+    name: "Lihat Inventaris",
+    group: "Sarpras",
+  },
+  {
+    key: "inventory.manage",
+    name: "Kelola Master Barang",
+    group: "Sarpras",
+  },
+  {
+    key: "inventory.record",
+    name: "Catat Barang Masuk, Keluar & Pindah",
+    group: "Sarpras",
+  },
+  {
+    key: "inventory.adjust",
+    name: "Koreksi & Batalkan Mutasi Inventaris",
+    group: "Sarpras",
+  },
+  {
+    key: "uks.view",
+    name: "Lihat Buku Kunjungan UKS",
+    group: "UKS",
+  },
+  {
+    key: "uks.record",
+    name: "Catat Kunjungan UKS & Obat",
+    group: "UKS",
+  },
+  {
+    key: "uks.delete",
+    name: "Hapus Kunjungan UKS",
+    group: "UKS",
+  },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_CATALOG)[number]["key"];
@@ -385,6 +420,12 @@ export const SENSITIVE_MUTATION_PERMISSIONS = new Set<PermissionKey>([
   "students.reset_wali_password",
   // Menghapus berita atau artikel dari CMS situs publik.
   "content.delete",
+  // Pembatalan, opname, dan penghapusan stok mengurangi stok tanpa barangnya
+  // diterima siapa pun — cara paling mudah menutupi barang yang diambil orang.
+  "inventory.adjust",
+  // Menghapus kunjungan UKS menghilangkan satu-satunya catatan siapa yang
+  // ditangani, kapan, dan obat apa yang diberikan untuknya.
+  "uks.delete",
 ]);
 
 export const SYSTEM_ROLE_KEYS = [
@@ -426,6 +467,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     // halaman yang akan mereka pakai begitu modulnya hidup.
     "grades.view",
     "content.view",
+    "inventory.view",
   ],
   scanner: ["home.view", "scanner.use", "sync.view"],
 };

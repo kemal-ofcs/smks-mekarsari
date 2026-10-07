@@ -39,6 +39,8 @@ const CMS_LANDING_PAGE_MIGRATION_VERSION = 31;
 const PERSONNEL_PHOTO_MIGRATION_VERSION = 32;
 const EMPLOYEE_IDENTITY_HISTORY_MIGRATION_VERSION = 33;
 const WA_SEND_CLAIM_MIGRATION_VERSION = 34;
+const INVENTORY_MIGRATION_VERSION = 35;
+const UKS_MIGRATION_VERSION = 36;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -503,6 +505,11 @@ export async function runDatabaseMigrations(client: Client) {
       "import_manual_enabled",
       "ALTER TABLE app_wa_config ADD COLUMN import_manual_enabled INTEGER NOT NULL DEFAULT 0;",
     ],
+    [
+      "app_wa_config",
+      "uks_enabled",
+      "ALTER TABLE app_wa_config ADD COLUMN uks_enabled INTEGER NOT NULL DEFAULT 0;",
+    ],
   ] as const) {
     if (
       (await hasTable(client, table)) &&
@@ -641,16 +648,36 @@ export async function runDatabaseMigrations(client: Client) {
     sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifikasi_wa';",
   });
   const ddlNotif = String(notifDdl.rows[0]?.sql ?? "");
-  if (ddlNotif && !ddlNotif.includes("'koreksi_admin'")) {
-    const kolomNotif =
-      "id_notifikasi, dedupe_key, jenis, id_siswa, tujuan_nomor, isi_pesan, status, attempt_count, last_error, sent_at, created_at, updated_at";
+  if (ddlNotif && !ddlNotif.includes("'uks'")) {
+    // Irisan kolom, bukan daftar tetap (cermin `storage.rs`/`turso.rs`): tabel
+    // lama bisa belum punya `klaim_oleh`/`klaim_sampai`, dan tabel yang sudah
+    // punya tidak boleh kehilangan klaim pengiriman yang sedang berjalan.
+    const target = [
+      "id_notifikasi",
+      "dedupe_key",
+      "jenis",
+      "id_siswa",
+      "tujuan_nomor",
+      "isi_pesan",
+      "status",
+      "attempt_count",
+      "last_error",
+      "sent_at",
+      "created_at",
+      "updated_at",
+      "klaim_oleh",
+      "klaim_sampai",
+    ];
+    const info = await client.execute("PRAGMA table_info(notifikasi_wa);");
+    const ada = new Set(info.rows.map((row) => String(row.name)));
+    const kolomNotif = target.filter((nama) => ada.has(nama)).join(", ");
     await client.batch(
       [
         "DROP TABLE IF EXISTS notifikasi_wa__rebuild;",
         `CREATE TABLE notifikasi_wa__rebuild (
           id_notifikasi TEXT PRIMARY KEY,
           dedupe_key TEXT NOT NULL,
-          jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+          jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual', 'uks')),
           id_siswa TEXT,
           tujuan_nomor TEXT NOT NULL,
           isi_pesan TEXT NOT NULL,
@@ -659,7 +686,9 @@ export async function runDatabaseMigrations(client: Client) {
           last_error TEXT,
           sent_at TEXT,
           created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+          updated_at TEXT NOT NULL,
+          klaim_oleh TEXT,
+          klaim_sampai TEXT
         );`,
         `INSERT INTO notifikasi_wa__rebuild (${kolomNotif}) SELECT ${kolomNotif} FROM notifikasi_wa;`,
         "DROP TABLE notifikasi_wa;",
@@ -1409,6 +1438,121 @@ export async function runDatabaseMigrations(client: Client) {
     args: [WA_SEND_CLAIM_MIGRATION_VERSION, now],
   });
 
+  // v35 — inventaris. DDL WAJIB identik dengan `storage.rs` dan `turso.rs`.
+  // Tidak ada kolom stok: stok dihitung dari mutasi lewat view
+  // `inventory_saldo`, karena kolom stok yang ikut sync ditimpa siapa terakhir
+  // menang saat dua perangkat offline.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_barang (
+      id_barang TEXT PRIMARY KEY,
+      kode_barang TEXT NOT NULL,
+      nama_barang TEXT NOT NULL,
+      kategori TEXT,
+      tipe TEXT NOT NULL CHECK (tipe IN ('Aset', 'Habis Pakai')),
+      satuan TEXT NOT NULL,
+      bisa_expired INTEGER NOT NULL DEFAULT 0 CHECK (bisa_expired IN (0, 1)),
+      stok_minimum INTEGER NOT NULL DEFAULT 0 CHECK (stok_minimum >= 0),
+      tempat_utama TEXT,
+      catatan TEXT,
+      status_aktif INTEGER NOT NULL DEFAULT 1 CHECK (status_aktif IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_mutasi (
+      id_mutasi TEXT PRIMARY KEY,
+      id_barang TEXT NOT NULL,
+      jenis TEXT NOT NULL CHECK (jenis IN ('Masuk', 'Keluar', 'Pindah')),
+      alasan TEXT NOT NULL CHECK (alasan IN (
+        'Saldo Awal', 'Pengadaan', 'Hibah', 'Pengembalian',
+        'Pemakaian', 'Peminjaman', 'Rusak/Afkir', 'Hilang', 'Kedaluwarsa',
+        'Distribusi', 'Perubahan Kondisi',
+        'Selisih Opname', 'Pembatalan')),
+      tanggal TEXT NOT NULL,
+      jumlah INTEGER NOT NULL CHECK (jumlah > 0),
+      tempat_asal TEXT,
+      kondisi_asal TEXT CHECK (kondisi_asal IN ('Baik', 'Rusak Ringan', 'Rusak Berat')),
+      tempat_tujuan TEXT,
+      kondisi_tujuan TEXT CHECK (kondisi_tujuan IN ('Baik', 'Rusak Ringan', 'Rusak Berat')),
+      id_batch TEXT,
+      tanggal_expired TEXT,
+      id_ref TEXT,
+      penerima_tipe TEXT CHECK (penerima_tipe IN ('Personil', 'Rombel', 'Unit', 'Umum')),
+      penerima_id TEXT,
+      penerima_nama TEXT,
+      keperluan TEXT,
+      sumber_dana TEXT,
+      nomor_dokumen TEXT,
+      harga_satuan INTEGER CHECK (harga_satuan IS NULL OR harga_satuan >= 0),
+      catatan TEXT,
+      dicatat_oleh TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_barang_tanggal ON inventory_mutasi(id_barang, tanggal);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_batch ON inventory_mutasi(id_batch);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_mutasi_ref ON inventory_mutasi(id_ref);",
+  );
+  // Satu-satunya rumus stok. `CREATE VIEW IF NOT EXISTS` tidak memperbarui
+  // view lama: mengubah rumusnya berarti DROP VIEW di ketiga lapis sekaligus.
+  await client.execute(`
+    CREATE VIEW IF NOT EXISTS inventory_saldo AS
+      SELECT id_barang, MIN(tempat) AS tempat, kondisi, id_batch, SUM(delta) AS saldo
+      FROM (
+        SELECT id_barang, tempat_tujuan AS tempat, kondisi_tujuan AS kondisi, id_batch, jumlah AS delta
+          FROM inventory_mutasi WHERE tempat_tujuan IS NOT NULL
+        UNION ALL
+        SELECT id_barang, tempat_asal, kondisi_asal, id_batch, -jumlah
+          FROM inventory_mutasi WHERE tempat_asal IS NOT NULL
+      )
+      GROUP BY id_barang, LOWER(tempat), kondisi, id_batch;
+  `);
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'inventory-foundation', ?);`,
+    args: [INVENTORY_MIGRATION_VERSION, now],
+  });
+
+  // v36 — Buku Kunjungan UKS. Di luar snapshot (pola `absensi_foto`): data
+  // kesehatan anak tidak boleh tersalin ke setiap perangkat. DDL WAJIB identik
+  // dengan `storage.rs` dan `turso.rs`.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS uks_kunjungan (
+      id_kunjungan TEXT PRIMARY KEY,
+      id_personil TEXT NOT NULL,
+      nama_personil TEXT NOT NULL,
+      kelas TEXT,
+      tanggal TEXT NOT NULL,
+      jam_masuk TEXT NOT NULL,
+      jam_keluar TEXT,
+      keluhan TEXT NOT NULL,
+      tindakan TEXT,
+      tindak_lanjut TEXT,
+      catatan TEXT,
+      dicatat_oleh TEXT NOT NULL,
+      ditutup_oleh TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_uks_kunjungan_tanggal ON uks_kunjungan(tanggal);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_uks_kunjungan_personil ON uks_kunjungan(id_personil, tanggal);",
+  );
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'uks-visit-book', ?);`,
+    args: [UKS_MIGRATION_VERSION, now],
+  });
+
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_jurnal_presensi ON jurnal_mengajar(id_presensi_mapel);",
   );
@@ -1429,7 +1573,7 @@ export async function runDatabaseMigrations(client: Client) {
     CREATE TABLE IF NOT EXISTS notifikasi_wa (
       id_notifikasi TEXT PRIMARY KEY,
       dedupe_key TEXT NOT NULL,
-      jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual')),
+      jenis TEXT NOT NULL CHECK (jenis IN ('scan_masuk', 'scan_pulang', 'bolos', 'ambang_alfa', 'koreksi_admin', 'import_manual', 'uks')),
       id_siswa TEXT,
       tujuan_nomor TEXT NOT NULL,
       isi_pesan TEXT NOT NULL,
@@ -1459,6 +1603,7 @@ export async function runDatabaseMigrations(client: Client) {
       ambang_alfa_enabled INTEGER NOT NULL DEFAULT 1,
       koreksi_admin_enabled INTEGER NOT NULL DEFAULT 0,
       import_manual_enabled INTEGER NOT NULL DEFAULT 0,
+      uks_enabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

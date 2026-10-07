@@ -3,6 +3,7 @@ export type WaNotificationJenis =
   | "scan_pulang"
   | "koreksi_admin"
   | "import_manual"
+  | "uks"
   | "bolos"
   | "ambang_alfa";
 
@@ -65,6 +66,7 @@ export interface WaConfig {
   ambangAlfaEnabled: boolean;
   koreksiAdminEnabled: boolean;
   importManualEnabled: boolean;
+  uksEnabled: boolean;
   ambangAlfaLimit?: number;
   ambangAlfaDays?: number;
   /** Runner di aplikasi menguras antrean sendiri. Bawaannya mati. */
@@ -86,6 +88,7 @@ export interface WaConfigDraft {
   ambangAlfaEnabled: boolean;
   koreksiAdminEnabled: boolean;
   importManualEnabled: boolean;
+  uksEnabled: boolean;
   ambangAlfaLimit?: number;
   ambangAlfaDays?: number;
   autoSendEnabled: boolean;
