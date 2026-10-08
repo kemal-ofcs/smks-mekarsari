@@ -9,6 +9,8 @@
 //! Aturan validasi di sini dieja kembar dengan `src/lib/validations/inventory.ts`
 //! dan diuji dengan vektor yang sama di kedua bahasa.
 
+use std::collections::HashSet;
+
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -423,7 +425,7 @@ pub fn validate_barang(draft: &BarangDraft) -> Result<BarangValid, String> {
 
 // ── Mutasi ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MutasiDraft {
     #[serde(default)]
@@ -467,6 +469,12 @@ pub struct MutasiDraft {
     pub harga_satuan: Option<i64>,
     #[serde(default)]
     pub catatan: Option<String>,
+    /// Barang yang dicatat per unit: unit yang dikeluarkan atau dipindah.
+    #[serde(default)]
+    pub unit: Vec<String>,
+    /// Barang Masuk pertama yang memulai pencatatan per unit.
+    #[serde(default)]
+    pub per_unit: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -684,6 +692,12 @@ pub fn build_cancellation(asal: &MutasiAsal) -> Result<MutasiAsal, String> {
     if asal.alasan == "Pembatalan" {
         return Err("Pembatalan tidak bisa dibatalkan lagi.".into());
     }
+    // Distribusi di luar Pindah hanya ditulis oleh `register_units`. Membatalkan
+    // sisi Keluar-nya mengembalikan stok lama sementara unitnya tetap ada,
+    // sehingga barang yang sama terhitung dua kali.
+    if asal.alasan == "Distribusi" && asal.jenis != "Pindah" {
+        return Err("Pendaftaran unit tidak bisa dibatalkan.".into());
+    }
     let jenis = match asal.jenis.as_str() {
         "Masuk" => "Keluar",
         "Keluar" => "Masuk",
@@ -701,6 +715,108 @@ pub fn build_cancellation(asal: &MutasiAsal) -> Result<MutasiAsal, String> {
         kondisi_tujuan: asal.kondisi_asal.clone(),
         id_batch: asal.id_batch.clone(),
     })
+}
+
+// ── Unit (registri aset per unit, v37) ─────────────────────────────────────
+//
+// Satu unit = satu "batch" berjumlah 1: `id_unit` adalah `id_mutasi` baris
+// Masuk pembukanya, persis seperti batch barang ber-expired. Karena itu rumus
+// stok, pemeriksaan batch, pengembalian ke batch asal, dan pembatalan bekerja
+// per unit tanpa perubahan. `inventory_unit` hanya menyimpan identitasnya;
+// tempat dan kondisinya selalu diturunkan dari mutasi.
+
+/// Cermin `MAKS_UNIT_SEKALI`.
+pub const MAKS_UNIT_SEKALI: usize = 200;
+/// Batas `register_units` dalam satu kali tekan.
+pub const MAKS_UNIT_DAFTAR: i64 = 1000;
+
+/// Cermin `formatKodeUnit`: `LAP-0003-02`.
+pub fn format_kode_unit(kode_barang: &str, nomor: u64) -> String {
+    format!("{kode_barang}-{nomor:02}")
+}
+
+pub struct AturanUnit<'a> {
+    pub dilacak: bool,
+    pub per_unit: bool,
+    pub tipe: &'a str,
+    pub bisa_expired: bool,
+    pub jenis: &'a str,
+    pub alasan: &'a str,
+    pub jumlah: i64,
+    pub unit: &'a [String],
+}
+
+/// Cermin `validasiUnit`. Mengembalikan daftar unit yang sudah dirapikan.
+pub fn validate_unit_rules(aturan: &AturanUnit<'_>) -> Result<Vec<String>, String> {
+    if aturan.per_unit
+        && !aturan.dilacak
+        && (aturan.tipe != "Aset"
+            || aturan.bisa_expired
+            || aturan.jenis != "Masuk"
+            || aturan.alasan == "Pengembalian")
+    {
+        return Err(
+            "Pencatatan per unit hanya untuk aset tanpa kedaluwarsa yang dicatat masuk.".into(),
+        );
+    }
+    if !(aturan.dilacak || aturan.per_unit) {
+        if !aturan.unit.is_empty() {
+            return Err("Barang ini tidak dicatat per unit.".into());
+        }
+        return Ok(Vec::new());
+    }
+    if aturan.jenis == "Masuk" {
+        if !aturan.unit.is_empty() {
+            return Err("Unit baru dibuat otomatis saat barang masuk.".into());
+        }
+        if aturan.alasan != "Pengembalian" && aturan.jumlah > MAKS_UNIT_SEKALI as i64 {
+            return Err("Paling banyak 200 unit sekali catat.".into());
+        }
+        return Ok(Vec::new());
+    }
+    let unit: Vec<String> = aturan
+        .unit
+        .iter()
+        .map(|item| item.trim().to_owned())
+        .filter(|item| !item.is_empty())
+        .collect();
+    if unit.is_empty() {
+        return Err("Pilih unit yang dicatat.".into());
+    }
+    if unit.len() > MAKS_UNIT_SEKALI {
+        return Err("Paling banyak 200 unit sekali catat.".into());
+    }
+    if unit.iter().collect::<HashSet<_>>().len() != unit.len() {
+        return Err("Unit yang sama dipilih dua kali.".into());
+    }
+    if unit.len() as i64 != aturan.jumlah {
+        return Err("Jumlah harus sama dengan banyaknya unit yang dipilih.".into());
+    }
+    Ok(unit)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitDraft {
+    #[serde(default)]
+    pub id_unit: String,
+    #[serde(default)]
+    pub nomor_seri: Option<String>,
+    #[serde(default)]
+    pub catatan: Option<String>,
+}
+
+/// Cermin `validasiUnitEdit`: `(nomor_seri, catatan)`.
+pub fn validate_unit_edit(draft: &UnitDraft) -> Result<(Option<String>, Option<String>), String> {
+    let nomor_seri = clean(&draft.nomor_seri);
+    if too_long(&nomor_seri, 60) {
+        return Err("Nomor seri maksimal 60 karakter.".into());
+    }
+    let catatan = clean(&draft.catatan);
+    if too_long(&catatan, 200) {
+        return Err("Catatan unit maksimal 200 karakter.".into());
+    }
+    Ok((nomor_seri, catatan))
 }
 
 // ── I/O ─────────────────────────────────────────────────────────────────────
@@ -925,11 +1041,13 @@ pub fn list_inventory(state: &DesktopState) -> Result<Value, CommandError> {
     let mut posisi_statement = connection
         .prepare(
             "SELECT s.id_barang, s.tempat, s.kondisi, s.id_batch, s.saldo, m.tanggal_expired,
-                    CAST(julianday(m.tanggal_expired) - julianday(date('now', '+7 hours')) AS INTEGER) AS sisa_hari
+                    CAST(julianday(m.tanggal_expired) - julianday(date('now', '+7 hours')) AS INTEGER) AS sisa_hari,
+                    u.kode_unit, u.nomor_seri, u.catatan
              FROM inventory_saldo s
              LEFT JOIN inventory_mutasi m ON m.id_mutasi = s.id_batch
+             LEFT JOIN inventory_unit u ON u.id_unit = s.id_batch
              WHERE s.saldo <> 0
-             ORDER BY s.id_barang, m.tanggal_expired IS NULL, m.tanggal_expired, s.tempat
+             ORDER BY s.id_barang, m.tanggal_expired IS NULL, m.tanggal_expired, u.kode_unit, s.tempat
              -- batas: satu baris per posisi stok (barang × tempat × kondisi × batch) yang saldonya bukan nol
              ;",
         )
@@ -953,6 +1071,9 @@ pub fn list_inventory(state: &DesktopState) -> Result<Value, CommandError> {
                     "tanggal_expired": row.get::<_, Option<String>>(5)?,
                     "sisa_hari": sisa_hari,
                     "status_kedaluwarsa": sisa_hari.map(status_kedaluwarsa),
+                    "kode_unit": row.get::<_, Option<String>>(7)?,
+                    "nomor_seri": row.get::<_, Option<String>>(8)?,
+                    "catatan_unit": row.get::<_, Option<String>>(9)?,
                 }),
                 kondisi,
                 saldo,
@@ -960,6 +1081,15 @@ pub fn list_inventory(state: &DesktopState) -> Result<Value, CommandError> {
         })
         .map_err(|_| CommandError::internal())?
         .collect::<Result<_, _>>()
+        .map_err(|_| CommandError::internal())?;
+
+    let dilacak: HashSet<String> = connection
+        .prepare("SELECT DISTINCT id_barang FROM inventory_unit;")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<_, _>>()
+        })
         .map_err(|_| CommandError::internal())?;
 
     let mut barang_statement = connection
@@ -1005,6 +1135,7 @@ pub fn list_inventory(state: &DesktopState) -> Result<Value, CommandError> {
                 item["stok_baik"] = json!(stok_baik);
                 item["stok_menipis"] = json!(stok_menipis(stok_baik, stok_minimum));
                 item["posisi"] = Value::Array(mine.iter().map(|entry| entry.1.clone()).collect());
+                item["dilacak_unit"] = json!(dilacak.contains(&id_barang));
                 item
             })
         })
@@ -1401,6 +1532,300 @@ pub(crate) fn record_mutation_tx(
     draft: &MutasiDraft,
     id_ref: Option<&str>,
 ) -> Result<String, CommandError> {
+    let id_barang = draft.id_barang.trim().to_owned();
+    let (tipe, bisa_expired): (String, i64) = transaction
+        .query_row(
+            "SELECT tipe, bisa_expired FROM inventory_barang WHERE id_barang = ?;",
+            params![id_barang],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .ok_or_else(|| invalid("Barang tidak ditemukan."))?;
+    let dilacak = barang_dilacak(transaction, &id_barang)?;
+    let unit = validate_unit_rules(&AturanUnit {
+        dilacak,
+        per_unit: draft.per_unit,
+        tipe: &tipe,
+        bisa_expired: bisa_expired == 1,
+        jenis: &draft.jenis,
+        alasan: &draft.alasan,
+        jumlah: draft.jumlah,
+        unit: &draft.unit,
+    })
+    .map_err(invalid)?;
+    // Pengembalian unit membawa batch (= unit) dari peminjamannya sendiri.
+    if !(dilacak || draft.per_unit) || draft.alasan == "Pengembalian" {
+        return record_satu(transaction, client_id, dicatat_oleh, draft, id_ref, None, false);
+    }
+
+    // Beberapa unit dalam satu aksi berbagi satu nomor dokumen supaya berita
+    // acaranya memuat semuanya.
+    let mut satu = draft.clone();
+    satu.jumlah = 1;
+    satu.unit = Vec::new();
+    satu.per_unit = false;
+    if clean(&satu.nomor_dokumen).is_none() && draft.jumlah > 1 {
+        satu.nomor_dokumen = Some(nomor_dokumen_unit(transaction));
+    }
+    let mut pertama: Option<String> = None;
+    if draft.jenis == "Masuk" {
+        for _ in 0..draft.jumlah {
+            let id = record_satu(transaction, client_id, dicatat_oleh, &satu, id_ref, None, true)?;
+            buat_unit(transaction, client_id, &id_barang, &id)?;
+            pertama.get_or_insert(id);
+        }
+    } else {
+        for id_unit in &unit {
+            let milik: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM inventory_unit WHERE id_unit = ? AND id_barang = ?);",
+                    params![id_unit, id_barang],
+                    |row| row.get(0),
+                )
+                .map_err(|_| CommandError::internal())?;
+            if !milik {
+                return Err(invalid("Unit tidak ditemukan."));
+            }
+            let id = record_satu(
+                transaction,
+                client_id,
+                dicatat_oleh,
+                &satu,
+                id_ref,
+                Some(id_unit),
+                false,
+            )?;
+            pertama.get_or_insert(id);
+        }
+    }
+    pertama.ok_or_else(CommandError::internal)
+}
+
+fn barang_dilacak(connection: &Connection, id_barang: &str) -> Result<bool, CommandError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM inventory_unit WHERE id_barang = ?);",
+            params![id_barang],
+            |row| row.get(0),
+        )
+        .map_err(|_| CommandError::internal())
+}
+
+fn nomor_dokumen_unit(connection: &Connection) -> String {
+    let acak: String = new_hex_id("").chars().take(4).collect();
+    format!(
+        "UNT-{}-{}",
+        wib_today(connection).replace('-', ""),
+        acak.to_ascii_uppercase()
+    )
+}
+
+fn unit_json(connection: &Connection, id_unit: &str) -> Result<Option<Value>, CommandError> {
+    connection
+        .query_row(
+            "SELECT id_unit, id_barang, kode_unit, nomor_seri, catatan, created_at, updated_at
+             FROM inventory_unit WHERE id_unit = ?;",
+            params![id_unit],
+            |row| {
+                Ok(json!({
+                    "id_unit": row.get::<_, String>(0)?,
+                    "id_barang": row.get::<_, String>(1)?,
+                    "kode_unit": row.get::<_, String>(2)?,
+                    "nomor_seri": row.get::<_, Option<String>>(3)?,
+                    "catatan": row.get::<_, Option<String>>(4)?,
+                    "created_at": row.get::<_, String>(5)?,
+                    "updated_at": row.get::<_, String>(6)?,
+                }))
+            },
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())
+}
+
+/// Nomor urut dihitung dari unit lokal, jadi dua perangkat offline bisa
+/// menerbitkan kode kembar; sama dengan kode barang, kembarannya tidak ditolak.
+fn buat_unit(
+    transaction: &Transaction<'_>,
+    client_id: &str,
+    id_barang: &str,
+    id_unit: &str,
+) -> Result<(), CommandError> {
+    let (kode_barang, jumlah): (String, i64) = transaction
+        .query_row(
+            "SELECT b.kode_barang, (SELECT COUNT(*) FROM inventory_unit u WHERE u.id_barang = b.id_barang)
+             FROM inventory_barang b WHERE b.id_barang = ?;",
+            params![id_barang],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| CommandError::internal())?;
+    transaction
+        .execute(
+            "INSERT INTO inventory_unit (id_unit, id_barang, kode_unit, created_at, updated_at)
+             VALUES (?, ?, ?, datetime('now'), datetime('now'));",
+            params![id_unit, id_barang, format_kode_unit(&kode_barang, (jumlah + 1) as u64)],
+        )
+        .map_err(|_| CommandError::internal())?;
+    let payload = unit_json(transaction, id_unit)?.ok_or_else(CommandError::internal)?;
+    sync::enqueue(transaction, client_id, "inventory-unit", "save", id_unit, &payload, None)?;
+    Ok(())
+}
+
+fn enqueue_mutasi(
+    transaction: &Transaction<'_>,
+    client_id: &str,
+    id_mutasi: &str,
+) -> Result<(), CommandError> {
+    let payload = mutasi_json(transaction, id_mutasi)?.ok_or_else(CommandError::internal)?;
+    sync::enqueue(
+        transaction,
+        client_id,
+        "inventory-mutation",
+        "create",
+        id_mutasi,
+        &payload,
+        None,
+    )?;
+    Ok(())
+}
+
+/// Memindahkan stok aset yang belum bernomor menjadi unit: satu baris Keluar
+/// per posisi dan satu baris Masuk per unit, keduanya beralasan Distribusi di
+/// tempat dan kondisi yang sama, sehingga jumlahnya tidak berubah. Alasan
+/// baru sengaja tidak dipakai: CHECK `alasan` di perangkat yang belum
+/// diperbarui akan menolak barisnya saat menarik data.
+pub fn register_units(
+    state: &DesktopState,
+    dicatat_oleh: &str,
+    id_barang: &str,
+) -> Result<Value, CommandError> {
+    let client_id = sync::ensure_client_id(state)?;
+    let mut connection = storage::database(&state.data_dir)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| CommandError::internal())?;
+    let id_barang = id_barang.trim();
+    let (tipe, bisa_expired, status_aktif): (String, i64, i64) = transaction
+        .query_row(
+            "SELECT tipe, bisa_expired, status_aktif FROM inventory_barang WHERE id_barang = ?;",
+            params![id_barang],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .ok_or_else(|| invalid("Barang tidak ditemukan."))?;
+    if tipe != "Aset" || bisa_expired == 1 {
+        return Err(invalid(
+            "Hanya aset tanpa kedaluwarsa yang bisa dicatat per unit.",
+        ));
+    }
+    if status_aktif != 1 {
+        return Err(invalid("Barang sudah dinonaktifkan."));
+    }
+    let posisi: Vec<(String, String, i64)> = transaction
+        .prepare(
+            "SELECT tempat, kondisi, saldo FROM inventory_saldo
+             WHERE id_barang = ? AND id_batch IS NULL AND saldo > 0
+             ORDER BY tempat, kondisi;",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map(params![id_barang], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<Result<_, _>>()
+        })
+        .map_err(|_| CommandError::internal())?;
+    let total: i64 = posisi.iter().map(|entry| entry.2).sum();
+    if total == 0 {
+        return Err(invalid("Tidak ada stok yang belum terdaftar sebagai unit."));
+    }
+    if total > MAKS_UNIT_DAFTAR {
+        return Err(invalid(
+            "Stok terlalu banyak untuk didaftarkan sekaligus (maksimal 1000 unit).",
+        ));
+    }
+
+    let tanggal = wib_today(&transaction);
+    let nomor = nomor_dokumen_unit(&transaction);
+    for (tempat, kondisi, saldo) in posisi {
+        let keluar = MutasiValid {
+            jenis: "Keluar".into(),
+            alasan: "Distribusi".into(),
+            tanggal: tanggal.clone(),
+            jumlah: saldo,
+            tempat_asal: Some(tempat.clone()),
+            kondisi_asal: Some(kondisi.clone()),
+            nomor_dokumen: Some(nomor.clone()),
+            catatan: Some("Pendaftaran unit".into()),
+            ..MutasiValid::default()
+        };
+        let id_keluar = new_hex_id("mts-");
+        insert_mutasi(&transaction, &id_keluar, id_barang, &keluar, None, dicatat_oleh)?;
+        enqueue_mutasi(&transaction, &client_id, &id_keluar)?;
+        for _ in 0..saldo {
+            let id_unit = new_hex_id("mts-");
+            let masuk = MutasiValid {
+                jenis: "Masuk".into(),
+                alasan: "Distribusi".into(),
+                tanggal: tanggal.clone(),
+                jumlah: 1,
+                tempat_tujuan: Some(tempat.clone()),
+                kondisi_tujuan: Some(kondisi.clone()),
+                id_batch: Some(id_unit.clone()),
+                nomor_dokumen: Some(nomor.clone()),
+                catatan: Some("Pendaftaran unit".into()),
+                ..MutasiValid::default()
+            };
+            insert_mutasi(&transaction, &id_unit, id_barang, &masuk, None, dicatat_oleh)?;
+            enqueue_mutasi(&transaction, &client_id, &id_unit)?;
+            buat_unit(&transaction, &client_id, id_barang, &id_unit)?;
+        }
+    }
+    transaction.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true, "jumlah": total, "nomor_dokumen": nomor }))
+}
+
+/// Menyunting nomor seri dan catatan sebuah unit. Kode unit tidak bisa diubah:
+/// ia tercetak di label yang sudah ditempel.
+pub fn save_unit(state: &DesktopState, draft: Value) -> Result<Value, CommandError> {
+    let draft: UnitDraft =
+        serde_json::from_value(draft).map_err(|_| invalid("Data unit tidak valid."))?;
+    let (nomor_seri, catatan) = validate_unit_edit(&draft).map_err(invalid)?;
+    let client_id = sync::ensure_client_id(state)?;
+    let mut connection = storage::database(&state.data_dir)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| CommandError::internal())?;
+    let id_unit = draft.id_unit.trim();
+    let diubah = transaction
+        .execute(
+            "UPDATE inventory_unit SET nomor_seri = ?, catatan = ?, updated_at = datetime('now')
+             WHERE id_unit = ?;",
+            params![nomor_seri, catatan, id_unit],
+        )
+        .map_err(|_| CommandError::internal())?;
+    if diubah == 0 {
+        return Err(invalid("Unit tidak ditemukan."));
+    }
+    let payload = unit_json(&transaction, id_unit)?.ok_or_else(CommandError::internal)?;
+    sync::enqueue(&transaction, &client_id, "inventory-unit", "save", id_unit, &payload, None)?;
+    transaction.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true }))
+}
+
+/// Inti satu baris mutasi. `unit` menimpa batch dengan unit yang dipilih;
+/// `jadikan_batch` membuat baris Masuk menjadi batch/unit-nya sendiri.
+#[allow(clippy::too_many_arguments)]
+fn record_satu(
+    transaction: &Transaction<'_>,
+    client_id: &str,
+    dicatat_oleh: &str,
+    draft: &MutasiDraft,
+    id_ref: Option<&str>,
+    unit: Option<&str>,
+    jadikan_batch: bool,
+) -> Result<String, CommandError> {
     let (tipe, satuan, bisa_expired, status_aktif): (String, String, i64, i64) = transaction
         .query_row(
             "SELECT tipe, satuan, bisa_expired, status_aktif FROM inventory_barang WHERE id_barang = ?;",
@@ -1418,6 +1843,9 @@ pub(crate) fn record_mutation_tx(
         bisa_expired: bisa_expired == 1,
     };
     let mut valid = validate_mutation(draft, barang, &hari_ini).map_err(invalid)?;
+    if let Some(unit) = unit {
+        valid.id_batch = Some(unit.to_owned());
+    }
     if let Some(ref_luar) = id_ref {
         valid.id_ref = Some(ref_luar.to_owned());
     }
@@ -1507,7 +1935,7 @@ pub(crate) fn record_mutation_tx(
     }
 
     let id_mutasi = new_hex_id("mts-");
-    if valid.jenis == "Masuk" && barang.bisa_expired && valid.id_batch.is_none() {
+    if valid.jenis == "Masuk" && (barang.bisa_expired || jadikan_batch) && valid.id_batch.is_none() {
         // Setiap barang masuk ber-expired menjadi batch-nya sendiri, sehingga
         // rumus saldo tidak butuh cabang khusus untuk baris pembuka batch.
         // Pengembalian sudah membawa batch asal dari peminjamannya.
@@ -1861,6 +2289,26 @@ pub fn record_opname(
                 return Err(invalid(format!("Batch {nama} tidak ditemukan.")));
             }
             Some(batch)
+        } else if let Some(unit) = baris.id_batch.clone() {
+            // Barang per unit: tiap unit adalah batch-nya sendiri. Membuang
+            // batch di sini membandingkan unit dengan stok tanpa nomor (0),
+            // sehingga setiap unit tercatat sebagai Selisih Opname +1.
+            let milik: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM inventory_unit WHERE id_unit = ? AND id_barang = ?);",
+                    params![unit, baris.id_barang],
+                    |row| row.get(0),
+                )
+                .map_err(|_| CommandError::internal())?;
+            if !milik {
+                return Err(invalid(format!("Unit {nama} tidak ditemukan.")));
+            }
+            if baris.fisik > 1 {
+                return Err(invalid(format!(
+                    "Satu unit {nama} hanya bisa dihitung 0 atau 1."
+                )));
+            }
+            Some(unit)
         } else {
             None
         };
@@ -2383,6 +2831,36 @@ pub fn cloud_mutation_values(row: &Value, entity_key: &str) -> Option<Vec<Value>
         json!(payload_text(row, "created_at")),
     ])
 }
+
+/// Nilai kolom `inventory_unit` dari payload event. Hanya identitas unit;
+/// posisinya diturunkan dari mutasi, jadi siapa terakhir menang di sini hanya
+/// menyangkut nomor seri dan catatan.
+pub fn cloud_unit_values(row: &Value, entity_key: &str) -> Option<Vec<Value>> {
+    let id = payload_text(row, "id_unit").unwrap_or_else(|| entity_key.trim().to_owned());
+    let id_barang = payload_text(row, "id_barang")?;
+    let kode_unit = payload_text(row, "kode_unit")?;
+    if id.is_empty() {
+        return None;
+    }
+    Some(vec![
+        json!(id),
+        json!(id_barang),
+        json!(kode_unit),
+        json!(payload_text(row, "nomor_seri")),
+        json!(payload_text(row, "catatan")),
+        json!(payload_text(row, "created_at")),
+        json!(payload_text(row, "updated_at")),
+    ])
+}
+
+pub const CLOUD_UPSERT_UNIT_SQL: &str = "INSERT INTO inventory_unit (
+        id_unit, id_barang, kode_unit, nomor_seri, catatan, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))
+    ON CONFLICT(id_unit) DO UPDATE SET
+        kode_unit = excluded.kode_unit,
+        nomor_seri = excluded.nomor_seri,
+        catatan = excluded.catatan,
+        updated_at = excluded.updated_at;";
 
 /// Mutasi tidak pernah diubah: event yang terkirim dua kali tidak berefek.
 pub const CLOUD_INSERT_MUTATION_SQL: &str = "INSERT INTO inventory_mutasi (
@@ -3318,6 +3796,339 @@ mod tests {
                 ],
             )
             .unwrap();
+    }
+
+    // Vektor kembar dengan `validasiUnit` / `validasiUnitEdit` di
+    // `validations/inventory.test.ts`.
+    #[test]
+    fn unit_rule_vectors() {
+        let units = |list: &[&str]| list.iter().map(|u| (*u).to_owned()).collect::<Vec<_>>();
+        let cek = |dilacak: bool, per_unit: bool, tipe: &str, expired: bool, jenis: &str, alasan: &str, jumlah: i64, unit: Vec<String>| {
+            validate_unit_rules(&AturanUnit {
+                dilacak,
+                per_unit,
+                tipe,
+                bisa_expired: expired,
+                jenis,
+                alasan,
+                jumlah,
+                unit: &unit,
+            })
+        };
+        assert_eq!(cek(false, false, "Aset", false, "Keluar", "Pemakaian", 1, vec![]), Ok(vec![]));
+        assert_eq!(
+            cek(false, false, "Aset", false, "Keluar", "Pemakaian", 1, units(&["u1"])),
+            Err("Barang ini tidak dicatat per unit.".into())
+        );
+        assert_eq!(
+            cek(false, true, "Habis Pakai", false, "Masuk", "Pengadaan", 1, vec![]),
+            Err("Pencatatan per unit hanya untuk aset tanpa kedaluwarsa yang dicatat masuk.".into())
+        );
+        assert_eq!(
+            cek(false, true, "Aset", true, "Masuk", "Pengadaan", 1, vec![]),
+            Err("Pencatatan per unit hanya untuk aset tanpa kedaluwarsa yang dicatat masuk.".into())
+        );
+        assert_eq!(
+            cek(false, true, "Aset", false, "Keluar", "Pemakaian", 1, vec![]),
+            Err("Pencatatan per unit hanya untuk aset tanpa kedaluwarsa yang dicatat masuk.".into())
+        );
+        assert_eq!(cek(false, true, "Aset", false, "Masuk", "Pengadaan", 3, vec![]), Ok(vec![]));
+        assert_eq!(
+            cek(true, false, "Aset", false, "Masuk", "Pengadaan", 201, vec![]),
+            Err("Paling banyak 200 unit sekali catat.".into())
+        );
+        assert_eq!(
+            cek(true, false, "Aset", false, "Masuk", "Pengadaan", 1, units(&["u1"])),
+            Err("Unit baru dibuat otomatis saat barang masuk.".into())
+        );
+        assert_eq!(cek(true, false, "Aset", false, "Masuk", "Pengembalian", 1, vec![]), Ok(vec![]));
+        assert_eq!(
+            cek(true, false, "Aset", false, "Keluar", "Peminjaman", 1, vec![]),
+            Err("Pilih unit yang dicatat.".into())
+        );
+        assert_eq!(
+            cek(true, false, "Aset", false, "Pindah", "Distribusi", 2, units(&["u1", " u1 "])),
+            Err("Unit yang sama dipilih dua kali.".into())
+        );
+        assert_eq!(
+            cek(true, false, "Aset", false, "Keluar", "Hilang", 3, units(&["u1", "u2"])),
+            Err("Jumlah harus sama dengan banyaknya unit yang dipilih.".into())
+        );
+        assert_eq!(
+            cek(true, false, "Aset", false, "Keluar", "Hilang", 2, units(&[" u1", "u2 ", ""])),
+            Ok(units(&["u1", "u2"]))
+        );
+
+        assert_eq!(format_kode_unit("LAP-0003", 2), "LAP-0003-02");
+        assert_eq!(format_kode_unit("LAP-0003", 120), "LAP-0003-120");
+
+        let edit = |seri: Option<&str>, catatan: Option<&str>| {
+            validate_unit_edit(&UnitDraft {
+                id_unit: "u1".into(),
+                nomor_seri: seri.map(str::to_owned),
+                catatan: catatan.map(str::to_owned),
+            })
+        };
+        assert_eq!(edit(Some("  SN-01 "), Some(" ")), Ok((Some("SN-01".into()), None)));
+        assert_eq!(edit(Some(&"x".repeat(61)), None), Err("Nomor seri maksimal 60 karakter.".into()));
+        assert_eq!(edit(None, Some(&"x".repeat(201))), Err("Catatan unit maksimal 200 karakter.".into()));
+    }
+
+    #[test]
+    fn registration_rows_cannot_be_cancelled() {
+        let asal = |jenis: &str| MutasiAsal {
+            id_mutasi: "m1".into(),
+            jenis: jenis.into(),
+            alasan: "Distribusi".into(),
+            jumlah: 1,
+            ..MutasiAsal::default()
+        };
+        assert_eq!(
+            build_cancellation(&asal("Keluar")),
+            Err("Pendaftaran unit tidak bisa dibatalkan.".into())
+        );
+        assert_eq!(
+            build_cancellation(&asal("Masuk")),
+            Err("Pendaftaran unit tidak bisa dibatalkan.".into())
+        );
+        assert!(build_cancellation(&asal("Pindah")).is_ok());
+    }
+
+    fn unit_barang(state: &DesktopState, id_barang: &str) -> Vec<(String, String, String, i64)> {
+        let list = list_inventory(state).expect("daftar");
+        let item = list["barang"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id_barang"] == id_barang)
+            .unwrap()
+            .clone();
+        item["posisi"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|posisi| !posisi["kode_unit"].is_null())
+            .map(|posisi| {
+                (
+                    posisi["id_batch"].as_str().unwrap().to_owned(),
+                    posisi["kode_unit"].as_str().unwrap().to_owned(),
+                    posisi["tempat"].as_str().unwrap().to_owned(),
+                    posisi["saldo"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn per_unit_entry_creates_units_and_moves_them_one_by_one() {
+        let (_directory, state) = setup_state();
+        let id_barang = insert_item(&state, "Aset", false);
+        record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Masuk", "alasan": "Pengadaan", "jumlah": 3,
+                   "tempat_tujuan": "Lab", "per_unit": true}),
+        )
+        .expect("masuk per unit");
+        let units = unit_barang(&state, &id_barang);
+        assert_eq!(units.len(), 3);
+        let kode: Vec<&str> = units.iter().map(|u| u.1.as_str()).collect();
+        assert_eq!(kode, vec!["BRG-0001-01", "BRG-0001-02", "BRG-0001-03"]);
+        assert!(units.iter().all(|u| u.3 == 1));
+        let connection = storage::database(&state.data_dir).unwrap();
+        let nomor: i64 = connection
+            .query_row(
+                "SELECT COUNT(DISTINCT nomor_dokumen) FROM inventory_mutasi WHERE id_barang = ? AND nomor_dokumen LIKE 'UNT-%';",
+                params![id_barang],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(nomor, 1, "satu aksi berbagi satu nomor dokumen");
+        let outbox: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM desktop_sync_outbox WHERE domain = 'inventory-unit';",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(outbox, 3);
+
+        // Barang yang sudah dilacak menolak keluar tanpa memilih unit.
+        let galat = record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Pindah", "alasan": "Distribusi", "jumlah": 1,
+                   "tempat_asal": "Lab", "tempat_tujuan": "TU"}),
+        )
+        .unwrap_err();
+        assert_eq!(galat.message, "Pilih unit yang dicatat.");
+
+        record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Pindah", "alasan": "Distribusi", "jumlah": 1,
+                   "tempat_asal": "Lab", "tempat_tujuan": "TU", "unit": [units[1].0.clone()]}),
+        )
+        .expect("pindah satu unit");
+        let sesudah = unit_barang(&state, &id_barang);
+        let pindah = sesudah.iter().find(|u| u.0 == units[1].0).unwrap();
+        assert_eq!(pindah.2, "TU");
+        assert_eq!(stok(&state, &id_barang), 3);
+
+        // Unit yang sudah pindah tidak bisa dikeluarkan lagi dari tempat lama.
+        let galat = record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Keluar", "alasan": "Hilang", "jumlah": 1,
+                   "tempat_asal": "Lab", "unit": [units[1].0.clone()]}),
+        )
+        .unwrap_err();
+        assert_eq!(galat.message, "Stok di Lab (Baik) hanya 0 pcs.");
+
+        // Peminjaman per unit kembali ke unit yang sama.
+        let pinjam = record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Keluar", "alasan": "Peminjaman", "jumlah": 1,
+                   "tempat_asal": "Lab", "unit": [units[0].0.clone()], "penerima_tipe": "Unit",
+                   "penerima_nama": "Kelas X-A", "keperluan": "Presentasi"}),
+        )
+        .expect("pinjam unit")["id_mutasi"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(!unit_barang(&state, &id_barang).iter().any(|u| u.0 == units[0].0));
+        record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Masuk", "alasan": "Pengembalian", "jumlah": 1,
+                   "tempat_tujuan": "Lab", "id_ref": pinjam}),
+        )
+        .expect("kembali");
+        assert!(unit_barang(&state, &id_barang).iter().any(|u| u.0 == units[0].0 && u.3 == 1));
+
+        save_unit(&state, json!({"id_unit": units[2].0, "nomor_seri": "SN-778"})).expect("seri");
+        let seri: String = connection
+            .query_row(
+                "SELECT nomor_seri FROM inventory_unit WHERE id_unit = ?;",
+                params![units[2].0],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(seri, "SN-778");
+    }
+
+    #[test]
+    fn register_units_converts_pool_stock_without_changing_totals() {
+        let (_directory, state) = setup_state();
+        let id_barang = insert_item(&state, "Aset", false);
+        record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Masuk", "alasan": "Saldo Awal", "jumlah": 2, "tempat_tujuan": "Lab"}),
+        )
+        .expect("masuk");
+        record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Masuk", "alasan": "Saldo Awal", "jumlah": 1,
+                   "tempat_tujuan": "TU", "kondisi_tujuan": "Rusak Ringan"}),
+        )
+        .expect("masuk rusak");
+        let hasil = register_units(&state, "admin", &id_barang).expect("daftar");
+        assert_eq!(hasil["jumlah"], 3);
+        assert_eq!(stok(&state, &id_barang), 3);
+        let units = unit_barang(&state, &id_barang);
+        assert_eq!(units.len(), 3);
+        assert_eq!(units.iter().filter(|u| u.2 == "TU").count(), 1);
+        let list = list_inventory(&state).unwrap();
+        let item = list["barang"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id_barang"] == id_barang)
+            .unwrap()
+            .clone();
+        assert_eq!(item["dilacak_unit"], true);
+        assert!(
+            item["posisi"].as_array().unwrap().iter().all(|p| !p["kode_unit"].is_null()),
+            "tidak ada stok tanpa unit yang tersisa"
+        );
+
+        assert_eq!(
+            register_units(&state, "admin", &id_barang).unwrap_err().message,
+            "Tidak ada stok yang belum terdaftar sebagai unit."
+        );
+        let connection = storage::database(&state.data_dir).unwrap();
+        let keluar: String = connection
+            .query_row(
+                "SELECT id_mutasi FROM inventory_mutasi WHERE id_barang = ? AND jenis = 'Keluar' AND alasan = 'Distribusi' LIMIT 1;",
+                params![id_barang],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            cancel_mutation(&state, "admin", &keluar, "salah").unwrap_err().message,
+            "Pendaftaran unit tidak bisa dibatalkan."
+        );
+        let habis = insert_item(&state, "Habis Pakai", false);
+        assert_eq!(
+            register_units(&state, "admin", &habis).unwrap_err().message,
+            "Hanya aset tanpa kedaluwarsa yang bisa dicatat per unit."
+        );
+    }
+
+    /// Unit adalah batch-nya sendiri di opname. Sebelum diperbaiki, batch
+    /// dibuang untuk barang tanpa kedaluwarsa, sehingga setiap unit (fisik 1)
+    /// dibandingkan dengan stok tanpa nomor (0) dan tercatat +1.
+    #[test]
+    fn opname_counts_units_against_their_own_batch() {
+        let (_directory, state) = setup_state();
+        let id_barang = insert_item(&state, "Aset", false);
+        record_mutation(
+            &state,
+            "admin",
+            json!({"id_barang": id_barang, "jenis": "Masuk", "alasan": "Pengadaan", "jumlah": 2,
+                   "tempat_tujuan": "Lab", "per_unit": true}),
+        )
+        .expect("masuk");
+        let units = unit_barang(&state, &id_barang);
+        let semua_ada = record_opname(
+            &state,
+            "admin",
+            json!({"tempat": "Lab", "baris": [
+                {"id_barang": id_barang, "kondisi": "Baik", "id_batch": units[0].0, "fisik": 1},
+                {"id_barang": id_barang, "kondisi": "Baik", "id_batch": units[1].0, "fisik": 1}
+            ]}),
+        )
+        .expect("opname lengkap");
+        assert_eq!(semua_ada["jumlah_selisih"], 0);
+        assert_eq!(stok(&state, &id_barang), 2);
+
+        let galat = record_opname(
+            &state,
+            "admin",
+            json!({"tempat": "Lab", "baris": [
+                {"id_barang": id_barang, "kondisi": "Baik", "id_batch": units[0].0, "fisik": 2}
+            ]}),
+        )
+        .unwrap_err();
+        assert_eq!(galat.message, "Satu unit Barang Uji hanya bisa dihitung 0 atau 1.");
+
+        let hilang = record_opname(
+            &state,
+            "admin",
+            json!({"tempat": "Lab", "baris": [
+                {"id_barang": id_barang, "kondisi": "Baik", "id_batch": units[0].0, "fisik": 1},
+                {"id_barang": id_barang, "kondisi": "Baik", "id_batch": units[1].0, "fisik": 0}
+            ]}),
+        )
+        .expect("opname satu hilang");
+        assert_eq!(hilang["jumlah_selisih"], 1);
+        assert_eq!(stok(&state, &id_barang), 1);
+        let sisa = unit_barang(&state, &id_barang);
+        assert_eq!(sisa.len(), 1);
+        assert_eq!(sisa[0].0, units[0].0);
     }
 
     // Kriteria penerimaan PRD §12: dua perangkat offline mengeluarkan 2 dan 3

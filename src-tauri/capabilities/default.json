@@ -216,6 +216,8 @@
     "allow-desktop-inventory-record-opname",
     "allow-desktop-inventory-cancel-mutation",
     "allow-desktop-inventory-stock-card",
+    "allow-desktop-inventory-register-units",
+    "allow-desktop-inventory-save-unit",
     "allow-desktop-get-ledger-preview",
     "allow-desktop-freeze-attendance-ledger",
     "allow-desktop-get-frozen-ledger",

@@ -128,7 +128,14 @@ export function PemindaiLabel({
   );
 }
 
+/** Unit yang masih ada (saldo 1). Unit afkir atau hilang tidak dicetak. */
+function unitAda(barang: BarangInventaris) {
+  return barang.posisi.filter((p) => p.kode_unit !== null && p.saldo > 0);
+}
+
 function jumlahBawaan(barang: BarangInventaris): string {
+  // Barang per unit: tepat satu label per unit, dengan QR unitnya sendiri.
+  if (barang.dilacak_unit) return String(unitAda(barang).length);
   // Aset: satu label per unit untuk ditempel. Habis Pakai: satu untuk raknya.
   return String(barang.tipe === "Aset" ? Math.max(barang.stok_total, 1) : 1);
 }
@@ -168,6 +175,7 @@ export function DialogLabel({
 
   const cetak = async () => {
     const tidakSah = terpilih.find((b) => {
+      if (b.dilacak_unit) return false;
       const n = Number(pilihan[b.id_barang]);
       return !Number.isInteger(n) || n < 1 || n > MAKS_LABEL_PER_BARANG;
     });
@@ -187,12 +195,28 @@ export function DialogLabel({
     setGalat(null);
     try {
       const daftar = await Promise.all(
-        terpilih.map(async (b) => ({
-          nama_barang: b.nama_barang,
-          kode_barang: b.kode_barang,
-          qr: await createQrPng(isiLabelInventaris(b.id_barang), 256),
-          jumlah: Number(pilihan[b.id_barang]),
-        })),
+        terpilih.flatMap((b) =>
+          b.dilacak_unit
+            ? unitAda(b).map(async (unit) => ({
+                nama_barang: b.nama_barang,
+                kode_barang: unit.nomor_seri
+                  ? `${unit.kode_unit} · SN ${unit.nomor_seri}`
+                  : (unit.kode_unit as string),
+                qr: await createQrPng(
+                  isiLabelInventaris(unit.id_batch as string),
+                  256,
+                ),
+                jumlah: 1,
+              }))
+            : [
+                (async () => ({
+                  nama_barang: b.nama_barang,
+                  kode_barang: b.kode_barang,
+                  qr: await createQrPng(isiLabelInventaris(b.id_barang), 256),
+                  jumlah: Number(pilihan[b.id_barang]),
+                }))(),
+              ],
+        ),
       );
       cetakLabelBarang(daftar, namaSekolah);
     } catch (error) {
@@ -213,7 +237,8 @@ export function DialogLabel({
         <p className="text-sm text-slate-400">
           Satu lembar A4 memuat {LABEL_PER_LEMBAR} label 64 × 33 mm. Saat
           mencetak, pilih skala 100% ("Ukuran sebenarnya") supaya QR tetap
-          terbaca. Satu QR dipakai semua unit barang yang sama.
+          terbaca. Barang yang dicatat per unit mendapat satu label untuk setiap
+          unitnya; barang lain memakai satu QR untuk semua unitnya.
         </p>
         {barang.length === 0 ? (
           <p className="text-sm text-slate-400">
@@ -260,7 +285,11 @@ export function DialogLabel({
                         </span>
                       </span>
                     </label>
-                    {dipilih ? (
+                    {dipilih && b.dilacak_unit ? (
+                      <span className="text-sm text-slate-400">
+                        {pilihan[b.id_barang]} unit
+                      </span>
+                    ) : dipilih ? (
                       <input
                         type="number"
                         min={1}

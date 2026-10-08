@@ -227,6 +227,8 @@ pub fn run() {
             desktop::commands::desktop_inventory_record_opname,
             desktop::commands::desktop_inventory_cancel_mutation,
             desktop::commands::desktop_inventory_stock_card,
+            desktop::commands::desktop_inventory_register_units,
+            desktop::commands::desktop_inventory_save_unit,
             desktop::commands::desktop_get_ledger_preview,
             desktop::commands::desktop_freeze_attendance_ledger,
             desktop::commands::desktop_get_frozen_ledger,

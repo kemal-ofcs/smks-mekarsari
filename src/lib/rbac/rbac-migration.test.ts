@@ -10,6 +10,8 @@ import { runDatabaseMigrations } from "@/lib/db-migrations";
 import { initDatabaseSchema, isDatabaseSchemaReady } from "@/lib/db-schema";
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  PERMISSION_CATALOG,
+  SENSITIVE_MUTATION_PERMISSIONS,
   SUPERADMIN_ONLY_PERMISSIONS,
 } from "@/lib/rbac/catalog";
 import {
@@ -123,6 +125,8 @@ describe("dynamic RBAC migration", () => {
       35,
       // v36 — Buku Kunjungan UKS (`uks_kunjungan`, di luar snapshot).
       36,
+      // v37 — registri aset per unit (`inventory_unit`).
+      37,
     ]);
 
     const sessionColumns = await client.execute(
@@ -147,6 +151,40 @@ describe("dynamic RBAC migration", () => {
         ),
       ).toBe(false);
     }
+  });
+
+  // Seed Admin di `turso.rs` dulu memberi semua izin kecuali dua, termasuk
+  // seluruh izin sensitif, pada database yang diprovisioning Desktop/Mobile.
+  test("pengecualian seed Admin di Rust sama dengan paket bawaan TS", async () => {
+    const workspace = fileURLToPath(new URL("../../../", import.meta.url));
+    const kandidat = [
+      `${workspace}src-tauri/src/desktop/turso.rs`,
+      `${workspace}src-tauri/src/mobile/turso.rs`,
+    ];
+    let sumber = "";
+    for (const path of kandidat) {
+      const file = Bun.file(path);
+      if (await file.exists()) sumber = await file.text();
+    }
+    const blok = sumber.match(
+      /ADMIN_DEFAULT_EXCLUDED_PERMISSIONS: &\[&str\] = &\[([\s\S]*?)\];/,
+    )?.[1];
+    expect(blok).toBeDefined();
+    const rust = [...(blok ?? "").matchAll(/"([^"]+)"/g)]
+      .map((m) => m[1])
+      .sort();
+    const admin = new Set<string>(DEFAULT_ROLE_PERMISSIONS.admin);
+    const ts = PERMISSION_CATALOG.map(({ key }) => key)
+      .filter((key) => !admin.has(key))
+      .sort();
+    expect(rust).toEqual(ts);
+    expect(rust).toEqual(
+      [
+        ...SUPERADMIN_ONLY_PERMISSIONS,
+        "diagnostics.view",
+        ...SENSITIVE_MUTATION_PERMISSIONS,
+      ].sort(),
+    );
   });
 
   test("sakelar keamanan absensi role bertahan saat dibuat dan disunting", async () => {

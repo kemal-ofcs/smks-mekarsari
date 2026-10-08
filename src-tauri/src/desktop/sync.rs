@@ -19,7 +19,7 @@ use super::{
 /// `CURRENT_SCHEMA_VERSION` di `web-desktop/src/lib/db-schema.ts` setiap kali
 /// migrasi baru ditambahkan, karena keduanya membaca tabel `schema_migration`
 /// yang sama di Turso.
-pub const CLIENT_SCHEMA_VERSION: i64 = 36;
+pub const CLIENT_SCHEMA_VERSION: i64 = 37;
 
 /// Hanya `cloud > client` yang berbahaya; `cloud <= client` adalah kondisi normal.
 fn is_client_schema_outdated(cloud_version: i64) -> bool {
@@ -955,6 +955,27 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
         entity_column: "id_mutasi",
         delete_missing: false,
     },
+    // ── v37: Registri aset per unit ──
+    //
+    // `delete_missing: false`: unit tidak pernah dihapus. Unit yang afkir atau
+    // hilang tetap ada barisnya dengan saldo 0.
+    SnapshotTable {
+        payload_key: "inventoryUnits",
+        domain: "inventory-unit",
+        table: "inventory_unit",
+        columns: &[
+            "id_unit",
+            "id_barang",
+            "kode_unit",
+            "nomor_seri",
+            "catatan",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id_unit",
+        entity_column: "id_unit",
+        delete_missing: false,
+    },
 ];
 
 const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
@@ -1014,6 +1035,7 @@ const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
     ("id-card-template", "save"),
     ("inventory-item", "save"),
     ("inventory-mutation", "create"),
+    ("inventory-unit", "save"),
     ("uks-visit", "delete"),
     ("uks-visit", "save"),
     ("log-scan", "delete"),

@@ -874,6 +874,8 @@ interface BarisHitung {
   fisik: string;
   /** Sudah dihitung dengan memindai label; pindaian berikutnya menambah 1. */
   dipindai: boolean;
+  /** Terisi bila baris ini satu unit aset. */
+  kode_unit: string | null;
 }
 
 function kunciHitung(
@@ -901,6 +903,7 @@ function barisDariTempat(
         sistem: posisi.saldo,
         fisik: String(Math.max(posisi.saldo, 0)),
         dipindai: false,
+        kode_unit: posisi.kode_unit,
       })),
   );
 }
@@ -1000,9 +1003,51 @@ export function PanelOpname({
       setPesanPindai({ teks: hasil.error, galat: true });
       return;
     }
-    const barang = hasil.value;
+    const { barang, id_unit } = hasil.value;
     const sekarang = barisRef.current;
-    const aksi = aksiPindaiOpname(sekarang, barang);
+    const aksi = aksiPindaiOpname(sekarang, barang, id_unit);
+    if (aksi.jenis === "pakai-label-unit") {
+      setPesanPindai({
+        teks: `${barang.nama_barang} dicatat per unit. Pindai label unitnya.`,
+        galat: true,
+      });
+      return;
+    }
+    if (aksi.jenis === "unit-lain") {
+      const di = barang.posisi.find((p) => p.id_batch === id_unit);
+      setPesanPindai({
+        teks: `Unit ${di?.kode_unit ?? ""} tercatat di ${di?.tempat ?? "tempat lain"}. Bila unitnya memang ada di sini, catat Pindah lebih dulu.`,
+        galat: true,
+      });
+      return;
+    }
+    if (aksi.jenis === "unit") {
+      const lama = sekarang.find((b) => b.kunci === aksi.kunci);
+      if (aksi.sudah || !lama) {
+        setPesanPindai({
+          teks: `Unit ${lama?.kode_unit ?? ""} sudah terhitung.`,
+          galat: false,
+        });
+        return;
+      }
+      riwayatPindaiRef.current.push({
+        kunci: lama.kunci,
+        fisik: lama.fisik,
+        dipindai: lama.dipindai,
+      });
+      setJumlahPindai(riwayatPindaiRef.current.length);
+      gantiBaris(
+        sekarang.map((b) =>
+          b.kunci === aksi.kunci ? { ...b, fisik: "1", dipindai: true } : b,
+        ),
+      );
+      navigator.vibrate?.(40);
+      setPesanPindai({
+        teks: `Unit ${lama.kode_unit} ditemukan.`,
+        galat: false,
+      });
+      return;
+    }
     if (aksi.jenis === "hitung") {
       const lama = sekarang.find((b) => b.kunci === aksi.kunci);
       if (lama) {
@@ -1064,14 +1109,31 @@ export function PanelOpname({
   };
 
   const adaPindaian = baris.some((b) => b.dipindai);
+  const tidakDisentuh = (b: BarisHitung) =>
+    !b.dipindai && b.fisik === String(Math.max(b.sistem, 0));
   const belumDipindai = adaPindaian
     ? baris.filter(
         (b) =>
-          b.barang.tipe === "Aset" &&
-          !b.dipindai &&
-          b.fisik === String(Math.max(b.sistem, 0)),
+          b.barang.tipe === "Aset" && b.kode_unit === null && tidakDisentuh(b),
       ).length
     : 0;
+  // Unit yang belum dipindai tetap dianggap ada sampai petugas memutuskan
+  // sendiri bahwa unit itu tidak ditemukan.
+  const unitBelumDipindai = adaPindaian
+    ? baris.filter((b) => b.kode_unit !== null && tidakDisentuh(b))
+    : [];
+  const catatTidakDitemukan = () => {
+    const kunci = new Set(unitBelumDipindai.map((b) => b.kunci));
+    gantiBaris(
+      barisRef.current.map((b) =>
+        kunci.has(b.kunci) ? { ...b, fisik: "0" } : b,
+      ),
+    );
+    setPesanPindai({
+      teks: `${kunci.size} unit dicatat tidak ditemukan. Periksa daftar sebelum menyimpan.`,
+      galat: false,
+    });
+  };
 
   const barangTambah =
     data.barang.find((b) => b.id_barang === tambahBarang) ?? null;
@@ -1115,6 +1177,7 @@ export function PanelOpname({
           tawaranPindai === barangTambah.id_barang &&
           barangTambah.tipe === "Aset" &&
           kondisi === "Baik",
+        kode_unit: null,
       },
     ]);
     setTawaranPindai(null);
@@ -1238,6 +1301,7 @@ export function PanelOpname({
                             ? ` · kedaluwarsa ${item.tanggal_expired}`
                             : ""}{" "}
                           · sistem {item.sistem} {item.barang.satuan}
+                          {item.kode_unit ? ` · unit ${item.kode_unit}` : ""}
                           {item.dipindai ? " · dihitung dengan pindai" : ""}
                         </p>
                       </div>
@@ -1397,6 +1461,29 @@ export function PanelOpname({
               />
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3">
+              {unitBelumDipindai.length > 0 ? (
+                <div className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100 space-y-2">
+                  <p>
+                    {unitBelumDipindai.length} unit belum dipindai dan masih
+                    dianggap ada:{" "}
+                    {unitBelumDipindai
+                      .slice(0, 20)
+                      .map((b) => b.kode_unit)
+                      .join(", ")}
+                    {unitBelumDipindai.length > 20
+                      ? `, dan ${unitBelumDipindai.length - 20} lainnya`
+                      : ""}
+                    .
+                  </p>
+                  <button
+                    type="button"
+                    onClick={catatTidakDitemukan}
+                    className={TOMBOL_KEDUA}
+                  >
+                    Catat yang belum dipindai sebagai tidak ditemukan
+                  </button>
+                </div>
+              ) : null}
               {belumDipindai > 0 ? (
                 <span className="text-sm text-amber-300">
                   {belumDipindai} baris aset belum dipindai dan dianggap sesuai

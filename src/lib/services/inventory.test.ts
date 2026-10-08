@@ -23,8 +23,10 @@ const {
   procurement,
   recordMutation,
   recordOpname,
+  registerUnits,
   saveCodePrefixes,
   saveItem,
+  saveUnit,
   stockCard,
 } = await import("./inventory");
 
@@ -44,6 +46,7 @@ beforeEach(async () => {
     [
       "DELETE FROM inventory_mutasi;",
       "DELETE FROM inventory_barang;",
+      "DELETE FROM inventory_unit;",
       "DELETE FROM setting_gex_system WHERE key = 'inventory_kode_prefix';",
     ],
     "write",
@@ -539,5 +542,210 @@ describe("service inventaris Web", () => {
       riwayat[0]?.id_mutasi as string,
     );
     expect(dok.jenis).toBe("Opname");
+  });
+});
+
+// Skenario kembar dengan `per_unit_entry_creates_units_and_moves_them_one_by_one`
+// dan `register_units_converts_pool_stock_without_changing_totals`.
+describe("registri aset per unit Web", () => {
+  async function asetBaru(): Promise<string> {
+    const result = await saveItem(client, {
+      nama_barang: "Laptop",
+      tipe: "Aset",
+      satuan: "pcs",
+      tempat_utama: "Lab",
+    });
+    return result.id_barang;
+  }
+  async function unitDari(idBarang: string) {
+    const daftar = await listInventory(client);
+    const barang = daftar.barang.find((item) => item.id_barang === idBarang);
+    return (barang?.posisi ?? []).filter((posisi) => posisi.kode_unit !== null);
+  }
+
+  test("masuk per unit membuat unit dan memindahkannya satu per satu", async () => {
+    const idBarang = await asetBaru();
+    await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Masuk",
+      alasan: "Pengadaan",
+      jumlah: 3,
+      tempat_tujuan: "Lab",
+      per_unit: true,
+    });
+    const units = await unitDari(idBarang);
+    expect(units.map((unit) => unit.kode_unit)).toEqual([
+      "BRG-0001-01",
+      "BRG-0001-02",
+      "BRG-0001-03",
+    ]);
+    const nomor = await client.execute({
+      sql: "SELECT COUNT(DISTINCT nomor_dokumen) AS n FROM inventory_mutasi WHERE id_barang = ? AND nomor_dokumen LIKE 'UNT-%';",
+      args: [idBarang],
+    });
+    expect(Number(nomor.rows[0]?.n)).toBe(1);
+
+    await expect(
+      recordMutation(client, "admin", {
+        id_barang: idBarang,
+        jenis: "Pindah",
+        alasan: "Distribusi",
+        jumlah: 1,
+        tempat_asal: "Lab",
+        tempat_tujuan: "TU",
+      }),
+    ).rejects.toThrow("Pilih unit yang dicatat.");
+    const kedua = units[1]?.id_batch as string;
+    await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Pindah",
+      alasan: "Distribusi",
+      jumlah: 1,
+      tempat_asal: "Lab",
+      tempat_tujuan: "TU",
+      unit: [kedua],
+    });
+    expect(
+      (await unitDari(idBarang)).find((u) => u.id_batch === kedua)?.tempat,
+    ).toBe("TU");
+    expect(await stok(idBarang)).toBe(3);
+    await expect(
+      recordMutation(client, "admin", {
+        id_barang: idBarang,
+        jenis: "Keluar",
+        alasan: "Hilang",
+        jumlah: 1,
+        tempat_asal: "Lab",
+        unit: [kedua],
+      }),
+    ).rejects.toThrow("Stok di Lab (Baik) hanya 0 pcs.");
+
+    const pertama = units[0]?.id_batch as string;
+    const pinjam = await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Keluar",
+      alasan: "Peminjaman",
+      jumlah: 1,
+      tempat_asal: "Lab",
+      unit: [pertama],
+      penerima_tipe: "Unit",
+      penerima_nama: "Kelas X-A",
+      keperluan: "Presentasi",
+    });
+    expect((await unitDari(idBarang)).some((u) => u.id_batch === pertama)).toBe(
+      false,
+    );
+    await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Masuk",
+      alasan: "Pengembalian",
+      jumlah: 1,
+      tempat_tujuan: "Lab",
+      id_ref: pinjam.id_mutasi,
+    });
+    expect(
+      (await unitDari(idBarang)).some(
+        (u) => u.id_batch === pertama && u.saldo === 1,
+      ),
+    ).toBe(true);
+
+    const ketiga = units[2]?.id_batch as string;
+    await saveUnit(client, { id_unit: ketiga, nomor_seri: "SN-778" });
+    expect(
+      (await unitDari(idBarang)).find((u) => u.id_batch === ketiga)?.nomor_seri,
+    ).toBe("SN-778");
+  });
+
+  // Kembar `opname_counts_units_against_their_own_batch`.
+  test("opname menghitung unit terhadap batch unitnya sendiri", async () => {
+    const idBarang = await asetBaru();
+    await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Masuk",
+      alasan: "Pengadaan",
+      jumlah: 2,
+      tempat_tujuan: "Lab",
+      per_unit: true,
+    });
+    const units = await unitDari(idBarang);
+    const baris = (fisik: [number, number]) =>
+      units.map((unit, i) => ({
+        id_barang: idBarang,
+        kondisi: "Baik",
+        id_batch: unit.id_batch,
+        fisik: fisik[i] as number,
+      }));
+    const lengkap = await recordOpname(client, "admin", {
+      tempat: "Lab",
+      baris: baris([1, 1]),
+    });
+    expect(lengkap.jumlah_selisih).toBe(0);
+    expect(await stok(idBarang)).toBe(2);
+    await expect(
+      recordOpname(client, "admin", {
+        tempat: "Lab",
+        baris: [{ ...baris([2, 1])[0] }],
+      }),
+    ).rejects.toThrow("Satu unit Laptop hanya bisa dihitung 0 atau 1.");
+    const hilang = await recordOpname(client, "admin", {
+      tempat: "Lab",
+      baris: baris([1, 0]),
+    });
+    expect(hilang.jumlah_selisih).toBe(1);
+    expect(await stok(idBarang)).toBe(1);
+    expect((await unitDari(idBarang)).map((u) => u.id_batch)).toEqual([
+      units[0]?.id_batch,
+    ]);
+  });
+
+  test("pendaftaran unit mengubah stok lama tanpa mengubah jumlahnya", async () => {
+    const idBarang = await asetBaru();
+    await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Masuk",
+      alasan: "Saldo Awal",
+      jumlah: 2,
+      tempat_tujuan: "Lab",
+    });
+    await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Masuk",
+      alasan: "Saldo Awal",
+      jumlah: 1,
+      tempat_tujuan: "TU",
+      kondisi_tujuan: "Rusak Ringan",
+    });
+    const hasil = await registerUnits(client, "admin", idBarang);
+    expect(hasil.jumlah).toBe(3);
+    expect(await stok(idBarang)).toBe(3);
+    const daftar = await listInventory(client);
+    const barang = daftar.barang.find((item) => item.id_barang === idBarang);
+    expect(barang?.dilacak_unit).toBe(true);
+    expect(barang?.posisi.every((posisi) => posisi.kode_unit !== null)).toBe(
+      true,
+    );
+    expect(
+      (await unitDari(idBarang)).filter((u) => u.tempat === "TU"),
+    ).toHaveLength(1);
+
+    await expect(registerUnits(client, "admin", idBarang)).rejects.toThrow(
+      "Tidak ada stok yang belum terdaftar sebagai unit.",
+    );
+    const keluar = await client.execute({
+      sql: "SELECT id_mutasi FROM inventory_mutasi WHERE id_barang = ? AND jenis = 'Keluar' AND alasan = 'Distribusi' LIMIT 1;",
+      args: [idBarang],
+    });
+    await expect(
+      cancelMutation(
+        client,
+        "admin",
+        String(keluar.rows[0]?.id_mutasi),
+        "salah",
+      ),
+    ).rejects.toThrow("Pendaftaran unit tidak bisa dibatalkan.");
+    const habis = await barangBaru();
+    await expect(registerUnits(client, "admin", habis)).rejects.toThrow(
+      "Hanya aset tanpa kedaluwarsa yang bisa dicatat per unit.",
+    );
   });
 });

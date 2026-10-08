@@ -49,7 +49,8 @@ describe("Schema Consistency & Zero-Drift Guard", () => {
         'wali_otp', 'wali_session', 'wali_kredensial',
         'nilai_penilaian', 'nilai_siswa',
         'berita', 'konten_publik', 'riwayat_identitas_karyawan',
-        'inventory_barang', 'inventory_mutasi', 'uks_kunjungan'
+        'inventory_barang', 'inventory_mutasi', 'uks_kunjungan',
+        'inventory_unit'
       );
     `);
     const tableCount = Number(tablesRes.rows[0]?.count ?? 0);

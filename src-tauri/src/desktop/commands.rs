@@ -2839,6 +2839,27 @@ pub fn desktop_inventory_cancel_mutation(
     inventory::cancel_mutation(&state, &operator.username, &id_mutasi, &alasan)
 }
 
+/// Mendaftarkan stok aset yang belum bernomor menjadi unit. Jumlah stok tidak
+/// berubah, jadi cukup `inventory.manage` seperti pengaturan barang lain.
+#[tauri::command]
+pub fn desktop_inventory_register_units(
+    state: State<'_, DesktopState>,
+    id_barang: String,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "inventory.manage")?;
+    inventory::register_units(&state, &operator.username, &id_barang)
+}
+
+/// Nomor seri dan catatan satu unit.
+#[tauri::command]
+pub fn desktop_inventory_save_unit(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.manage")?;
+    inventory::save_unit(&state, draft)
+}
+
 #[tauri::command]
 pub fn desktop_inventory_stock_card(
     state: State<'_, DesktopState>,

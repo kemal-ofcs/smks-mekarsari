@@ -5,6 +5,7 @@ import {
   bacaLabelInventaris,
   barangDraftSchema,
   formatKodeBarang,
+  formatKodeUnit,
   type IzinInventaris,
   isiLabelInventaris,
   isValidDate,
@@ -22,6 +23,8 @@ import {
   statusKedaluwarsa,
   stokMenipis,
   susunPembatalan,
+  validasiUnit,
+  validasiUnitEdit,
   validateBarang,
   validateKodePrefixes,
   validateMutasi,
@@ -693,12 +696,12 @@ describe("label QR inventaris", () => {
   test("membaca label, kode ketikan, dan menolak yang lain", () => {
     expect(bacaLabelInventaris(" INV:brg-a ", barang)).toEqual({
       ok: true,
-      value: barang[0],
+      value: { barang: barang[0], id_unit: null },
     });
     expect(bacaLabelInventaris("inv:brg-b", barang).ok).toBe(true);
     expect(bacaLabelInventaris("brg-0001", barang)).toEqual({
       ok: true,
-      value: barang[0],
+      value: { barang: barang[0], id_unit: null },
     });
     const tidakDikenal = bacaLabelInventaris("INV:brg-x", barang);
     expect(tidakDikenal.ok).toBe(false);
@@ -709,6 +712,64 @@ describe("label QR inventaris", () => {
     expect(bacaLabelInventaris("  ", barang).ok).toBe(false);
   });
 
+  test("label dan kode unit", () => {
+    const laptop = {
+      id_barang: "lap",
+      kode_barang: "LAP-0001",
+      posisi: [
+        { id_batch: "mts-u1", kode_unit: "LAP-0001-01" },
+        { id_batch: null, kode_unit: null },
+      ],
+    };
+    expect(bacaLabelInventaris("INV:mts-u1", [laptop])).toEqual({
+      ok: true,
+      value: { barang: laptop, id_unit: "mts-u1" },
+    });
+    expect(bacaLabelInventaris("lap-0001-01", [laptop])).toEqual({
+      ok: true,
+      value: { barang: laptop, id_unit: "mts-u1" },
+    });
+    expect(bacaLabelInventaris("LAP-0001", [laptop])).toEqual({
+      ok: true,
+      value: { barang: laptop, id_unit: null },
+    });
+    expect(bacaLabelInventaris("INV:mts-hilang", [laptop]).ok).toBe(false);
+
+    const aset = {
+      id_barang: "lap",
+      tipe: "Aset" as const,
+      dilacak_unit: true,
+    };
+    const baris = [
+      {
+        kunci: "u1",
+        barang: aset,
+        kondisi: "Baik",
+        id_batch: "mts-u1",
+        fisik: "1",
+        dipindai: false,
+      },
+    ];
+    expect(aksiPindaiOpname(baris, aset, "mts-u1")).toEqual({
+      jenis: "unit",
+      kunci: "u1",
+      sudah: false,
+    });
+    expect(
+      aksiPindaiOpname([{ ...baris[0], dipindai: true }], aset, "mts-u1"),
+    ).toEqual({
+      jenis: "unit",
+      kunci: "u1",
+      sudah: true,
+    });
+    expect(aksiPindaiOpname(baris, aset, "mts-u9")).toEqual({
+      jenis: "unit-lain",
+    });
+    expect(aksiPindaiOpname(baris, aset)).toEqual({
+      jenis: "pakai-label-unit",
+    });
+  });
+
   test("aksi pindai opname", () => {
     const aset = { id_barang: "kursi", tipe: "Aset" as const };
     const obat = { id_barang: "obat", tipe: "Habis Pakai" as const };
@@ -717,6 +778,7 @@ describe("label QR inventaris", () => {
         kunci: "k-rusak",
         barang: aset,
         kondisi: "Rusak Ringan",
+        id_batch: null,
         fisik: "2",
         dipindai: false,
       },
@@ -724,6 +786,7 @@ describe("label QR inventaris", () => {
         kunci: "k-baik",
         barang: aset,
         kondisi: "Baik",
+        id_batch: null,
         fisik: "30",
         dipindai: false,
       },
@@ -731,6 +794,7 @@ describe("label QR inventaris", () => {
         kunci: "o-1",
         barang: obat,
         kondisi: "Baik",
+        id_batch: null,
         fisik: "10",
         dipindai: false,
       },
@@ -759,5 +823,124 @@ describe("label QR inventaris", () => {
     expect(
       aksiPindaiOpname(baris, { id_barang: "meja", tipe: "Aset" }),
     ).toEqual({ jenis: "baru" });
+  });
+});
+
+// Vektor kembar dengan `unit_rule_vectors` dan
+// `registration_rows_cannot_be_cancelled` di `inventory.rs`.
+describe("registri aset per unit", () => {
+  const cek = (
+    dilacak: boolean,
+    per_unit: boolean,
+    tipe: string,
+    bisa_expired: boolean,
+    jenis: string,
+    alasan: string,
+    jumlah: number,
+    unit: string[] = [],
+  ) =>
+    validasiUnit({
+      dilacak,
+      per_unit,
+      tipe,
+      bisa_expired,
+      jenis,
+      alasan,
+      jumlah,
+      unit,
+    });
+  const galat = (error: string) => ({ ok: false as const, error });
+  const lingkup =
+    "Pencatatan per unit hanya untuk aset tanpa kedaluwarsa yang dicatat masuk.";
+
+  test("aturan unit", () => {
+    expect(cek(false, false, "Aset", false, "Keluar", "Pemakaian", 1)).toEqual({
+      ok: true,
+      value: [],
+    });
+    expect(
+      cek(false, false, "Aset", false, "Keluar", "Pemakaian", 1, ["u1"]),
+    ).toEqual(galat("Barang ini tidak dicatat per unit."));
+    expect(
+      cek(false, true, "Habis Pakai", false, "Masuk", "Pengadaan", 1),
+    ).toEqual(galat(lingkup));
+    expect(cek(false, true, "Aset", true, "Masuk", "Pengadaan", 1)).toEqual(
+      galat(lingkup),
+    );
+    expect(cek(false, true, "Aset", false, "Keluar", "Pemakaian", 1)).toEqual(
+      galat(lingkup),
+    );
+    expect(cek(false, true, "Aset", false, "Masuk", "Pengadaan", 3)).toEqual({
+      ok: true,
+      value: [],
+    });
+    expect(cek(true, false, "Aset", false, "Masuk", "Pengadaan", 201)).toEqual(
+      galat("Paling banyak 200 unit sekali catat."),
+    );
+    expect(
+      cek(true, false, "Aset", false, "Masuk", "Pengadaan", 1, ["u1"]),
+    ).toEqual(galat("Unit baru dibuat otomatis saat barang masuk."));
+    expect(cek(true, false, "Aset", false, "Masuk", "Pengembalian", 1)).toEqual(
+      { ok: true, value: [] },
+    );
+    expect(cek(true, false, "Aset", false, "Keluar", "Peminjaman", 1)).toEqual(
+      galat("Pilih unit yang dicatat."),
+    );
+    expect(
+      cek(true, false, "Aset", false, "Pindah", "Distribusi", 2, [
+        "u1",
+        " u1 ",
+      ]),
+    ).toEqual(galat("Unit yang sama dipilih dua kali."));
+    expect(
+      cek(true, false, "Aset", false, "Keluar", "Hilang", 3, ["u1", "u2"]),
+    ).toEqual(galat("Jumlah harus sama dengan banyaknya unit yang dipilih."));
+    expect(
+      cek(true, false, "Aset", false, "Keluar", "Hilang", 2, [
+        " u1",
+        "u2 ",
+        "",
+      ]),
+    ).toEqual({
+      ok: true,
+      value: ["u1", "u2"],
+    });
+
+    expect(formatKodeUnit("LAP-0003", 2)).toBe("LAP-0003-02");
+    expect(formatKodeUnit("LAP-0003", 120)).toBe("LAP-0003-120");
+
+    const edit = (nomor_seri: string | null, catatan: string | null) =>
+      validasiUnitEdit({ id_unit: "u1", nomor_seri, catatan });
+    expect(edit("  SN-01 ", " ")).toEqual({
+      ok: true,
+      value: { nomor_seri: "SN-01", catatan: null },
+    });
+    expect(edit("x".repeat(61), null)).toEqual(
+      galat("Nomor seri maksimal 60 karakter."),
+    );
+    expect(edit(null, "x".repeat(201))).toEqual(
+      galat("Catatan unit maksimal 200 karakter."),
+    );
+  });
+
+  test("baris pendaftaran unit tidak bisa dibatalkan", () => {
+    const asal = (jenis: string) => ({
+      id_mutasi: "m1",
+      jenis,
+      alasan: "Distribusi",
+      jumlah: 1,
+      tempat_asal: null,
+      kondisi_asal: null,
+      tempat_tujuan: null,
+      kondisi_tujuan: null,
+      id_batch: null,
+    });
+    expect(susunPembatalan(asal("Keluar"))).toEqual(
+      galat("Pendaftaran unit tidak bisa dibatalkan."),
+    );
+    expect(susunPembatalan(asal("Masuk"))).toEqual(
+      galat("Pendaftaran unit tidak bisa dibatalkan."),
+    );
+    expect(susunPembatalan(asal("Pindah")).ok).toBe(true);
   });
 });

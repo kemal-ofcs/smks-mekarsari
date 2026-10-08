@@ -64,6 +64,12 @@ import {
   PanelRingkasan,
   type TujuanRingkasan,
 } from "./PanelPemantauan";
+import {
+  bisaDaftarkanUnit,
+  DialogDaftarkanUnit,
+  DialogUnit,
+  stokBelumBernomor,
+} from "./UnitAset";
 
 /**
  * Seluruh UI inventaris, dipakai apa adanya oleh halaman Web/Desktop dan
@@ -153,6 +159,11 @@ export function InventarisWorkspace({
   const [barangCatat, setBarangCatat] = useState("");
   const [barangKartu, setBarangKartu] = useState("");
   const [aturAwalan, setAturAwalan] = useState(false);
+  const [unitAksi, setUnitAksi] = useState<
+    | { jenis: "daftar"; barang: BarangInventaris }
+    | { jenis: "ubah"; barang: BarangInventaris; posisi: PosisiStok }
+    | null
+  >(null);
   const isSubmittingRef = useRef(false);
 
   const muatPinjaman = useCallback(async () => {
@@ -365,6 +376,12 @@ export function InventarisWorkspace({
               setBarangKartu(barang.id_barang);
               setTab("kartu");
             }}
+            onDaftarkanUnit={(barang) =>
+              setUnitAksi({ jenis: "daftar", barang })
+            }
+            onUbahUnit={(barang, posisi) =>
+              setUnitAksi({ jenis: "ubah", barang, posisi })
+            }
           />
         ) : tab === "catat" ? (
           <FormMutasi
@@ -403,6 +420,29 @@ export function InventarisWorkspace({
         />
       ) : null}
 
+      {unitAksi?.jenis === "daftar" ? (
+        <DialogDaftarkanUnit
+          barang={unitAksi.barang}
+          isSubmittingRef={isSubmittingRef}
+          onClose={() => setUnitAksi(null)}
+          onSaved={async (message) => {
+            setUnitAksi(null);
+            await selesai(message);
+          }}
+        />
+      ) : unitAksi?.jenis === "ubah" ? (
+        <DialogUnit
+          barang={unitAksi.barang}
+          posisi={unitAksi.posisi}
+          isSubmittingRef={isSubmittingRef}
+          onClose={() => setUnitAksi(null)}
+          onSaved={async (message) => {
+            setUnitAksi(null);
+            await selesai(message);
+          }}
+        />
+      ) : null}
+
       {aturAwalan && data ? (
         <FormAwalanKode
           awalan={data.kode_prefix}
@@ -432,6 +472,8 @@ function DaftarBarang({
   onUbah,
   onCatat,
   onKartu,
+  onDaftarkanUnit,
+  onUbahUnit,
 }: {
   filterAwal: FilterBarang;
   data: DaftarInventaris;
@@ -443,6 +485,8 @@ function DaftarBarang({
   onUbah: (barang: BarangInventaris) => void;
   onCatat: (barang: BarangInventaris) => void;
   onKartu: (barang: BarangInventaris) => void;
+  onDaftarkanUnit: (barang: BarangInventaris) => void;
+  onUbahUnit: (barang: BarangInventaris, posisi: PosisiStok) => void;
 }) {
   const [cari, setCari] = useState("");
   const [kategori, setKategori] = useState("");
@@ -702,6 +746,28 @@ function DaftarBarang({
                     ) : null}
                   </div>
                 </div>
+                {buka && (barang.dilacak_unit || bisaDaftarkanUnit(barang)) ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <p className="text-slate-400">
+                      {barang.dilacak_unit
+                        ? "Dicatat per unit."
+                        : "Dicatat per jumlah."}
+                      {barang.dilacak_unit &&
+                      stokBelumBernomor(barang).length > 0
+                        ? ` ${stokBelumBernomor(barang).reduce((n, p) => n + p.saldo, 0)} ${barang.satuan} belum bernomor dan belum bisa dikeluarkan.`
+                        : ""}
+                    </p>
+                    {canManage && bisaDaftarkanUnit(barang) ? (
+                      <button
+                        type="button"
+                        onClick={() => onDaftarkanUnit(barang)}
+                        className={TOMBOL_KEDUA}
+                      >
+                        Daftarkan unit
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {buka ? (
                   barang.posisi.length === 0 ? (
                     <p className="text-sm text-slate-400">
@@ -715,6 +781,18 @@ function DaftarBarang({
                           className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
                         >
                           <span className="text-slate-200">
+                            {posisi.kode_unit ? (
+                              <span className="font-medium text-slate-100">
+                                {posisi.kode_unit}
+                                {posisi.nomor_seri ? (
+                                  <span className="font-normal text-slate-400">
+                                    {" "}
+                                    · SN {posisi.nomor_seri}
+                                  </span>
+                                ) : null}
+                                {" · "}
+                              </span>
+                            ) : null}
                             {posisi.tempat}
                             <span className="text-slate-400">
                               {" "}
@@ -737,6 +815,16 @@ function DaftarBarang({
                             {posisi.saldo} {barang.satuan}
                             {posisi.saldo < 0 ? " (perlu opname)" : ""}
                           </span>
+                          {canManage && posisi.kode_unit ? (
+                            <button
+                              type="button"
+                              onClick={() => onUbahUnit(barang, posisi)}
+                              aria-label={`Ubah unit ${posisi.kode_unit}`}
+                              className={TOMBOL_KEDUA}
+                            >
+                              Ubah
+                            </button>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -1275,11 +1363,45 @@ function FormMutasi({
   const posisiTersedia = barang?.posisi.filter((p) => p.saldo > 0) ?? [];
   const asal = posisiTersedia[Number(posisiAsal)] ?? null;
   const butuhPenerima = alasan === "Pemakaian" || alasan === "Peminjaman";
+  // Barang yang dicatat per unit: keluar dan pindah memilih unit dari satu
+  // tempat × kondisi; jumlahnya = banyaknya unit yang dicentang.
+  const dilacak = barang?.dilacak_unit ?? false;
+  const pakaiUnit = dilacak && jenis !== "Masuk";
+  const kelompokUnit = useMemo(() => {
+    const grup = new Map<
+      string,
+      { tempat: string; kondisi: string; unit: PosisiStok[] }
+    >();
+    for (const p of barang?.posisi ?? []) {
+      if (!p.kode_unit || p.saldo <= 0) continue;
+      const kunci = `${p.tempat.toLowerCase()}|${p.kondisi}`;
+      const isi = grup.get(kunci) ?? {
+        tempat: p.tempat,
+        kondisi: p.kondisi,
+        unit: [],
+      };
+      isi.unit.push(p);
+      grup.set(kunci, isi);
+    }
+    return [...grup.values()];
+  }, [barang]);
+  const [kelompokAsal, setKelompokAsal] = useState("0");
+  const [unitDipilih, setUnitDipilih] = useState<string[]>([]);
+  const [perUnit, setPerUnit] = useState(false);
+  const grupAsal = kelompokUnit[Number(kelompokAsal)] ?? null;
+  const bolehPerUnit =
+    jenis === "Masuk" &&
+    !dilacak &&
+    barang?.tipe === "Aset" &&
+    !barang.bisa_expired;
 
   const pilihJenis = (nilai: JenisMutasi) => {
     setJenis(nilai);
     setAlasan(alasanAwal(nilai));
     setPosisiAsal("0");
+    setKelompokAsal("0");
+    setUnitDipilih([]);
+    setPerUnit(false);
     // Barang tanpa stok tidak bisa dikeluarkan atau dipindah.
     if (
       nilai !== "Masuk" &&
@@ -1293,6 +1415,9 @@ function FormMutasi({
   const pilihBarang = (id: string) => {
     setIdBarang(id);
     setPosisiAsal("0");
+    setKelompokAsal("0");
+    setUnitDipilih([]);
+    setPerUnit(false);
     setTempatTujuan(tempatUtama(id));
   };
 
@@ -1316,6 +1441,7 @@ function FormMutasi({
 
   const reset = () => {
     setJumlah("");
+    setUnitDipilih([]);
     setTanggalExpired("");
     setNomorDokumen("");
     setHarga("");
@@ -1333,15 +1459,29 @@ function FormMutasi({
     setMenyimpan(true);
     try {
       const aset = barang.tipe === "Aset";
+      const jumlahCatat = pakaiUnit ? unitDipilih.length : Number(jumlah);
       await catatMutasiInventaris({
         id_barang: barang.id_barang,
         jenis,
         alasan,
         tanggal,
-        jumlah: Number(jumlah),
-        tempat_asal: jenis === "Masuk" ? null : (asal?.tempat ?? null),
-        kondisi_asal: jenis === "Masuk" ? null : (asal?.kondisi ?? null),
-        id_batch: jenis === "Masuk" ? null : (asal?.id_batch ?? null),
+        jumlah: jumlahCatat,
+        tempat_asal:
+          jenis === "Masuk"
+            ? null
+            : pakaiUnit
+              ? (grupAsal?.tempat ?? null)
+              : (asal?.tempat ?? null),
+        kondisi_asal:
+          jenis === "Masuk"
+            ? null
+            : pakaiUnit
+              ? (grupAsal?.kondisi ?? null)
+              : (asal?.kondisi ?? null),
+        id_batch:
+          jenis === "Masuk" || pakaiUnit ? null : (asal?.id_batch ?? null),
+        unit: pakaiUnit ? unitDipilih : [],
+        per_unit: bolehPerUnit && perUnit,
         tempat_tujuan: jenis === "Keluar" ? null : tempatTujuan,
         kondisi_tujuan:
           jenis === "Keluar" ? null : aset ? kondisiTujuan : "Baik",
@@ -1358,7 +1498,7 @@ function FormMutasi({
       });
       reset();
       await onSelesai(
-        `${jenis} ${jumlah} ${barang.satuan} ${barang.nama_barang} tercatat.`,
+        `${jenis} ${jumlahCatat} ${barang.satuan} ${barang.nama_barang} tercatat.`,
       );
     } catch (error) {
       onGalat(pesanGalat(error, "Mutasi tidak bisa disimpan."));
@@ -1452,22 +1592,38 @@ function FormMutasi({
             ))}
           </select>
         </div>
-        <div>
-          <label htmlFor="inv-jumlah" className={LABEL}>
-            Jumlah{barang ? ` (${barang.satuan})` : ""}
-          </label>
-          <input
-            id="inv-jumlah"
-            type="number"
-            required
-            min={1}
-            step={1}
-            inputMode="numeric"
-            value={jumlah}
-            onChange={(e) => setJumlah(e.target.value)}
-            className={INPUT}
-          />
-        </div>
+        {pakaiUnit ? (
+          <div>
+            <p className={LABEL}>Jumlah</p>
+            <p className="min-h-11 flex items-center text-sm text-slate-200">
+              {unitDipilih.length} unit dipilih
+            </p>
+          </div>
+        ) : (
+          <div>
+            <label htmlFor="inv-jumlah" className={LABEL}>
+              Jumlah{barang ? ` (${barang.satuan})` : ""}
+            </label>
+            <input
+              id="inv-jumlah"
+              type="number"
+              required
+              min={1}
+              max={dilacak || perUnit ? 200 : undefined}
+              step={1}
+              inputMode="numeric"
+              value={jumlah}
+              onChange={(e) => setJumlah(e.target.value)}
+              className={INPUT}
+            />
+            {jenis === "Masuk" && dilacak ? (
+              <p className="mt-1 text-xs text-slate-400">
+                Setiap {barang?.satuan} menjadi unit baru bernomor, paling
+                banyak 200 sekali catat.
+              </p>
+            ) : null}
+          </div>
+        )}
         <div>
           <label htmlFor="inv-tanggal" className={LABEL}>
             Tanggal
@@ -1483,7 +1639,101 @@ function FormMutasi({
           />
         </div>
 
-        {jenis !== "Masuk" && barang ? (
+        {bolehPerUnit ? (
+          <div className="sm:col-span-2 flex items-start gap-2">
+            <input
+              id="inv-per-unit"
+              type="checkbox"
+              checked={perUnit}
+              onChange={(e) => setPerUnit(e.target.checked)}
+              className="mt-1 h-4 w-4"
+              aria-describedby="inv-per-unit-bantuan"
+            />
+            <div>
+              <label
+                htmlFor="inv-per-unit"
+                className="text-sm font-medium text-slate-200"
+              >
+                Catat per unit
+              </label>
+              <p id="inv-per-unit-bantuan" className="text-xs text-slate-400">
+                Setiap {barang?.satuan} mendapat kode unit sendiri, bisa diberi
+                nomor seri, dan dicetak labelnya satu per satu. Cocok untuk
+                laptop atau proyektor; kursi cukup dicatat per jumlah.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {pakaiUnit && barang ? (
+          <div className="sm:col-span-2 space-y-2">
+            <label htmlFor="inv-asal-unit" className={LABEL}>
+              Ambil dari
+            </label>
+            {kelompokUnit.length === 0 ? (
+              <p className="text-sm text-amber-300">
+                Belum ada unit bernomor yang tersedia.
+                {stokBelumBernomor(barang).length > 0
+                  ? " Daftarkan stok tanpa nomor di bagian Barang lebih dulu."
+                  : ""}
+              </p>
+            ) : (
+              <>
+                <select
+                  id="inv-asal-unit"
+                  value={kelompokAsal}
+                  onChange={(e) => {
+                    setKelompokAsal(e.target.value);
+                    setUnitDipilih([]);
+                  }}
+                  className={INPUT}
+                >
+                  {kelompokUnit.map((grup, index) => (
+                    <option
+                      key={`${grup.tempat}|${grup.kondisi}`}
+                      value={String(index)}
+                    >
+                      {grup.tempat} · {grup.kondisi} ({grup.unit.length} unit)
+                    </option>
+                  ))}
+                </select>
+                <fieldset className="max-h-60 overflow-y-auto rounded-lg border border-slate-800 divide-y divide-slate-800">
+                  <legend className="sr-only">Unit yang dicatat</legend>
+                  {(grupAsal?.unit ?? []).map((unit) => {
+                    const id = unit.id_batch as string;
+                    return (
+                      <label
+                        key={id}
+                        className="flex min-h-11 items-center gap-2 px-3 py-2 text-sm text-slate-200"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={unitDipilih.includes(id)}
+                          onChange={(e) =>
+                            setUnitDipilih(
+                              e.target.checked
+                                ? [...unitDipilih, id]
+                                : unitDipilih.filter((item) => item !== id),
+                            )
+                          }
+                          className="h-4 w-4"
+                        />
+                        {unit.kode_unit}
+                        {unit.nomor_seri ? (
+                          <span className="text-slate-400">
+                            SN {unit.nomor_seri}
+                          </span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              </>
+            )}
+          </div>
+        ) : null}
+
+        {jenis !== "Masuk" && barang && !pakaiUnit ? (
           <div className="sm:col-span-2">
             <label htmlFor="inv-asal" className={LABEL}>
               Ambil dari
@@ -1767,7 +2017,9 @@ function FormMutasi({
       <div className="flex justify-end">
         <button
           type="submit"
-          disabled={menyimpan || !barang}
+          disabled={
+            menyimpan || !barang || (pakaiUnit && unitDipilih.length === 0)
+          }
           className={TOMBOL_UTAMA}
         >
           {menyimpan ? "Menyimpan..." : `Simpan barang ${jenis.toLowerCase()}`}

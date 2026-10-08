@@ -403,6 +403,10 @@ export const mutasiDraftSchema = z
     nomor_dokumen: z.string().nullish(),
     harga_satuan: z.number().int().nullish(),
     catatan: z.string().nullish(),
+    /** Barang yang dicatat per unit: unit yang dikeluarkan atau dipindah. */
+    unit: z.array(z.string()).default([]),
+    /** Barang Masuk pertama yang memulai pencatatan per unit. */
+    per_unit: z.boolean().default(false),
   })
   .strict();
 
@@ -744,6 +748,11 @@ export function susunPembatalan(asal: MutasiAsal): Hasil<MutasiAsal> {
   if (asal.alasan === "Pembatalan") {
     return { ok: false, error: "Pembatalan tidak bisa dibatalkan lagi." };
   }
+  // Cermin `build_cancellation`: Distribusi di luar Pindah hanya ditulis
+  // pendaftaran unit, dan membatalkannya menghitung barang yang sama dua kali.
+  if (asal.alasan === "Distribusi" && asal.jenis !== "Pindah") {
+    return { ok: false, error: "Pendaftaran unit tidak bisa dibatalkan." };
+  }
   const jenis =
     asal.jenis === "Masuk"
       ? "Keluar"
@@ -780,6 +789,10 @@ export interface PosisiStok {
   tanggal_expired: string | null;
   sisa_hari: number | null;
   status_kedaluwarsa: StatusKedaluwarsa | null;
+  /** Terisi bila posisi ini satu unit (`id_batch` = `id_unit`). */
+  kode_unit: string | null;
+  nomor_seri: string | null;
+  catatan_unit: string | null;
 }
 
 export interface BarangInventaris {
@@ -800,6 +813,8 @@ export interface BarangInventaris {
   stok_baik: number;
   stok_menipis: boolean;
   posisi: PosisiStok[];
+  /** Sudah punya unit: keluar dan pindah wajib memilih unitnya. */
+  dilacak_unit: boolean;
 }
 
 export interface DaftarInventaris {
@@ -970,21 +985,46 @@ export function isiLabelInventaris(idBarang: string): string {
 }
 
 /**
- * Baca hasil pindai label, atau kode barang yang diketik sebagai cadangan
- * (pemindai USB pun mengetik isinya lalu Enter).
+ * Baca hasil pindai label, atau kode barang/kode unit yang diketik sebagai
+ * cadangan (pemindai USB pun mengetik isinya lalu Enter). Label unit berisi
+ * `INV:<id_unit>`; unit dicari di posisi barang, jadi unit yang saldonya 0
+ * (afkir atau hilang) tidak dikenali.
  */
 export function bacaLabelInventaris<
-  B extends { id_barang: string; kode_barang: string },
->(teks: string, barang: readonly B[]): Hasil<B> {
+  B extends {
+    id_barang: string;
+    kode_barang: string;
+    posisi?: readonly { id_batch: string | null; kode_unit: string | null }[];
+  },
+>(
+  teks: string,
+  barang: readonly B[],
+): Hasil<{ barang: B; id_unit: string | null }> {
   const bersih = teks.trim();
   if (!bersih) {
     return { ok: false, error: "Pindai label atau ketik kode barang." };
   }
+  const unitDengan = (
+    cocok: (p: {
+      id_batch: string | null;
+      kode_unit: string | null;
+    }) => boolean,
+  ) => {
+    for (const b of barang) {
+      const posisi = (b.posisi ?? []).find(
+        (p) => p.kode_unit !== null && cocok(p),
+      );
+      if (posisi?.id_batch) return { barang: b, id_unit: posisi.id_batch };
+    }
+    return null;
+  };
   if (asciiLower(bersih.slice(0, AWALAN_LABEL_INVENTARIS.length)) === "inv:") {
     const id = bersih.slice(AWALAN_LABEL_INVENTARIS.length).trim();
     const cocok = barang.find((b) => b.id_barang === id);
-    return cocok
-      ? { ok: true, value: cocok }
+    if (cocok) return { ok: true, value: { barang: cocok, id_unit: null } };
+    const unit = unitDengan((p) => p.id_batch === id);
+    return unit
+      ? { ok: true, value: unit }
       : {
           ok: false,
           error:
@@ -995,8 +1035,12 @@ export function bacaLabelInventaris<
     return { ok: false, error: "Ini kartu absensi, bukan label inventaris." };
   }
   const kunci = asciiLower(bersih);
+  const unit = unitDengan((p) => asciiLower(p.kode_unit ?? "") === kunci);
+  if (unit) return { ok: true, value: unit };
   const cocok = barang.filter((b) => asciiLower(b.kode_barang) === kunci);
-  if (cocok.length === 1 && cocok[0]) return { ok: true, value: cocok[0] };
+  if (cocok.length === 1 && cocok[0]) {
+    return { ok: true, value: { barang: cocok[0], id_unit: null } };
+  }
   return {
     ok: false,
     error:
@@ -1013,23 +1057,39 @@ export function bacaLabelInventaris<
  * - Habis Pakai: hanya melompat ke isian jumlahnya; label obat ditempel di
  *   rak, bukan di tiap bungkus, dan tidak membedakan batch.
  * - Tidak ada barisnya di tempat ini: ditawarkan sebagai barang ditemukan.
+ * - Label unit: unit itu ditandai ada (fisik 1). Unit yang tercatat di tempat
+ *   lain tidak dipindahkan diam-diam; petugas mencatat Pindah dengan sadar.
+ * - Label barang dari barang yang dicatat per unit: ditolak, karena tidak
+ *   menunjuk unit mana.
  * Baris yang tidak pernah dipindai tidak disentuh, jadi tetap sesuai sistem.
  */
 export type AksiPindaiOpname =
   | { jenis: "hitung"; kunci: string; fisik: number }
   | { jenis: "fokus"; kunci: string }
-  | { jenis: "baru" };
+  | { jenis: "baru" }
+  | { jenis: "unit"; kunci: string; sudah: boolean }
+  | { jenis: "unit-lain" }
+  | { jenis: "pakai-label-unit" };
 
 export function aksiPindaiOpname(
   baris: readonly {
     kunci: string;
     barang: { id_barang: string };
     kondisi: string;
+    id_batch: string | null;
     fisik: string;
     dipindai: boolean;
   }[],
-  barang: { id_barang: string; tipe: TipeBarang },
+  barang: { id_barang: string; tipe: TipeBarang; dilacak_unit?: boolean },
+  idUnit: string | null = null,
 ): AksiPindaiOpname {
+  if (idUnit !== null) {
+    const baris_unit = baris.find((b) => b.id_batch === idUnit);
+    return baris_unit
+      ? { jenis: "unit", kunci: baris_unit.kunci, sudah: baris_unit.dipindai }
+      : { jenis: "unit-lain" };
+  }
+  if (barang.dilacak_unit) return { jenis: "pakai-label-unit" };
   const milik = baris.filter((b) => b.barang.id_barang === barang.id_barang);
   if (barang.tipe === "Aset") {
     const baik = milik.find((b) => b.kondisi === "Baik");
@@ -1042,4 +1102,104 @@ export function aksiPindaiOpname(
   }
   const pertama = milik[0];
   return pertama ? { jenis: "fokus", kunci: pertama.kunci } : { jenis: "baru" };
+}
+
+// ── Unit (registri aset per unit, v37) ──────────────────────────────────────
+//
+// Cermin bagian unit di `inventory.rs`. Satu unit = satu "batch" berjumlah 1:
+// `id_unit` adalah `id_mutasi` baris Masuk pembukanya.
+
+export const MAKS_UNIT_SEKALI = 200;
+export const MAKS_UNIT_DAFTAR = 1000;
+
+/** Cermin `format_kode_unit`: `LAP-0003-02`. */
+export function formatKodeUnit(kodeBarang: string, nomor: number): string {
+  return `${kodeBarang}-${String(nomor).padStart(2, "0")}`;
+}
+
+export interface AturanUnit {
+  dilacak: boolean;
+  per_unit: boolean;
+  tipe: string;
+  bisa_expired: boolean;
+  jenis: string;
+  alasan: string;
+  jumlah: number;
+  unit: readonly string[];
+}
+
+/** Cermin `validate_unit_rules`. Mengembalikan daftar unit yang dirapikan. */
+export function validasiUnit(aturan: AturanUnit): Hasil<string[]> {
+  if (
+    aturan.per_unit &&
+    !aturan.dilacak &&
+    (aturan.tipe !== "Aset" ||
+      aturan.bisa_expired ||
+      aturan.jenis !== "Masuk" ||
+      aturan.alasan === "Pengembalian")
+  ) {
+    return {
+      ok: false,
+      error:
+        "Pencatatan per unit hanya untuk aset tanpa kedaluwarsa yang dicatat masuk.",
+    };
+  }
+  if (!(aturan.dilacak || aturan.per_unit)) {
+    return aturan.unit.length > 0
+      ? { ok: false, error: "Barang ini tidak dicatat per unit." }
+      : { ok: true, value: [] };
+  }
+  if (aturan.jenis === "Masuk") {
+    if (aturan.unit.length > 0) {
+      return {
+        ok: false,
+        error: "Unit baru dibuat otomatis saat barang masuk.",
+      };
+    }
+    if (aturan.alasan !== "Pengembalian" && aturan.jumlah > MAKS_UNIT_SEKALI) {
+      return { ok: false, error: "Paling banyak 200 unit sekali catat." };
+    }
+    return { ok: true, value: [] };
+  }
+  const unit = aturan.unit.map((item) => item.trim()).filter(Boolean);
+  if (unit.length === 0)
+    return { ok: false, error: "Pilih unit yang dicatat." };
+  if (unit.length > MAKS_UNIT_SEKALI) {
+    return { ok: false, error: "Paling banyak 200 unit sekali catat." };
+  }
+  if (new Set(unit).size !== unit.length) {
+    return { ok: false, error: "Unit yang sama dipilih dua kali." };
+  }
+  if (unit.length !== aturan.jumlah) {
+    return {
+      ok: false,
+      error: "Jumlah harus sama dengan banyaknya unit yang dipilih.",
+    };
+  }
+  return { ok: true, value: unit };
+}
+
+export const unitDraftSchema = z
+  .object({
+    id_unit: z.string().default(""),
+    nomor_seri: z.string().nullish(),
+    catatan: z.string().nullish(),
+  })
+  .strict();
+
+export type UnitDraft = z.input<typeof unitDraftSchema>;
+
+/** Cermin `validate_unit_edit`. */
+export function validasiUnitEdit(
+  draft: z.output<typeof unitDraftSchema>,
+): Hasil<{ nomor_seri: string | null; catatan: string | null }> {
+  const nomor_seri = bersih(draft.nomor_seri);
+  if (terlaluPanjang(nomor_seri, 60)) {
+    return { ok: false, error: "Nomor seri maksimal 60 karakter." };
+  }
+  const catatan = bersih(draft.catatan);
+  if (terlaluPanjang(catatan, 200)) {
+    return { ok: false, error: "Catatan unit maksimal 200 karakter." };
+  }
+  return { ok: true, value: { nomor_seri, catatan } };
 }

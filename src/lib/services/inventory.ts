@@ -13,6 +13,7 @@ import {
   type DaftarPinjaman,
   type DokumenInventaris,
   formatKodeBarang,
+  formatKodeUnit,
   idPembatalan,
   isValidDate,
   jenisBeritaAcara,
@@ -24,6 +25,7 @@ import {
   MAKS_BARIS_KARTU_STOK,
   MAKS_BARIS_PENGADAAN,
   MAKS_BARIS_PINJAMAN,
+  MAKS_UNIT_DAFTAR,
   type MutasiAsal,
   type MutasiDraftParsed,
   type MutasiValid,
@@ -43,6 +45,9 @@ import {
   stokMenipis,
   susunPembatalan,
   type TipeBarang,
+  unitDraftSchema,
+  validasiUnit,
+  validasiUnitEdit,
   validateBarang,
   validateKodePrefixes,
   validateMutasi,
@@ -170,11 +175,13 @@ async function saldoPosisi(
 export async function listInventory(client: Client): Promise<DaftarInventaris> {
   const posisiResult = await client.execute(
     `SELECT s.id_barang, s.tempat, s.kondisi, s.id_batch, s.saldo, m.tanggal_expired,
-            CAST(julianday(m.tanggal_expired) - julianday(date('now', '+7 hours')) AS INTEGER) AS sisa_hari
+            CAST(julianday(m.tanggal_expired) - julianday(date('now', '+7 hours')) AS INTEGER) AS sisa_hari,
+            u.kode_unit, u.nomor_seri, u.catatan AS catatan_unit
      FROM inventory_saldo s
      LEFT JOIN inventory_mutasi m ON m.id_mutasi = s.id_batch
+     LEFT JOIN inventory_unit u ON u.id_unit = s.id_batch
      WHERE s.saldo <> 0
-     ORDER BY s.id_barang, m.tanggal_expired IS NULL, m.tanggal_expired, s.tempat
+     ORDER BY s.id_barang, m.tanggal_expired IS NULL, m.tanggal_expired, u.kode_unit, s.tempat
      -- batas: satu baris per posisi stok (barang × tempat × kondisi × batch) yang saldonya bukan nol
      ;`,
   );
@@ -193,9 +200,17 @@ export async function listInventory(client: Client): Promise<DaftarInventaris> {
         row.sisa_hari === null
           ? null
           : statusKedaluwarsa(Number(row.sisa_hari)),
+      kode_unit: text(row.kode_unit),
+      nomor_seri: text(row.nomor_seri),
+      catatan_unit: text(row.catatan_unit),
     });
     posisiPerBarang.set(id, list);
   }
+  const dilacak = new Set(
+    (
+      await client.execute("SELECT DISTINCT id_barang FROM inventory_unit;")
+    ).rows.map((row) => String(row.id_barang)),
+  );
 
   const barangResult = await client.execute(
     `SELECT id_barang, kode_barang, nama_barang, kategori, tipe, satuan, bisa_expired,
@@ -225,6 +240,7 @@ export async function listInventory(client: Client): Promise<DaftarInventaris> {
       stok_baik: stokBaik,
       stok_menipis: stokMenipis(stokBaik, Number(row.stok_minimum)),
       posisi,
+      dilacak_unit: dilacak.has(String(row.id_barang)),
     };
   });
 
@@ -473,6 +489,239 @@ export async function recordMutationTx(
   draft: MutasiDraftParsed,
   idRef: string | null,
 ): Promise<string> {
+  const idBarang = draft.id_barang.trim();
+  const barangResult = await tx.execute({
+    sql: "SELECT tipe, bisa_expired FROM inventory_barang WHERE id_barang = ?;",
+    args: [idBarang],
+  });
+  const barang = barangResult.rows[0];
+  if (!barang) throw new Error("Barang tidak ditemukan.");
+  const dilacak = await barangDilacak(tx, idBarang);
+  const checked = validasiUnit({
+    dilacak,
+    per_unit: draft.per_unit,
+    tipe: String(barang.tipe),
+    bisa_expired: Number(barang.bisa_expired) === 1,
+    jenis: draft.jenis,
+    alasan: draft.alasan,
+    jumlah: draft.jumlah,
+    unit: draft.unit,
+  });
+  if (!checked.ok) throw new Error(checked.error);
+  // Pengembalian unit membawa batch (= unit) dari peminjamannya sendiri.
+  if (!(dilacak || draft.per_unit) || draft.alasan === "Pengembalian") {
+    return recordSatu(tx, dicatatOleh, draft, idRef, null, false);
+  }
+
+  // Beberapa unit dalam satu aksi berbagi satu nomor dokumen.
+  const satu: MutasiDraftParsed = {
+    ...draft,
+    jumlah: 1,
+    unit: [],
+    per_unit: false,
+    nomor_dokumen:
+      draft.nomor_dokumen?.trim() ||
+      (draft.jumlah > 1 ? await nomorDokumenUnit(tx) : draft.nomor_dokumen),
+  };
+  let pertama: string | null = null;
+  if (draft.jenis === "Masuk") {
+    for (let i = 0; i < draft.jumlah; i++) {
+      const id = await recordSatu(tx, dicatatOleh, satu, idRef, null, true);
+      await buatUnit(tx, idBarang, id);
+      pertama ??= id;
+    }
+  } else {
+    for (const idUnit of checked.value) {
+      const milik = await tx.execute({
+        sql: "SELECT EXISTS(SELECT 1 FROM inventory_unit WHERE id_unit = ? AND id_barang = ?) AS ada;",
+        args: [idUnit, idBarang],
+      });
+      if (Number(milik.rows[0]?.ada) !== 1) {
+        throw new Error("Unit tidak ditemukan.");
+      }
+      const id = await recordSatu(tx, dicatatOleh, satu, idRef, idUnit, false);
+      pertama ??= id;
+    }
+  }
+  if (pertama === null) throw new Error("Mutasi tidak tersimpan.");
+  return pertama;
+}
+
+async function barangDilacak(tx: Executor, idBarang: string): Promise<boolean> {
+  const result = await tx.execute({
+    sql: "SELECT EXISTS(SELECT 1 FROM inventory_unit WHERE id_barang = ?) AS ada;",
+    args: [idBarang],
+  });
+  return Number(result.rows[0]?.ada) === 1;
+}
+
+async function nomorDokumenUnit(tx: Executor): Promise<string> {
+  const acak = randomUUID().replaceAll("-", "").slice(0, 4).toUpperCase();
+  return `UNT-${(await wibToday(tx)).replaceAll("-", "")}-${acak}`;
+}
+
+/** Cermin `buat_unit`: nomor urut dihitung dari unit yang sudah ada. */
+async function buatUnit(
+  tx: Transaction,
+  idBarang: string,
+  idUnit: string,
+): Promise<void> {
+  const result = await tx.execute({
+    sql: `SELECT b.kode_barang,
+                 (SELECT COUNT(*) FROM inventory_unit u WHERE u.id_barang = b.id_barang) AS jumlah
+          FROM inventory_barang b WHERE b.id_barang = ?;`,
+    args: [idBarang],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error("Barang tidak ditemukan.");
+  await tx.execute({
+    sql: `INSERT INTO inventory_unit (id_unit, id_barang, kode_unit, created_at, updated_at)
+          VALUES (?, ?, ?, datetime('now'), datetime('now'));`,
+    args: [
+      idUnit,
+      idBarang,
+      formatKodeUnit(String(row.kode_barang), Number(row.jumlah) + 1),
+    ],
+  });
+}
+
+/** Cermin `register_units`: stok lama tanpa nomor menjadi unit. */
+export async function registerUnits(
+  client: Client,
+  dicatatOleh: string,
+  idBarang: string,
+): Promise<{ sukses: true; jumlah: number; nomor_dokumen: string }> {
+  const id = idBarang.trim();
+  return withTransaction(client, async (tx) => {
+    const barang = (
+      await tx.execute({
+        sql: "SELECT tipe, bisa_expired, status_aktif FROM inventory_barang WHERE id_barang = ?;",
+        args: [id],
+      })
+    ).rows[0];
+    if (!barang) throw new Error("Barang tidak ditemukan.");
+    if (String(barang.tipe) !== "Aset" || Number(barang.bisa_expired) === 1) {
+      throw new Error(
+        "Hanya aset tanpa kedaluwarsa yang bisa dicatat per unit.",
+      );
+    }
+    if (Number(barang.status_aktif) !== 1) {
+      throw new Error("Barang sudah dinonaktifkan.");
+    }
+    const posisi = (
+      await tx.execute({
+        sql: `SELECT tempat, kondisi, saldo FROM inventory_saldo
+              WHERE id_barang = ? AND id_batch IS NULL AND saldo > 0
+              ORDER BY tempat, kondisi;`,
+        args: [id],
+      })
+    ).rows.map((row) => ({
+      tempat: String(row.tempat),
+      kondisi: String(row.kondisi),
+      saldo: Number(row.saldo),
+    }));
+    const total = posisi.reduce((sum, item) => sum + item.saldo, 0);
+    if (total === 0) {
+      throw new Error("Tidak ada stok yang belum terdaftar sebagai unit.");
+    }
+    if (total > MAKS_UNIT_DAFTAR) {
+      throw new Error(
+        "Stok terlalu banyak untuk didaftarkan sekaligus (maksimal 1000 unit).",
+      );
+    }
+    const tanggal = await wibToday(tx);
+    const nomor = await nomorDokumenUnit(tx);
+    const dasar: MutasiValid = {
+      jenis: "Keluar",
+      alasan: "Distribusi",
+      tanggal,
+      jumlah: 1,
+      tempat_asal: null,
+      kondisi_asal: null,
+      tempat_tujuan: null,
+      kondisi_tujuan: null,
+      id_batch: null,
+      tanggal_expired: null,
+      id_ref: null,
+      penerima_tipe: null,
+      penerima_id: null,
+      penerima_nama: null,
+      keperluan: null,
+      sumber_dana: null,
+      nomor_dokumen: nomor,
+      harga_satuan: null,
+      catatan: "Pendaftaran unit",
+    };
+    for (const item of posisi) {
+      await tx.execute(
+        insertMutasiStatement(
+          newHexId("mts-"),
+          id,
+          {
+            ...dasar,
+            jumlah: item.saldo,
+            tempat_asal: item.tempat,
+            kondisi_asal: item.kondisi,
+          },
+          null,
+          dicatatOleh,
+        ),
+      );
+      for (let i = 0; i < item.saldo; i++) {
+        const idUnit = newHexId("mts-");
+        await tx.execute(
+          insertMutasiStatement(
+            idUnit,
+            id,
+            {
+              ...dasar,
+              jenis: "Masuk",
+              tempat_tujuan: item.tempat,
+              kondisi_tujuan: item.kondisi,
+              id_batch: idUnit,
+            },
+            null,
+            dicatatOleh,
+          ),
+        );
+        await buatUnit(tx, id, idUnit);
+      }
+    }
+    return { sukses: true as const, jumlah: total, nomor_dokumen: nomor };
+  });
+}
+
+/** Cermin `save_unit`. Kode unit tidak bisa diubah karena sudah tercetak. */
+export async function saveUnit(
+  client: Client,
+  rawDraft: unknown,
+): Promise<{ sukses: true }> {
+  const parsed = unitDraftSchema.safeParse(rawDraft);
+  if (!parsed.success) throw new Error("Data unit tidak valid.");
+  const checked = validasiUnitEdit(parsed.data);
+  if (!checked.ok) throw new Error(checked.error);
+  const result = await client.execute({
+    sql: `UPDATE inventory_unit SET nomor_seri = ?, catatan = ?, updated_at = datetime('now')
+          WHERE id_unit = ?;`,
+    args: [
+      checked.value.nomor_seri,
+      checked.value.catatan,
+      parsed.data.id_unit.trim(),
+    ],
+  });
+  if (result.rowsAffected === 0) throw new Error("Unit tidak ditemukan.");
+  return { sukses: true as const };
+}
+
+/** Inti satu baris mutasi; cermin `record_satu`. */
+async function recordSatu(
+  tx: Transaction,
+  dicatatOleh: string,
+  draft: MutasiDraftParsed,
+  idRef: string | null,
+  unit: string | null,
+  jadikanBatch: boolean,
+): Promise<string> {
   {
     const idBarang = draft.id_barang.trim();
     const barangResult = await tx.execute({
@@ -492,6 +741,7 @@ export async function recordMutationTx(
     );
     if (!checked.ok) throw new Error(checked.error);
     const valid = checked.value;
+    if (unit !== null) valid.id_batch = unit;
     if (idRef !== null) valid.id_ref = idRef;
     if (!(ALASAN_FORMULIR as readonly string[]).includes(valid.alasan)) {
       throw new Error("Alasan ini belum bisa dicatat dari formulir.");
@@ -563,7 +813,11 @@ export async function recordMutationTx(
     }
 
     const idMutasi = newHexId("mts-");
-    if (valid.jenis === "Masuk" && bisaExpired && valid.id_batch === null) {
+    if (
+      valid.jenis === "Masuk" &&
+      (bisaExpired || jadikanBatch) &&
+      valid.id_batch === null
+    ) {
       valid.id_batch = idMutasi;
     }
     await tx.execute(
@@ -817,6 +1071,19 @@ export async function recordOpname(
         });
         if (Number(ada.rows[0]?.ada) !== 1) {
           throw new Error(`Batch ${nama} tidak ditemukan.`);
+        }
+        idBatch = baris.id_batch;
+      } else if (baris.id_batch !== null) {
+        // Cermin `record_opname`: barang per unit, tiap unit batch-nya sendiri.
+        const milik = await tx.execute({
+          sql: "SELECT EXISTS(SELECT 1 FROM inventory_unit WHERE id_unit = ? AND id_barang = ?) AS ada;",
+          args: [baris.id_batch, baris.id_barang],
+        });
+        if (Number(milik.rows[0]?.ada) !== 1) {
+          throw new Error(`Unit ${nama} tidak ditemukan.`);
+        }
+        if (baris.fisik > 1) {
+          throw new Error(`Satu unit ${nama} hanya bisa dihitung 0 atau 1.`);
         }
         idBatch = baris.id_batch;
       }

@@ -41,6 +41,7 @@ const EMPLOYEE_IDENTITY_HISTORY_MIGRATION_VERSION = 33;
 const WA_SEND_CLAIM_MIGRATION_VERSION = 34;
 const INVENTORY_MIGRATION_VERSION = 35;
 const UKS_MIGRATION_VERSION = 36;
+const INVENTORY_UNIT_MIGRATION_VERSION = 37;
 
 /**
  * v21 — aturan jam scan baru: Jam Kerja Normal = (Jam Pulang − Jam Masuk) −
@@ -1551,6 +1552,28 @@ export async function runDatabaseMigrations(client: Client) {
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'uks-visit-book', ?);`,
     args: [UKS_MIGRATION_VERSION, now],
+  });
+
+  // v37 — registri aset per unit. Hanya identitas unit; tempat dan kondisinya
+  // diturunkan dari mutasi. DDL WAJIB identik dengan `storage.rs` dan `turso.rs`.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_unit (
+      id_unit TEXT PRIMARY KEY,
+      id_barang TEXT NOT NULL,
+      kode_unit TEXT NOT NULL,
+      nomor_seri TEXT,
+      catatan TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_unit_barang ON inventory_unit(id_barang);",
+  );
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'inventory-unit', ?);`,
+    args: [INVENTORY_UNIT_MIGRATION_VERSION, now],
   });
 
   await client.execute(

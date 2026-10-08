@@ -728,6 +728,19 @@ pub fn initialize(path: &Path) -> Result<(), String> {
             FROM inventory_mutasi WHERE tempat_asal IS NOT NULL
         )
         GROUP BY id_barang, LOWER(tempat), kondisi, id_batch;
+      -- Registri aset per unit (v37). Hanya identitas: `id_unit` = id_mutasi
+      -- baris Masuk pembukanya, sehingga unit adalah batch berjumlah 1 dan
+      -- tempat/kondisinya diturunkan dari mutasi. Tanpa UNIQUE selain PK.
+      CREATE TABLE IF NOT EXISTS inventory_unit (
+        id_unit TEXT PRIMARY KEY,
+        id_barang TEXT NOT NULL,
+        kode_unit TEXT NOT NULL,
+        nomor_seri TEXT,
+        catatan TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inventory_unit_barang ON inventory_unit(id_barang);
       -- Buku Kunjungan UKS (v36). SENGAJA di luar SNAPSHOT_TABLES, pola
       -- `absensi_foto`: ditulis lokal, didorong ke cloud lewat outbox, tidak
       -- pernah ditarik ke perangkat lain. Isinya data kesehatan anak, jadi
@@ -1716,6 +1729,7 @@ pub(crate) const CLOUD_MIRRORED_TABLES: &[&str] = &[
     "hari_libur_whitelist",
     "inventory_barang",
     "inventory_mutasi",
+    "inventory_unit",
     // Di luar snapshot, tetapi milik database asalnya seperti `absensi_foto`.
     "uks_kunjungan",
     "company_profile",

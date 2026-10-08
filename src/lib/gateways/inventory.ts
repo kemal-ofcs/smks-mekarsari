@@ -14,6 +14,7 @@ import type {
   PenerimaInventaris,
   RekapPengadaan,
   RiwayatOpname,
+  UnitDraft,
 } from "@/lib/validations/inventory";
 
 export type {
@@ -31,6 +32,7 @@ export type {
   PosisiStok,
   RekapPengadaan,
   RiwayatOpname,
+  UnitDraft,
 } from "@/lib/validations/inventory";
 
 // Command `desktop_inventory_*` terdaftar di biner Desktop DAN Mobile
@@ -96,6 +98,36 @@ export async function catatMutasiInventaris(
     return result;
   }
   return requestWebApi("/api/inventory/mutation", "POST", { draft });
+}
+
+/** Stok aset yang belum bernomor menjadi unit; jumlahnya tidak berubah. */
+export async function daftarkanUnitInventaris(
+  idBarang: string,
+): Promise<{ sukses: boolean; jumlah: number; nomor_dokumen: string }> {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<{
+      sukses: boolean;
+      jumlah: number;
+      nomor_dokumen: string;
+    }>("desktop_inventory_register_units", { idBarang });
+    kickDesktopSync();
+    return result;
+  }
+  return requestWebApi("/api/inventory/units/register", "POST", { idBarang });
+}
+
+export async function simpanUnitInventaris(
+  draft: UnitDraft,
+): Promise<{ sukses: boolean }> {
+  if (isDesktopRuntime()) {
+    const result = await invokeDesktop<{ sukses: boolean }>(
+      "desktop_inventory_save_unit",
+      { draft },
+    );
+    kickDesktopSync();
+    return result;
+  }
+  return requestWebApi("/api/inventory/units/save", "POST", { draft });
 }
 
 export async function batalkanMutasiInventaris(

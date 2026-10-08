@@ -620,6 +620,43 @@ impl QueryResult {
 /// `DesktopState::get_turso_client` membuat `TursoClient` baru setiap kali dipanggil,
 /// jadi cache tidak boleh menempel di instance — kalau tidak, `ensure_schema_current`
 /// menambah satu round-trip ke Turso di setiap push dan setiap pull.
+/// Izin yang TIDAK ikut paket bawaan Admin. WAJIB sama dengan
+/// `SUPERADMIN_ONLY_PERMISSIONS`, `"diagnostics.view"`, dan
+/// `SENSITIVE_MUTATION_PERMISSIONS` di `src/lib/rbac/catalog.ts`;
+/// `rbac-migration.test.ts` membaca daftar ini dan membandingkannya.
+pub const ADMIN_DEFAULT_EXCLUDED_PERMISSIONS: &[&str] = &[
+    // SUPERADMIN_ONLY_PERMISSIONS
+    "operators.view",
+    "operators.manage",
+    "roles.manage",
+    "payroll.config.manage",
+    "diagnostics.view",
+    // SENSITIVE_MUTATION_PERMISSIONS
+    "history.edit",
+    "history.delete",
+    "operational.edit",
+    "operational.delete",
+    "password_reset.delete",
+    "two_factor.reset",
+    "attendance_photo.delete",
+    "database_backup.restore",
+    "password_reset.approve",
+    "class_attendance.delete",
+    "teaching_journal.delete",
+    "attendance_ledger.delete",
+    "notification.send",
+    "notification.delete",
+    "notification.template",
+    "counseling.delete",
+    "pmb.delete",
+    "pmb.promote",
+    "grades.delete",
+    "students.reset_wali_password",
+    "content.delete",
+    "inventory.adjust",
+    "uks.delete",
+];
+
 static SCHEMA_VERIFIED: std::sync::OnceLock<Mutex<HashSet<String>>> = std::sync::OnceLock::new();
 
 fn schema_verified_cache() -> &'static Mutex<HashSet<String>> {
@@ -993,6 +1030,12 @@ const SNAPSHOT_SOURCES: &[SnapshotSource] = &[
         payload_key: "inventoryMutations",
         table: "inventory_mutasi",
         sql: "SELECT * FROM inventory_mutasi ORDER BY tanggal, created_at, id_mutasi\n-- sengaja-utuh: stok adalah jumlah SELURUH riwayat mutasi; jendela waktu atau LIMIT membuat setiap perangkat menghitung stok yang salah tanpa tahu datanya terpotong.\n;",
+    },
+    // ── v37: Registri aset per unit ──
+    SnapshotSource {
+        payload_key: "inventoryUnits",
+        table: "inventory_unit",
+        sql: "SELECT * FROM inventory_unit ORDER BY id_unit;",
     },
 ];
 
@@ -2076,6 +2119,24 @@ impl TursoClient {
                     GROUP BY id_barang, LOWER(tempat), kondisi, id_batch;"#,
                 vec![],
             ),
+            // Registri aset per unit (v37). WAJIB identik dengan `storage.rs`
+            // dan `db-migrations.ts`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS inventory_unit (
+                    id_unit TEXT PRIMARY KEY,
+                    id_barang TEXT NOT NULL,
+                    kode_unit TEXT NOT NULL,
+                    nomor_seri TEXT,
+                    catatan TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                "CREATE INDEX IF NOT EXISTS idx_inventory_unit_barang ON inventory_unit(id_barang);",
+                vec![],
+            ),
             // Buku Kunjungan UKS (v36). Di luar SNAPSHOT_SOURCES: barisnya
             // didorong dari perangkat pencatat dan tidak pernah ditarik ke
             // perangkat lain. WAJIB identik dengan `storage.rs` dan
@@ -2385,12 +2446,21 @@ impl TursoClient {
                 SELECT 1, permission_key, 1, datetime('now'), 'system' FROM app_permission;"#,
                 vec![],
             ),
-            // Seed Default Role Permissions untuk Role Admin (Role 2)
+            // Paket bawaan Admin = `DEFAULT_ROLE_PERMISSIONS.admin` di TS.
+            // `INSERT OR IGNORE` hanya mengisi izin yang belum punya baris,
+            // jadi izin yang dicabut (baris `is_allowed = 0`) tidak hidup lagi.
             Statement::new(
-                r#"INSERT OR IGNORE INTO role_permission (role_id, permission_key, is_allowed, updated_at, updated_by)
-                SELECT 2, permission_key, 1, datetime('now'), 'system' FROM app_permission
-                WHERE permission_key NOT IN ('roles.manage', 'operators.manage');"#,
-                vec![],
+                format!(
+                    "INSERT OR IGNORE INTO role_permission (role_id, permission_key, is_allowed, updated_at, updated_by)
+                     SELECT r.id, p.permission_key, 1, datetime('now'), 'system'
+                     FROM app_permission p JOIN app_role r ON r.role_key = 'admin'
+                     WHERE p.permission_key NOT IN ({});",
+                    vec!["?"; ADMIN_DEFAULT_EXCLUDED_PERMISSIONS.len()].join(", ")
+                ),
+                ADMIN_DEFAULT_EXCLUDED_PERMISSIONS
+                    .iter()
+                    .map(|key| json!(key))
+                    .collect(),
             ),
             // Seed Settings
             Statement::new(
@@ -3199,7 +3269,8 @@ impl TursoClient {
                 (33, 'employee-identity-history', datetime('now')),
                 (34, 'wa-send-claim', datetime('now')),
                 (35, 'inventory-foundation', datetime('now')),
-                (36, 'uks-visit-book', datetime('now'));"#,
+                (36, 'uks-visit-book', datetime('now')),
+                (37, 'inventory-unit', datetime('now'));"#,
                 vec![],
             ),
         ];
@@ -3538,6 +3609,16 @@ impl TursoClient {
             vec![],
         )
         .await?;
+        // v34-v36 menambah tabel dan membangun ulang CHECK `notifikasi_wa` tanpa
+        // menaikkan sentinel, sehingga database cloud lama yang hanya dilayani
+        // Desktop/Mobile tidak pernah menerimanya. Push memang menyembuhkan
+        // "no such table", tetapi CHECK yang menolak jenis `uks` bukan galat
+        // skema dan membuat outbox macet.
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2018, 'inventory-unit-v1', datetime('now'));",
+            vec![],
+        )
+        .await?;
 
         Ok(())
     }
@@ -3808,7 +3889,7 @@ impl TursoClient {
                 // Sentinel WAJIB dinaikkan setiap kali ensure_schema menambah
                 // tabel atau kolom — nilainya di sini dan pada INSERT di atas
                 // harus selalu sama.
-                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2017;",
+                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2018;",
                 vec![],
             )
             .await
@@ -5997,17 +6078,31 @@ impl TursoClient {
                 "Daftar permission memuat key yang tidak aktif atau tidak dikenal.",
             ));
         }
-        let mut stmts = vec![Statement::new(
-            "DELETE FROM role_permission WHERE role_id = ?;",
-            vec![json!(role_id)],
-        )];
-
-        for p_key in permissions {
-            stmts.push(Statement::new(
-                "INSERT INTO role_permission (role_id, permission_key, is_allowed, updated_at, updated_by) VALUES (?, ?, 1, datetime('now'), 'system');",
-                vec![json!(role_id), json!(p_key)],
-            ));
-        }
+        // Setiap izin aktif ditulis, termasuk yang dicabut (`is_allowed = 0`),
+        // persis seperti `role-admin.ts`. Versi sebelumnya MENGHAPUS baris
+        // yang dicabut, sehingga seed `INSERT OR IGNORE` di `ensure_schema`
+        // (berjalan lagi setiap skema naik versi) memberikannya kembali.
+        let diberi: HashSet<&str> = permissions.iter().map(String::as_str).collect();
+        let mut kunci: Vec<&String> = available.iter().collect();
+        kunci.sort();
+        let mut stmts: Vec<Statement> = kunci
+            .into_iter()
+            .map(|p_key| {
+                Statement::new(
+                    "INSERT INTO role_permission (role_id, permission_key, is_allowed, updated_at, updated_by)
+                     VALUES (?, ?, ?, datetime('now'), 'system')
+                     ON CONFLICT(role_id, permission_key) DO UPDATE SET
+                       is_allowed = excluded.is_allowed,
+                       updated_at = excluded.updated_at,
+                       updated_by = excluded.updated_by;",
+                    vec![
+                        json!(role_id),
+                        json!(p_key),
+                        json!(i64::from(diberi.contains(p_key.as_str()))),
+                    ],
+                )
+            })
+            .collect();
 
         // Bump rbac revision
         stmts.push(Statement::new(
@@ -7953,6 +8048,7 @@ fn canonical_sync_route(domain: &str, operation: &str) -> Option<(&'static str, 
         ("holiday-whitelist" | "holiday_whitelist", "delete") => ("holiday-whitelist", "delete"),
         ("inventory-item", "save") => ("inventory-item", "save"),
         ("inventory-mutation", "create") => ("inventory-mutation", "create"),
+        ("inventory-unit", "save") => ("inventory-unit", "save"),
         ("uks-visit", "save") => ("uks-visit", "save"),
         ("uks-visit", "delete") => ("uks-visit", "delete"),
         ("attendance", "scan") => ("attendance", "scan"),
@@ -8866,6 +8962,13 @@ async fn apply_event_to_turso(
             if let Some(values) = inventory::cloud_item_values(payload, entity_key) {
                 turso
                     .query_one(inventory::CLOUD_UPSERT_ITEM_SQL, values)
+                    .await?;
+            }
+        }
+        ("inventory-unit", "save") => {
+            if let Some(values) = inventory::cloud_unit_values(payload, entity_key) {
+                turso
+                    .query_one(inventory::CLOUD_UPSERT_UNIT_SQL, values)
                     .await?;
             }
         }
@@ -14384,6 +14487,59 @@ mod tests {
         assert_eq!(normal(1), 999);
     }
 
+    /// Seed Admin tidak memuat izin sensitif, dan izin yang dicabut lewat
+    /// Desktop/Mobile tidak diberikan lagi oleh `ensure_schema` berikutnya.
+    #[test]
+    fn izin_admin_yang_dicabut_tidak_hidup_lagi_setelah_provisioning_ulang() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime uji");
+        let dir = tempfile::tempdir().expect("direktori sementara");
+        let hub = dir.path().join("sppg-hub.db");
+        let client = TursoClient::local_file(
+            Url::parse("https://admin-seed.sppg.invalid").expect("origin uji"),
+            &hub,
+            Client::new(),
+        );
+        runtime.block_on(async {
+            client.ensure_schema().await.expect("provisioning lokal");
+        });
+        let connection = rusqlite::Connection::open(&hub).expect("buka hub");
+        let izin_admin = || -> Vec<String> {
+            let mut statement = connection
+                .prepare(
+                    "SELECT rp.permission_key FROM role_permission rp
+                     JOIN app_role r ON r.id = rp.role_id
+                     WHERE r.role_key = 'admin' AND rp.is_allowed = 1
+                     ORDER BY rp.permission_key;",
+                )
+                .expect("query izin");
+            statement
+                .query_map([], |row| row.get(0))
+                .expect("baca izin")
+                .collect::<Result<_, _>>()
+                .expect("izin")
+        };
+        let awal = izin_admin();
+        for kunci in ADMIN_DEFAULT_EXCLUDED_PERMISSIONS {
+            assert!(!awal.iter().any(|k| k == kunci), "{kunci} tidak boleh ikut seed Admin");
+        }
+        assert!(awal.iter().any(|k| k == "inventory.view"));
+
+        let id_admin: i64 = connection
+            .query_row("SELECT id FROM app_role WHERE role_key = 'admin';", [], |row| row.get(0))
+            .expect("id admin");
+        let sisa: Vec<String> = awal.iter().filter(|k| *k != "inventory.view").cloned().collect();
+        runtime.block_on(async {
+            client.set_role_permissions(id_admin, &sisa).await.expect("cabut");
+            client.ensure_schema().await.expect("provisioning ulang");
+        });
+        let akhir = izin_admin();
+        assert!(!akhir.iter().any(|k| k == "inventory.view"), "izin yang dicabut hidup lagi");
+        assert_eq!(akhir.len(), sisa.len());
+    }
+
     /// Jalan pulih terakhir bagi Superadmin, dibuktikan tanpa jaringan.
     ///
     /// Akun pertama adalah satu-satunya akun yang tidak punya siapa pun di
@@ -14743,7 +14899,7 @@ mod tests {
             connection
                 .execute_batch(
                     "DROP TABLE riwayat_identitas_karyawan;
-                     DELETE FROM schema_migration WHERE version = -2017;",
+                     DELETE FROM schema_migration WHERE version IN (-2017, -2018);",
                 )
                 .expect("siapkan database lama");
 
@@ -14756,6 +14912,42 @@ mod tests {
                 )
                 .expect("cek tabel");
             assert_eq!(ada, 1, "database bersentinel lama tidak diperbarui");
+        });
+    }
+
+    /// Database bersentinel `-2017` (sebelum v34) menerima tabel unit dan
+    /// CHECK `notifikasi_wa` yang menerima `uks` lewat `ensure_schema_current`.
+    #[test]
+    fn sentinel_2017_memicu_skema_inventaris_dan_uks() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime uji");
+        runtime.block_on(async {
+            let dir = tempfile::tempdir().expect("direktori sementara");
+            let hub = dir.path().join("sppg-hub.db");
+            let client = TursoClient::local_file(
+                Url::parse("https://sentinel-2017.sppg.invalid").expect("origin uji"),
+                &hub,
+                Client::new(),
+            );
+            client.ensure_schema().await.expect("provisioning lokal");
+            let connection = rusqlite::Connection::open(&hub).expect("buka hub");
+            connection
+                .execute_batch(
+                    "DROP TABLE inventory_unit;
+                     DELETE FROM schema_migration WHERE version = -2018;",
+                )
+                .expect("siapkan database lama");
+
+            client.ensure_schema_current().await.expect("skema mutakhir");
+            let ada: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = 'inventory_unit';",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("cek tabel");
+            assert_eq!(ada, 1, "database bersentinel -2017 tidak diperbarui");
         });
     }
 
