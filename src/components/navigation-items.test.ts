@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  BOTTOM_BAR_HREFS,
   groupNavigation,
   NAVIGATION,
   NAVIGATION_GROUPS,
@@ -14,11 +13,6 @@ describe("pengelompokan menu sidebar", () => {
       NAVIGATION.map((item) => item.href).sort(),
     );
     expect(new Set(grouped).size).toBe(grouped.length);
-  });
-
-  test("tombol bilah bawah menunjuk halaman yang ada", () => {
-    const hrefs = new Set(NAVIGATION.map((item) => item.href));
-    for (const href of BOTTOM_BAR_HREFS) expect(hrefs.has(href)).toBe(true);
   });
 
   test("kelompok tanpa isi tidak dikembalikan", () => {

@@ -66,7 +66,7 @@ export function QuickActionTile({
     rose: "bg-rose-500 text-white",
     amber: "bg-amber-500 text-white",
     emerald: "bg-emerald-500 text-white",
-    sky: "bg-sky-500 text-white",
+    sky: "bg-sky-700 text-white",
   }[badgeColor];
 
   return (

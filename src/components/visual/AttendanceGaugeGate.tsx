@@ -32,9 +32,14 @@ function SvgDonutFallback({
   persentase,
 }: AttendanceGaugeProps) {
   const tepatWaktu = Math.max(0, hadir - terlambat);
-  const totalSafe = Math.max(total, 1);
-  const activeTotal = tepatWaktu + terlambat + sakitIzin + alfa;
-  const denominator = activeTotal > 0 ? activeTotal : totalSafe;
+  // Pembaginya seluruh karyawan, bukan yang sudah tercatat: sisa lingkaran
+  // yang kosong adalah orang yang belum scan, sehingga cincin cocok dengan
+  // persentase di tengahnya. `max` menjaga cincin tidak melewati 360°.
+  const denominator = Math.max(
+    total,
+    tepatWaktu + terlambat + sakitIzin + alfa,
+    1,
+  );
 
   const radius = 64;
   const strokeWidth = 14;
@@ -46,28 +51,28 @@ function SvgDonutFallback({
         key: "hadir",
         label: "Tepat Waktu",
         count: tepatWaktu,
-        color: "#0ea5e9",
+        color: "var(--chart-tepat)",
         textColor: "text-sky-400",
       },
       {
         key: "terlambat",
         label: "Terlambat",
         count: terlambat,
-        color: "#f59e0b",
+        color: "var(--chart-telat)",
         textColor: "text-amber-400",
       },
       {
         key: "sakitIzin",
         label: "Sakit / Izin",
         count: sakitIzin,
-        color: "#8b5cf6",
+        color: "var(--chart-izin)",
         textColor: "text-purple-400",
       },
       {
         key: "alfa",
         label: "Alfa",
         count: alfa,
-        color: "#f43f5e",
+        color: "var(--chart-alfa)",
         textColor: "text-rose-400",
       },
     ];
@@ -103,7 +108,8 @@ function SvgDonutFallback({
           cy="80"
           r={radius}
           fill="none"
-          stroke="rgba(255, 255, 255, 0.06)"
+          // Slate-400 tipis: terlihat di panel gelap maupun putih.
+          stroke="rgb(148 163 184 / 0.22)"
           strokeWidth={strokeWidth}
         />
         {/* Segments */}
@@ -115,13 +121,14 @@ function SvgDonutFallback({
               cy="80"
               r={radius}
               fill="none"
-              stroke={slice.color}
               strokeWidth={strokeWidth}
               strokeDasharray={slice.strokeDasharray}
               strokeDashoffset={slice.strokeDashoffset}
               strokeLinecap="round"
               className="transition-all duration-300"
-              style={{ opacity: 0.95 }}
+              // `var()` lewat style, bukan atribut `stroke`: tidak semua
+              // WebView menerima variabel CSS di atribut presentasi SVG.
+              style={{ opacity: 0.95, stroke: slice.color }}
             />
           ) : null,
         )}

@@ -342,7 +342,7 @@ export default function TaxRulesPage() {
             <button
               type="button"
               onClick={() => handleOpenAdd(activeTab)}
-              className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-500 text-white transition flex items-center gap-1.5 shadow-sm"
+              className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-sky-700 hover:bg-sky-800 text-white transition flex items-center gap-1.5 shadow-sm"
             >
               <Icon name="plus" className="w-3.5 h-3.5" />
               Tambah Lapisan {activeTab}
@@ -597,7 +597,7 @@ export default function TaxRulesPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-semibold disabled:opacity-50 shadow-md shadow-sky-600/30"
+                  className="px-4 py-2 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-sm font-semibold disabled:opacity-50 shadow-md shadow-sky-600/30"
                 >
                   {saving ? "Menyimpan..." : "Simpan Lapisan"}
                 </button>

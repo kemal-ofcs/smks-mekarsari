@@ -908,7 +908,7 @@ export function LayoutPanel({
                         className={`rounded-md px-2.5 py-1 text-[10px] font-bold transition ${
                           matrixEditorPage === p
                             ? p === "front"
-                              ? "bg-sky-500 text-white"
+                              ? "bg-sky-700 text-white"
                               : "bg-violet-500 text-white"
                             : "text-slate-400 hover:text-white"
                         }`}

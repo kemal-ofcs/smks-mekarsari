@@ -222,7 +222,7 @@ export function JamPelajaranCard() {
           <button
             type="submit"
             disabled={busy}
-            className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-500 disabled:opacity-50"
+            className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-800 disabled:opacity-50"
           >
             {busy ? "Menyimpan..." : "Simpan Pengaturan"}
           </button>
@@ -467,7 +467,7 @@ export function JamPelajaranCard() {
               </button>
               <button
                 type="submit"
-                className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white"
+                className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white"
               >
                 Simpan Jam Bel
               </button>

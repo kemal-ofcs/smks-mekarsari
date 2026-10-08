@@ -163,7 +163,7 @@ export function AttendanceWeeklyTrend({
                     initial={{ height: 0 }}
                     animate={{ height: `${alfaPct}%` }}
                     transition={{ duration: 0.5, delay: idx * 0.05 }}
-                    className="w-full rounded-t-md bg-rose-500/80 shadow-sm"
+                    className="w-full rounded-t-md bg-(--chart-alfa) shadow-sm"
                     title={`Alfa: ${item.alfa}`}
                   />
                 ) : null}
@@ -174,7 +174,7 @@ export function AttendanceWeeklyTrend({
                     initial={{ height: 0 }}
                     animate={{ height: `${telatPct}%` }}
                     transition={{ duration: 0.5, delay: idx * 0.05 + 0.1 }}
-                    className="w-full bg-amber-400/90 shadow-sm"
+                    className="w-full bg-(--chart-telat) shadow-sm"
                     title={`Terlambat: ${item.terlambat}`}
                   />
                 ) : null}
@@ -185,7 +185,7 @@ export function AttendanceWeeklyTrend({
                     initial={{ height: 0 }}
                     animate={{ height: `${hadirPct}%` }}
                     transition={{ duration: 0.5, delay: idx * 0.05 + 0.2 }}
-                    className="w-full rounded-b-md bg-gradient-to-t from-sky-600 to-sky-400 shadow-sm"
+                    className="w-full rounded-b-md bg-(--chart-tepat) shadow-sm"
                     title={`Tepat Waktu: ${item.hadir}`}
                   />
                 ) : null}
@@ -226,15 +226,15 @@ export function AttendanceWeeklyTrend({
         ) : (
           <div className="flex flex-wrap items-center gap-4 text-slate-400">
             <div className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-sm bg-sky-400" />
+              <span className="size-2.5 rounded-sm bg-(--chart-tepat)" />
               <span>Tepat Waktu</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-sm bg-amber-400" />
+              <span className="size-2.5 rounded-sm bg-(--chart-telat)" />
               <span>Terlambat</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-sm bg-rose-500" />
+              <span className="size-2.5 rounded-sm bg-(--chart-alfa)" />
               <span>Alfa</span>
             </div>
             <span className="text-[11px] text-slate-500 hidden sm:inline">

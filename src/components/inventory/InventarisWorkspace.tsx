@@ -272,7 +272,7 @@ export function InventarisWorkspace({
             onClick={() => setTab(item.id)}
             className={`min-h-11 flex-1 whitespace-nowrap px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
               tab === item.id
-                ? "bg-sky-600 text-white"
+                ? "bg-sky-700 text-white"
                 : "text-slate-300 hover:bg-slate-800"
             }`}
           >
@@ -1530,7 +1530,7 @@ function FormMutasi({
               key={nilai}
               className={`min-h-11 flex-1 flex items-center justify-center rounded-md text-sm font-medium cursor-pointer focus-within:ring-2 focus-within:ring-sky-500 ${
                 jenis === nilai
-                  ? "bg-sky-600 text-white"
+                  ? "bg-sky-700 text-white"
                   : "text-slate-300 hover:bg-slate-800"
               }`}
             >

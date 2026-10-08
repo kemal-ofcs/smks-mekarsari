@@ -284,7 +284,7 @@ export default function HolidaysPage() {
               <button
                 type="button"
                 onClick={handleOpenAdd}
-                className="flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 active:scale-95"
+                className="flex items-center gap-2 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 active:scale-95"
               >
                 <Icon name="calendar" className="size-4" />
                 <span>+ Tambah Hari Libur</span>
@@ -620,7 +620,7 @@ export default function HolidaysPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex items-center gap-2 rounded-xl bg-sky-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-400 disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-xl bg-sky-700 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-800 disabled:opacity-50"
                 >
                   {saving && (
                     <Icon name="clock" className="size-3.5 animate-spin" />

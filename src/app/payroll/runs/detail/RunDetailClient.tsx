@@ -170,7 +170,7 @@ export default function RunDetailClient() {
                 <button
                   type="button"
                   onClick={() => handleOpenTransition("SUBMITTED")}
-                  className="px-4 py-2 text-sm font-semibold rounded-lg bg-sky-600 hover:bg-sky-500 text-white transition flex items-center gap-2 shadow"
+                  className="px-4 py-2 text-sm font-semibold rounded-lg bg-sky-700 hover:bg-sky-800 text-white transition flex items-center gap-2 shadow"
                 >
                   <Icon name="arrow-right" className="w-4 h-4" />
                   Ajukan untuk Review
@@ -431,7 +431,7 @@ export default function RunDetailClient() {
                   type="button"
                   onClick={handleExecuteTransition}
                   disabled={transitioning}
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-semibold disabled:opacity-50"
+                  className="px-4 py-2 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-sm font-semibold disabled:opacity-50"
                 >
                   {transitioning ? "Menyimpan..." : "Konfirmasi Ubah Status"}
                 </button>
@@ -452,7 +452,7 @@ export default function RunDetailClient() {
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded flex items-center gap-1.5 shadow"
+                  className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white text-xs font-semibold rounded flex items-center gap-1.5 shadow"
                 >
                   <Icon name="download" className="w-3.5 h-3.5" />
                   Cetak Dokumen

@@ -879,7 +879,7 @@ export default function ScannerPage() {
               }}
               className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2 ${
                 mode === "camera"
-                  ? "bg-gradient-to-r from-sky-600 to-sky-500 text-white shadow-md font-bold"
+                  ? "bg-gradient-to-r from-sky-800 to-sky-700 text-white shadow-md font-bold"
                   : "text-slate-400 hover:text-white"
               }`}
             >
@@ -893,7 +893,7 @@ export default function ScannerPage() {
               }}
               className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2 ${
                 mode === "reader"
-                  ? "bg-gradient-to-r from-sky-600 to-sky-500 text-white shadow-md font-bold"
+                  ? "bg-gradient-to-r from-sky-800 to-sky-700 text-white shadow-md font-bold"
                   : "text-slate-400 hover:text-white"
               }`}
             >

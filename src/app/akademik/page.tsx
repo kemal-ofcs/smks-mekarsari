@@ -1154,7 +1154,7 @@ export default function AkademikPage() {
                           <button
                             type="button"
                             onClick={handleAddTingkatToUnit}
-                            className="w-full rounded-xl bg-sky-600 px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-500"
+                            className="w-full rounded-xl bg-sky-700 px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-800"
                           >
                             + Tambah
                           </button>

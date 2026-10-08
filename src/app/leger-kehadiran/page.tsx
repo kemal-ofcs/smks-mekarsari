@@ -260,7 +260,7 @@ export default function LegerKehadiranPage() {
                 onClick={() => setActiveTab("preview")}
                 className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
                   activeTab === "preview"
-                    ? "bg-sky-600 text-white"
+                    ? "bg-sky-700 text-white"
                     : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
                 }`}
               >
@@ -271,7 +271,7 @@ export default function LegerKehadiranPage() {
                 onClick={() => setActiveTab("frozen")}
                 className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
                   activeTab === "frozen"
-                    ? "bg-sky-600 text-white"
+                    ? "bg-sky-700 text-white"
                     : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
                 }`}
               >

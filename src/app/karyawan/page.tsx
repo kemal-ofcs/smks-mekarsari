@@ -1438,7 +1438,7 @@ export default function KaryawanPage() {
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-sky-600 text-white rounded-xl font-bold hover:bg-sky-500 shadow-md shadow-sky-950 transition"
+                className="px-5 py-2 bg-sky-700 text-white rounded-xl font-bold hover:bg-sky-800 shadow-md shadow-sky-950 transition"
               >
                 {isEditing ? "Simpan Perubahan" : "Tambah Karyawan"}
               </button>

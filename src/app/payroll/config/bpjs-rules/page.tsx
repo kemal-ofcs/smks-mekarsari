@@ -221,7 +221,7 @@ export default function BpjsRulesPage() {
               <button
                 type="button"
                 onClick={handleOpenAdd}
-                className="px-4 py-2 text-sm font-semibold rounded-lg bg-sky-600 hover:bg-sky-500 text-white transition flex items-center gap-2 shadow-md shadow-sky-600/20"
+                className="px-4 py-2 text-sm font-semibold rounded-lg bg-sky-700 hover:bg-sky-800 text-white transition flex items-center gap-2 shadow-md shadow-sky-600/20"
               >
                 <Icon name="plus" className="w-4 h-4" />
                 Tambah Program BPJS
@@ -512,7 +512,7 @@ export default function BpjsRulesPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-semibold disabled:opacity-50 shadow-md shadow-sky-600/30"
+                  className="px-4 py-2 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-sm font-semibold disabled:opacity-50 shadow-md shadow-sky-600/30"
                 >
                   {saving ? "Menyimpan..." : "Simpan Program"}
                 </button>

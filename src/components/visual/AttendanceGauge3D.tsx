@@ -3,8 +3,22 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { useTheme } from "@/lib/context/ThemeContext";
 import { useVisualTier } from "@/lib/stores/visual-store";
 import { AdaptiveQuality, ContextCleanup } from "./scene-runtime";
+
+const CHART_VARS = [
+  "--chart-tepat",
+  "--chart-telat",
+  "--chart-izin",
+  "--chart-alfa",
+] as const;
+
+/** Three.js tidak bisa memakai `var()`, jadi warnanya dibaca dari `:root`. */
+function readChartPalette(): string[] {
+  const style = getComputedStyle(document.documentElement);
+  return CHART_VARS.map((name) => style.getPropertyValue(name).trim());
+}
 
 interface AttendanceGauge3DProps {
   hadir: number;
@@ -106,9 +120,11 @@ function Scene({
   sakitIzin,
   alfa,
   total,
+  palette,
   hoveredKey,
   setHoveredKey,
 }: AttendanceGauge3DProps & {
+  palette: string[];
   hoveredKey: string | null;
   setHoveredKey: (key: string | null) => void;
 }) {
@@ -122,33 +138,36 @@ function Scene({
         key: "hadir",
         label: "Tepat Waktu",
         count: Math.max(0, hadir - terlambat),
-        color: "#0ea5e9",
+        color: palette[0],
       },
       {
         key: "terlambat",
         label: "Terlambat",
         count: terlambat,
-        color: "#f59e0b",
+        color: palette[1],
       },
       {
         key: "sakitIzin",
         label: "Sakit / Izin",
         count: sakitIzin,
-        color: "#8b5cf6",
+        color: palette[2],
       },
       {
         key: "alfa",
         label: "Alfa",
         count: alfa,
-        color: "#f43f5e",
+        color: palette[3],
       },
     ];
 
     let currentAngle = 0;
     const items: SegmentData[] = [];
 
-    const activeTotal = raw.reduce((sum, item) => sum + item.count, 0);
-    const denominator = activeTotal > 0 ? activeTotal : totalSafe;
+    // Sama dengan versi SVG: celah yang tersisa adalah orang yang belum scan.
+    const denominator = Math.max(
+      totalSafe,
+      raw.reduce((sum, item) => sum + item.count, 0),
+    );
 
     for (const item of raw) {
       const proportion = item.count > 0 ? item.count / denominator : 0;
@@ -165,7 +184,7 @@ function Scene({
     }
 
     return items;
-  }, [hadir, terlambat, sakitIzin, alfa, totalSafe]);
+  }, [hadir, terlambat, sakitIzin, alfa, totalSafe, palette]);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
@@ -210,6 +229,11 @@ function Scene({
 export function AttendanceGauge3D(props: AttendanceGauge3DProps) {
   const tier = useVisualTier();
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const { resolvedTheme } = useTheme();
+  // ThemeProvider mengganti `data-theme` sebelum render ini, sehingga variabel
+  // yang dibaca sudah milik tema baru.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedTheme adalah pemicu baca ulang, nilainya ada di CSS
+  const palette = useMemo(readChartPalette, [resolvedTheme]);
 
   const activeSegment = useMemo(() => {
     if (!hoveredKey) return null;
@@ -254,6 +278,7 @@ export function AttendanceGauge3D(props: AttendanceGauge3DProps) {
       >
         <Scene
           {...props}
+          palette={palette}
           hoveredKey={hoveredKey}
           setHoveredKey={setHoveredKey}
         />

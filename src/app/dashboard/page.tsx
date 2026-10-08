@@ -720,7 +720,7 @@ export default function DashboardPage() {
 
             <div className="grid grid-cols-2 gap-2 text-[11px] font-mono border-t border-white/5 pt-3">
               <div className="flex items-center gap-1.5 text-sky-400">
-                <span className="size-2 rounded-full bg-sky-400" />
+                <span className="size-2 rounded-full bg-(--chart-tepat)" />
                 <span>
                   Tepat Waktu:{" "}
                   {Math.max(
@@ -731,15 +731,15 @@ export default function DashboardPage() {
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-amber-400">
-                <span className="size-2 rounded-full bg-amber-400" />
+                <span className="size-2 rounded-full bg-(--chart-telat)" />
                 <span>Telat: {metrics?.terlambatHariIni ?? 0}</span>
               </div>
               <div className="flex items-center gap-1.5 text-purple-400">
-                <span className="size-2 rounded-full bg-purple-400" />
+                <span className="size-2 rounded-full bg-(--chart-izin)" />
                 <span>Izin: {metrics?.sakitIzinHariIni ?? 0}</span>
               </div>
               <div className="flex items-center gap-1.5 text-rose-400">
-                <span className="size-2 rounded-full bg-rose-400" />
+                <span className="size-2 rounded-full bg-(--chart-alfa)" />
                 <span>Alfa: {metrics?.alfaHariIni ?? 0}</span>
               </div>
             </div>
@@ -765,7 +765,7 @@ export default function DashboardPage() {
               }}
               className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition ${
                 activeTab === "harian"
-                  ? "bg-gradient-to-r from-sky-600 to-sky-500 text-white shadow-md shadow-sky-950"
+                  ? "bg-gradient-to-r from-sky-800 to-sky-700 text-white shadow-md shadow-sky-950"
                   : "text-slate-400 hover:text-white"
               }`}
             >
@@ -781,7 +781,7 @@ export default function DashboardPage() {
               }}
               className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition ${
                 activeTab === "bulanan"
-                  ? "bg-gradient-to-r from-sky-600 to-sky-500 text-white shadow-md shadow-sky-950"
+                  ? "bg-gradient-to-r from-sky-800 to-sky-700 text-white shadow-md shadow-sky-950"
                   : "text-slate-400 hover:text-white"
               }`}
             >
@@ -795,7 +795,7 @@ export default function DashboardPage() {
               }}
               className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition ${
                 activeTab === "leaderboard"
-                  ? "bg-gradient-to-r from-sky-600 to-sky-500 text-white shadow-md shadow-sky-950"
+                  ? "bg-gradient-to-r from-sky-800 to-sky-700 text-white shadow-md shadow-sky-950"
                   : "text-slate-400 hover:text-white"
               }`}
             >
@@ -812,7 +812,7 @@ export default function DashboardPage() {
                   onClick={() => setFilterMode("single")}
                   className={`px-2.5 py-1 rounded-lg font-bold transition ${
                     filterMode === "single"
-                      ? "bg-sky-500 text-white shadow-sm"
+                      ? "bg-sky-700 text-white shadow-sm"
                       : "text-slate-400 hover:text-white"
                   }`}
                 >
@@ -823,7 +823,7 @@ export default function DashboardPage() {
                   onClick={() => setFilterMode("range")}
                   className={`px-2.5 py-1 rounded-lg font-bold transition ${
                     filterMode === "range"
-                      ? "bg-sky-500 text-white shadow-sm"
+                      ? "bg-sky-700 text-white shadow-sm"
                       : "text-slate-400 hover:text-white"
                   }`}
                 >
@@ -1098,7 +1098,7 @@ export default function DashboardPage() {
                     <tr>
                       <td
                         colSpan={8}
-                        className="p-12 text-center text-slate-500 font-sans"
+                        className="p-12 text-center text-slate-400 font-sans"
                       >
                         Tidak ada data absensi yang sesuai dengan filter.
                       </td>
@@ -1239,7 +1239,7 @@ export default function DashboardPage() {
                     <tr>
                       <td
                         colSpan={11}
-                        className="p-12 text-center text-slate-500 font-sans"
+                        className="p-12 text-center text-slate-400 font-sans"
                       >
                         Tidak ada data akumulasi bulanan yang sesuai filter.
                       </td>

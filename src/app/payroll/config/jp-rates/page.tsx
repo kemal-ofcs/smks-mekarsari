@@ -251,7 +251,7 @@ export default function JpRatesPage() {
           <button
             type="button"
             onClick={openAdd}
-            className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5"
+            className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5"
           >
             <Icon name="plus" className="w-3.5 h-3.5" />
             Tambah Tarif
@@ -471,7 +471,7 @@ export default function JpRatesPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-semibold"
+                  className="px-4 py-2 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-sm font-semibold"
                 >
                   Simpan Tarif
                 </button>

@@ -1438,7 +1438,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={() => setAlfaModalResult(null)}
-                className="rounded-xl bg-sky-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-400"
+                className="rounded-xl bg-sky-700 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-800"
               >
                 Tutup Ringkasan
               </button>

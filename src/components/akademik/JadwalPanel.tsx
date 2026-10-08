@@ -256,7 +256,7 @@ export function JadwalPanel({
           <button
             type="button"
             onClick={bukaTambah}
-            className="flex items-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-500"
+            className="flex items-center gap-1.5 rounded-xl bg-sky-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-800"
           >
             <Icon name="plus" className="size-3.5" />
             Tambah Jadwal
@@ -576,7 +576,7 @@ export function JadwalPanel({
               </button>
               <button
                 type="submit"
-                className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white"
+                className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white"
               >
                 Simpan Jadwal
               </button>

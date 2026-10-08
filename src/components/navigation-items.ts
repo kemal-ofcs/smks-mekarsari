@@ -161,15 +161,6 @@ export const NAVIGATION: readonly NavigationItem[] = [
   },
 ];
 
-/** Tombol tetap di bilah bawah layar sempit; sisanya dibuka lewat "Menu". */
-export const BOTTOM_BAR_HREFS: ReadonlySet<string> = new Set([
-  "/",
-  "/scanner",
-  "/operational",
-  "/karyawan",
-  "/settings",
-]);
-
 interface NavigationGroupSpec {
   label: string;
   /** Tampil tanpa judul dan tidak bisa dilipat. */

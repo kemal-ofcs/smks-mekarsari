@@ -160,7 +160,7 @@ export function SyncPulse() {
         data-phase={phase}
       />
       {queued > 0 ? (
-        <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-500 px-1 text-[9px] font-bold text-white shadow-sm">
+        <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-700 px-1 text-[9px] font-bold text-white shadow-sm">
           {queued > 99 ? "99+" : queued}
         </span>
       ) : null}

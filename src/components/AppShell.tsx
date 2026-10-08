@@ -41,7 +41,7 @@ export function AppShell({
           <LicenseNotice />
           <main
             id="main-content"
-            className={`visual-page-enter relative z-10 flex min-h-0 flex-1 flex-col pb-24 lg:pb-0 ${contentClassName}`}
+            className={`visual-page-enter relative z-10 flex min-h-0 flex-1 flex-col ${contentClassName}`}
           >
             {children}
           </main>

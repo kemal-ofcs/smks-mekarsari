@@ -121,7 +121,7 @@ export default function PayrollRunsListPage() {
                 onClick={() => setStatusFilter(st)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
                   statusFilter === st
-                    ? "bg-sky-600 border-sky-500 text-white"
+                    ? "bg-sky-700 border-sky-500 text-white"
                     : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
                 }`}
               >

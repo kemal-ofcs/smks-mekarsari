@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Tanpa ini `dark:` mengikuti tema OS, bukan tombol tema aplikasi: navigasi
+   bawah tetap putih di tema gelap bila Windows memakai tema terang. */
+@custom-variant dark (&:where(
+    [data-theme="dark"],
+    [data-theme="dark"] *,
+    .dark,
+    .dark *
+  ));
+
 :root {
   color-scheme: dark;
   --app-background: #07111f;
@@ -34,6 +43,13 @@
   --app-input-bg: #020617;
   --app-input-border: rgba(255, 255, 255, 0.12);
   --app-input-text: #ffffff;
+  /* Warna segmen grafik kehadiran (donat SVG, donat 3D, batang tren, titik
+     legenda). Di tema terang tiap warna digelapkan sampai minimal 3:1
+     terhadap putih, ambang WCAG untuk elemen non-teks. */
+  --chart-tepat: #0ea5e9;
+  --chart-telat: #f59e0b;
+  --chart-izin: #8b5cf6;
+  --chart-alfa: #f43f5e;
   font-family:
     var(--font-sans, "Plus Jakarta Sans"), -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
@@ -74,6 +90,10 @@ html.light {
   --app-input-bg: #ffffff;
   --app-input-border: #cbd5e1;
   --app-input-text: #0f172a;
+  --chart-tepat: #0284c7;
+  --chart-telat: #d97706;
+  --chart-izin: #7c3aed;
+  --chart-alfa: #e11d48;
 }
 
 * {
@@ -262,24 +282,6 @@ html.light .hover\:bg-cyan-400\/20:hover {
   background-color: #cffafe !important;
 }
 
-/* Mobile bottom nav */
-html[data-theme="light"] nav[aria-label="Navigasi mobile"],
-html.light nav[aria-label="Navigasi mobile"] {
-  background-color: rgba(255, 255, 255, 0.96) !important;
-  border-top: 1px solid #e2e8f0 !important;
-  box-shadow: 0 -4px 20px rgb(15 23 42 / 6%) !important;
-}
-html[data-theme="light"]
-  nav[aria-label="Navigasi mobile"]
-  button:not(.bg-sky-400\/15),
-html[data-theme="light"]
-  nav[aria-label="Navigasi mobile"]
-  a:not(.bg-sky-400\/15),
-html.light nav[aria-label="Navigasi mobile"] button:not(.bg-sky-400\/15),
-html.light nav[aria-label="Navigasi mobile"] a:not(.bg-sky-400\/15) {
-  color: #64748b !important;
-}
-
 /* 2. Home Hero Section Banner */
 html[data-theme="light"] section.bg-gradient-to-br.from-slate-900,
 html.light section.bg-gradient-to-br.from-slate-900 {
@@ -298,7 +300,7 @@ html.light section.bg-gradient-to-br.from-slate-900 h1 {
 }
 html[data-theme="light"] section.bg-gradient-to-br.from-slate-900 h1 span,
 html.light section.bg-gradient-to-br.from-slate-900 h1 span {
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 html[data-theme="light"] section.bg-gradient-to-br.from-slate-900 p,
 html.light section.bg-gradient-to-br.from-slate-900 p {
@@ -308,13 +310,13 @@ html.light section.bg-gradient-to-br.from-slate-900 p {
 /* "Buka QR Scanner" Hero CTA Button */
 html[data-theme="light"] a[href="/scanner"].bg-sky-400,
 html.light a[href="/scanner"].bg-sky-400 {
-  background-color: #0284c7 !important;
+  background-color: #0369a1 !important;
   color: #ffffff !important;
   box-shadow: 0 4px 14px rgba(2, 132, 199, 0.3) !important;
 }
 html[data-theme="light"] a[href="/scanner"].bg-sky-400:hover,
 html.light a[href="/scanner"].bg-sky-400:hover {
-  background-color: #0369a1 !important;
+  background-color: #075985 !important;
 }
 html[data-theme="light"] a[href="/scanner"].bg-sky-400 *,
 html.light a[href="/scanner"].bg-sky-400 * {
@@ -378,6 +380,57 @@ html.light .bg-white\/\[0\.05\] {
   border-color: #e2e8f0 !important;
 }
 
+/* Aturan di atas meratakan SEMUA bingkai kontainer menjadi abu-abu, termasuk
+   bingkai berwarna yang menandai arti kartu (Hadir biru, Terlambat kuning,
+   Alfa merah). Bingkai berwarna menang lagi di sini, satu nada -300 per warna.
+   Spasi di depan `border-` sengaja: `focus:border-sky-500` milik input tidak
+   boleh ikut, nanti setiap input bergaris biru walau tidak sedang difokus. */
+html[data-theme="light"]
+[class*="bg-slate-9"]:is([class^="border-sky-"], [class*=" border-sky-"]),
+html.light
+  [class*="bg-slate-9"]:is([class^="border-sky-"], [class*=" border-sky-"]) {
+  border-color: #7dd3fc !important;
+}
+html[data-theme="light"]
+  [class*="bg-slate-9"]:is([class^="border-amber-"], [class*=" border-amber-"]),
+html.light
+  [class*="bg-slate-9"]:is(
+    [class^="border-amber-"],
+    [class*=" border-amber-"]
+  ) {
+  border-color: #fcd34d !important;
+}
+html[data-theme="light"]
+  [class*="bg-slate-9"]:is([class^="border-rose-"], [class*=" border-rose-"]),
+html.light
+  [class*="bg-slate-9"]:is([class^="border-rose-"], [class*=" border-rose-"]) {
+  border-color: #fda4af !important;
+}
+html[data-theme="light"]
+  [class*="bg-slate-9"]:is(
+    [class^="border-emerald-"],
+    [class*=" border-emerald-"]
+  ),
+html.light
+  [class*="bg-slate-9"]:is(
+    [class^="border-emerald-"],
+    [class*=" border-emerald-"]
+  ) {
+  border-color: #6ee7b7 !important;
+}
+html[data-theme="light"]
+  [class*="bg-slate-9"]:is(
+    [class^="border-violet-"],
+    [class*=" border-violet-"]
+  ),
+html.light
+  [class*="bg-slate-9"]:is(
+    [class^="border-violet-"],
+    [class*=" border-violet-"]
+  ) {
+  border-color: #c4b5fd !important;
+}
+
 /* 4. Segmented Tab Switchers (Dashboard, Scanner, Riwayat, CMS Sub-tabs) */
 html[data-theme="light"] .bg-slate-900\/60,
 html[data-theme="light"] .bg-slate-950\/60,
@@ -396,63 +449,82 @@ html.light div.rounded-2xl.bg-slate-800\/60 {
 }
 
 /* Active Segmented Tab with Gradient or Sky-500 */
-html[data-theme="light"] button.bg-gradient-to-r.from-sky-600,
-html[data-theme="light"] div.bg-slate-950 button.bg-sky-500,
-html[data-theme="light"] div.bg-slate-900\/60 button.bg-sky-500,
-html[data-theme="light"] div.bg-slate-800\/60 button.bg-sky-500,
-html.light button.bg-gradient-to-r.from-sky-600,
-html.light div.bg-slate-950 button.bg-sky-500,
-html.light div.bg-slate-900\/60 button.bg-sky-500,
-html.light div.bg-slate-800\/60 button.bg-sky-500 {
-  background: linear-gradient(to right, #0284c7, #0ea5e9) !important;
+html[data-theme="light"]
+button.bg-gradient-to-r:is(.from-sky-600, .from-sky-800),
+html[data-theme="light"] div.bg-slate-950 button:is(.bg-sky-500, .bg-sky-700),
+html[data-theme="light"]
+  div.bg-slate-900\/60
+  button:is(.bg-sky-500, .bg-sky-700),
+html[data-theme="light"]
+  div.bg-slate-800\/60
+  button:is(.bg-sky-500, .bg-sky-700),
+html.light button.bg-gradient-to-r:is(.from-sky-600, .from-sky-800),
+html.light div.bg-slate-950 button:is(.bg-sky-500, .bg-sky-700),
+html.light div.bg-slate-900\/60 button:is(.bg-sky-500, .bg-sky-700),
+html.light div.bg-slate-800\/60 button:is(.bg-sky-500, .bg-sky-700) {
+  background: linear-gradient(to right, #075985, #0369a1) !important;
   color: #ffffff !important;
   box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25) !important;
   font-weight: 700 !important;
 }
-html[data-theme="light"] button.bg-gradient-to-r.from-sky-600 *,
-html[data-theme="light"] div.bg-slate-950 button.bg-sky-500 *,
-html[data-theme="light"] div.bg-slate-900\/60 button.bg-sky-500 *,
-html[data-theme="light"] div.bg-slate-800\/60 button.bg-sky-500 *,
-html.light button.bg-gradient-to-r.from-sky-600 *,
-html.light div.bg-slate-950 button.bg-sky-500 *,
-html.light div.bg-slate-900\/60 button.bg-sky-500 *,
-html.light div.bg-slate-800\/60 button.bg-sky-500 * {
+html[data-theme="light"]
+  button.bg-gradient-to-r:is(.from-sky-600, .from-sky-800)
+  *,
+html[data-theme="light"] div.bg-slate-950 button:is(.bg-sky-500, .bg-sky-700) *,
+html[data-theme="light"]
+  div.bg-slate-900\/60
+  button:is(.bg-sky-500, .bg-sky-700)
+  *,
+html[data-theme="light"]
+  div.bg-slate-800\/60
+  button:is(.bg-sky-500, .bg-sky-700)
+  *,
+html.light button.bg-gradient-to-r:is(.from-sky-600, .from-sky-800) *,
+html.light div.bg-slate-950 button:is(.bg-sky-500, .bg-sky-700) *,
+html.light div.bg-slate-900\/60 button:is(.bg-sky-500, .bg-sky-700) *,
+html.light div.bg-slate-800\/60 button:is(.bg-sky-500, .bg-sky-700) * {
   color: #ffffff !important;
 }
 
 /* Inactive Segmented Tab Buttons */
 html[data-theme="light"] .bg-slate-900\/60
-  button:not(.bg-gradient-to-r):not(.bg-sky-500),
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700),
 html[data-theme="light"]
   .bg-slate-800\/60
-  button:not(.bg-gradient-to-r):not(.bg-sky-500),
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700),
 html[data-theme="light"]
   div.bg-slate-950
-  button:not(.bg-gradient-to-r):not(.bg-sky-500),
-html.light .bg-slate-900\/60 button:not(.bg-gradient-to-r):not(.bg-sky-500),
-html.light .bg-slate-800\/60 button:not(.bg-gradient-to-r):not(.bg-sky-500),
-html.light div.bg-slate-950 button:not(.bg-gradient-to-r):not(.bg-sky-500) {
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700),
+html.light
+  .bg-slate-900\/60
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700),
+html.light
+  .bg-slate-800\/60
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700),
+html.light
+  div.bg-slate-950
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700) {
   color: #475569 !important;
   background-color: transparent !important;
 }
 html[data-theme="light"]
   .bg-slate-900\/60
-  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700):hover,
 html[data-theme="light"]
   .bg-slate-800\/60
-  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700):hover,
 html[data-theme="light"]
   div.bg-slate-950
-  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700):hover,
 html.light
   .bg-slate-900\/60
-  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700):hover,
 html.light
   .bg-slate-800\/60
-  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover,
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700):hover,
 html.light
   div.bg-slate-950
-  button:not(.bg-gradient-to-r):not(.bg-sky-500):hover {
+  button:not(.bg-gradient-to-r):not(.bg-sky-500, .bg-sky-700):hover {
   color: #0f172a !important;
   background-color: #ffffff !important;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
@@ -545,7 +617,7 @@ html[data-theme="light"] button.bg-slate-800 svg,
 html[data-theme="light"] label.bg-slate-800 svg,
 html.light button.bg-slate-800 svg,
 html.light label.bg-slate-800 svg {
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 
 /* Neutral status badges & Nonaktif indicators */
@@ -584,13 +656,13 @@ html.light button.bg-emerald-950\/80 * {
 /* "Mulai pindai QR" Button */
 html[data-theme="light"] button.bg-sky-400,
 html.light button.bg-sky-400 {
-  background-color: #0284c7 !important;
+  background-color: #0369a1 !important;
   color: #ffffff !important;
   box-shadow: 0 2px 10px rgba(2, 132, 199, 0.25) !important;
 }
 html[data-theme="light"] button.bg-sky-400:hover,
 html.light button.bg-sky-400:hover {
-  background-color: #0369a1 !important;
+  background-color: #075985 !important;
 }
 html[data-theme="light"] button.bg-sky-400 *,
 html.light button.bg-sky-400 * {
@@ -602,7 +674,7 @@ html[data-theme="light"] button.bg-rose-400\/10,
 html.light button.bg-rose-400\/10 {
   background-color: #fee2e2 !important;
   border-color: #fecaca !important;
-  color: #dc2626 !important;
+  color: #b91c1c !important;
 }
 html[data-theme="light"] button.bg-rose-400\/10:hover,
 html.light button.bg-rose-400\/10:hover {
@@ -610,7 +682,7 @@ html.light button.bg-rose-400\/10:hover {
 }
 html[data-theme="light"] button.bg-rose-400\/10 *,
 html.light button.bg-rose-400\/10 * {
-  color: #dc2626 !important;
+  color: #b91c1c !important;
 }
 
 /* 7. Tone Badges & Status Tags (Fix dark red / dark pastel backgrounds) */
@@ -730,7 +802,7 @@ html[data-theme="light"] .bg-sky-950\/80:hover,
 html.light .bg-sky-950:hover,
 html.light .bg-sky-950\/80:hover {
   background-color: #bae6fd !important;
-  color: #0284c7 !important;
+  color: #075985 !important;
 }
 html[data-theme="light"] .bg-sky-950 *,
 html[data-theme="light"] .bg-sky-950\/80 *,
@@ -846,8 +918,12 @@ html.light .bg-violet-400\/10 {
 }
 html[data-theme="light"] .text-violet-300,
 html[data-theme="light"] .text-violet-200,
+html[data-theme="light"] .text-purple-300,
+html[data-theme="light"] .text-purple-400,
 html.light .text-violet-300,
-html.light .text-violet-200 {
+html.light .text-violet-200,
+html.light .text-purple-300,
+html.light .text-purple-400 {
   color: #7e22ce !important;
 }
 
@@ -857,17 +933,19 @@ html.light .bg-slate-950\/60.border-white\/10 {
   background-color: #ffffff !important;
   border-color: #cbd5e1 !important;
 }
-html[data-theme="light"] .bg-slate-950\/60 button.bg-sky-500,
-html.light .bg-slate-950\/60 button.bg-sky-500 {
-  background-color: #0284c7 !important;
+html[data-theme="light"] .bg-slate-950\/60 button:is(.bg-sky-500, .bg-sky-700),
+html.light .bg-slate-950\/60 button:is(.bg-sky-500, .bg-sky-700) {
+  background-color: #0369a1 !important;
   color: #ffffff !important;
 }
-html[data-theme="light"] .bg-slate-950\/60 button:not(.bg-sky-500),
-html.light .bg-slate-950\/60 button:not(.bg-sky-500) {
+html[data-theme="light"] .bg-slate-950\/60 button:not(.bg-sky-500, .bg-sky-700),
+html.light .bg-slate-950\/60 button:not(.bg-sky-500, .bg-sky-700) {
   color: #475569 !important;
 }
-html[data-theme="light"] .bg-slate-950\/60 button:not(.bg-sky-500):hover,
-html.light .bg-slate-950\/60 button:not(.bg-sky-500):hover {
+html[data-theme="light"]
+  .bg-slate-950\/60
+  button:not(.bg-sky-500, .bg-sky-700):hover,
+html.light .bg-slate-950\/60 button:not(.bg-sky-500, .bg-sky-700):hover {
   color: #0f172a !important;
 }
 
@@ -935,6 +1013,7 @@ html.light label {
 /* Solid colored buttons & gradients retain white text */
 html[data-theme="light"] .bg-sky-500,
 html[data-theme="light"] .bg-sky-600,
+html[data-theme="light"] .bg-sky-700,
 html[data-theme="light"] .bg-blue-600,
 html[data-theme="light"] .bg-emerald-600,
 html[data-theme="light"] .bg-emerald-500,
@@ -943,6 +1022,7 @@ html[data-theme="light"] .bg-rose-500,
 html[data-theme="light"] .bg-amber-600,
 html.light .bg-sky-500,
 html.light .bg-sky-600,
+html.light .bg-sky-700,
 html.light .bg-blue-600,
 html.light .bg-emerald-600,
 html.light .bg-emerald-500,
@@ -953,6 +1033,7 @@ html.light .bg-amber-600 {
 }
 html[data-theme="light"] .bg-sky-500 *,
 html[data-theme="light"] .bg-sky-600 *,
+html[data-theme="light"] .bg-sky-700 *,
 html[data-theme="light"] .bg-blue-600 *,
 html[data-theme="light"] .bg-emerald-600 *,
 html[data-theme="light"] .bg-emerald-500 *,
@@ -961,6 +1042,7 @@ html[data-theme="light"] .bg-rose-500 *,
 html[data-theme="light"] .bg-amber-600 *,
 html.light .bg-sky-500 *,
 html.light .bg-sky-600 *,
+html.light .bg-sky-700 *,
 html.light .bg-blue-600 *,
 html.light .bg-emerald-600 *,
 html.light .bg-emerald-500 *,
@@ -977,7 +1059,7 @@ html[data-theme="light"] .text-sky-400,
 html.light .text-sky-300,
 html.light .text-sky-200,
 html.light .text-sky-400 {
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 html[data-theme="light"] .text-emerald-300,
 html[data-theme="light"] .text-emerald-200,
@@ -1004,15 +1086,32 @@ html.light .text-rose-400 {
   color: #be123c !important;
 }
 
-/* 10. Borders & Dividers */
+/* 10. Borders & Dividers
+   Varian beropasitas (`border-slate-800/60`) adalah kelas yang BERBEDA dari
+   `border-slate-800`; tanpa didaftarkan di sini ia tetap abu-abu tua di tema
+   terang. Kelas beropasitas baru di JSX wajib ditambahkan. */
 html[data-theme="light"] .border-slate-800,
+html[data-theme="light"] .border-slate-800\/80,
+html[data-theme="light"] .border-slate-800\/70,
+html[data-theme="light"] .border-slate-800\/60,
 html[data-theme="light"] .border-slate-700,
+html[data-theme="light"] .border-slate-700\/80,
+html[data-theme="light"] .border-slate-700\/60,
+html[data-theme="light"] .border-slate-700\/50,
+html[data-theme="light"] .border-slate-600\/40,
 html[data-theme="light"] .border-white\/5,
 html[data-theme="light"] .border-white\/10,
 html[data-theme="light"] .border-white\/15,
 html[data-theme="light"] .border-white\/20,
 html.light .border-slate-800,
+html.light .border-slate-800\/80,
+html.light .border-slate-800\/70,
+html.light .border-slate-800\/60,
 html.light .border-slate-700,
+html.light .border-slate-700\/80,
+html.light .border-slate-700\/60,
+html.light .border-slate-700\/50,
+html.light .border-slate-600\/40,
 html.light .border-white\/5,
 html.light .border-white\/10,
 html.light .border-white\/15,
@@ -1024,7 +1123,7 @@ html.light .border-white\/20 {
 html[data-theme="light"] button.border-sky-400,
 html.light button.border-sky-400 {
   border-color: #0284c7 !important;
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 html[data-theme="light"] button.border-transparent.text-slate-400,
 html.light button.border-transparent.text-slate-400 {
@@ -1035,13 +1134,30 @@ html.light button.border-transparent.text-slate-400:hover {
   color: #0f172a !important;
 }
 
-html[data-theme="light"] .divide-slate-800\/60,
-html[data-theme="light"] .divide-slate-800,
-html[data-theme="light"] .divide-slate-700,
-html.light .divide-slate-800\/60,
-html.light .divide-slate-800,
-html.light .divide-slate-700 {
-  border-color: #f1f5f9 !important;
+/* Di Tailwind v4 warna `divide-*` dipasang pada ANAK-anaknya
+   (`> :not(:last-child)`), bukan pada elemen itu. Selektor tanpa `>` hanya
+   mewarnai `tbody`-nya, sehingga garis antarbaris tetap slate-800: hitam tebal
+   di tema terang. */
+html[data-theme="light"] :is(
+    .divide-slate-700,
+    .divide-slate-800,
+    .divide-slate-800\/60,
+    .divide-slate-800\/40,
+    .divide-white\/5,
+    .divide-white\/10
+  )
+  > :not(:last-child),
+html.light
+  :is(
+    .divide-slate-700,
+    .divide-slate-800,
+    .divide-slate-800\/60,
+    .divide-slate-800\/40,
+    .divide-white\/5,
+    .divide-white\/10
+  )
+  > :not(:last-child) {
+  border-color: #e2e8f0 !important;
 }
 
 /* 11. Tables in Light Mode */
@@ -1093,7 +1209,7 @@ html.light input.bg-transparent {
   background-color: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 html[data-theme="light"] input::placeholder,
 html[data-theme="light"] textarea::placeholder,
@@ -1663,7 +1779,7 @@ html[data-theme="light"] .overtime-multiplier-badge-sky,
 html.light .overtime-multiplier-badge-sky {
   background-color: #e0f2fe !important;
   border-color: #bae6fd !important;
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 
 html[data-theme="light"] .overtime-multiplier-badge-amber,
@@ -1740,7 +1856,7 @@ html.light .scanner-terminal-clock-date {
 html[data-theme="light"] .scanner-terminal-audio.border-sky-500\/40,
 html.light .scanner-terminal-audio.border-sky-500\/40 {
   background-color: #f0f9ff !important;
-  color: #0284c7 !important;
+  color: #0369a1 !important;
   border-color: #bae6fd !important;
 }
 
@@ -1772,7 +1888,7 @@ html.light .bootstrap-panel-card {
 
 html[data-theme="light"] .bootstrap-panel-eyebrow,
 html.light .bootstrap-panel-eyebrow {
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 
 html[data-theme="light"] .bootstrap-panel-title,
@@ -1858,7 +1974,7 @@ html[data-theme="light"]
 html.light
   .bootstrap-provider-option.bootstrap-provider-active
   span.font-black {
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 
 /* Info Callout Box (SQLite info) */
@@ -1874,7 +1990,7 @@ html[data-theme="light"] .bootstrap-btn-check,
 html.light .bootstrap-btn-check {
   background-color: #f0f9ff !important;
   border-color: #38bdf8 !important;
-  color: #0284c7 !important;
+  color: #0369a1 !important;
 }
 html[data-theme="light"] .bootstrap-btn-check:hover:not(:disabled),
 html.light .bootstrap-btn-check:hover:not(:disabled) {

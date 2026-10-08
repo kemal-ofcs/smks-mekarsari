@@ -35,7 +35,7 @@ function toastHost() {
   const host = document.createElement("div");
   host.id = "feedback-toasts";
   host.className =
-    "pointer-events-none fixed inset-x-4 bottom-24 z-[90] flex flex-col gap-2 sm:left-auto sm:w-[26rem] lg:bottom-6 lg:right-6";
+    "pointer-events-none fixed inset-x-4 bottom-4 z-[90] flex flex-col gap-2 sm:left-auto sm:w-[26rem] lg:bottom-6 lg:right-6";
   document.body.appendChild(host);
   return host;
 }

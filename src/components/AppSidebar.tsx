@@ -201,7 +201,7 @@ function SidebarNav({
  * merender daftar yang sama dari `navigation-items.ts`.
  */
 export function AppSidebar() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { desktopOpen, drawerOpen } = useSidebarState();
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -270,6 +270,21 @@ export function AppSidebar() {
           </button>
         </div>
         <SidebarNav groups={groups} onNavigate={closeDrawer} />
+        {/* Di layar sempit Keluar hanya ada di sini; HeaderBar menyembunyikannya
+            supaya tidak tersentuh tanpa sengaja di samping tombol tema. */}
+        <div className="mobile-safe-bottom border-t border-white/10 px-2 pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              closeDrawer();
+              logout();
+            }}
+            className="flex min-h-11 w-full items-center gap-2.5 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 text-sm font-semibold text-rose-200 transition-colors hover:bg-rose-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
+          >
+            <Icon name="logout" className="size-4 shrink-0" />
+            <span>Keluar</span>
+          </button>
+        </div>
       </dialog>
     </>
   );
