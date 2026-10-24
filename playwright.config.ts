@@ -3,7 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 import dotenv from "dotenv";
 
 // Load environment test dari .env.test
-dotenv.config({ path: path.resolve(__dirname, ".env.test") });
+dotenv.config({ path: path.resolve(__dirname, ".env.test"), quiet: true });
 
 /**
  * Playwright E2E Configuration — Absensi SPPG (web-desktop)
