@@ -837,6 +837,8 @@ export interface BarangInventaris {
   desimal: boolean;
   /** Satuan, desimal, dan kedaluwarsa terkunci sejak mutasi pertama. */
   punya_mutasi: boolean;
+  /** Tanpa unit dan setiap mutasinya sudah dibatalkan (salah input). */
+  bisa_dihapus: boolean;
   stok_minimum: number;
   tempat_utama: string | null;
   catatan: string | null;
@@ -1300,8 +1302,8 @@ export const kolomDraftSchema = z
 
 export type KolomDraft = z.input<typeof kolomDraftSchema>;
 
-/** Teks yang wajib diketik sebelum kolom dihapus permanen. */
-export const KONFIRMASI_HAPUS_KOLOM = "Hapus Permanen";
+/** Teks yang wajib diketik sebelum kolom atau barang dihapus permanen. */
+export const KONFIRMASI_HAPUS_PERMANEN = "Hapus Permanen";
 
 /**
  * Cermin `validate_kolom`. Murni: nama kembar, tipe yang terkunci, dan batas

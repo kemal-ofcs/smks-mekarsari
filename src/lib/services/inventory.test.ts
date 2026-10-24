@@ -26,6 +26,7 @@ const {
   registerUnits,
   saveCodePrefixes,
   deleteColumn,
+  deleteItem,
   saveColumn,
   saveItem,
   saveUnit,
@@ -867,6 +868,62 @@ describe("hapus permanen kolom tambahan Web", () => {
       "Kolom ini sudah dihapus.",
     );
     await saveColumn(client, { nama: "Merek", tipe: "Teks" });
+  });
+});
+
+// Kembar `delete_item_only_when_every_mutation_is_cancelled` dan
+// `delete_item_refuses_items_with_units` di inventory.rs.
+describe("hapus barang Web", () => {
+  test("hanya bila setiap mutasinya dibatalkan, lalu kodenya bebas", async () => {
+    const idBarang = await barangBaru();
+    const masuk = await recordMutation(client, "admin", {
+      id_barang: idBarang,
+      jenis: "Masuk",
+      alasan: "Saldo Awal",
+      jumlah: 3,
+      tempat_tujuan: "Gudang",
+    });
+    await expect(deleteItem(client, idBarang)).rejects.toThrow(
+      "Barang ini sudah punya riwayat stok",
+    );
+    await cancelMutation(client, "admin", masuk.id_mutasi, "Salah input");
+    expect(await deleteItem(client, idBarang)).toEqual({ sukses: true });
+
+    expect((await listInventory(client)).barang).toEqual([]);
+    await expect(deleteItem(client, idBarang)).rejects.toThrow(
+      "Barang ini sudah dihapus.",
+    );
+    await expect(
+      saveItem(client, {
+        id_barang: idBarang,
+        nama_barang: "Ganti",
+        tipe: "Habis Pakai",
+        satuan: "pcs",
+      }),
+    ).rejects.toThrow("Barang ini sudah dihapus.");
+    await saveItem(client, {
+      kode_barang: "BRG-0001",
+      nama_barang: "Pengganti",
+      tipe: "Habis Pakai",
+      satuan: "pcs",
+    });
+
+    // Mutasi dari perangkat yang offline saat barangnya dihapus.
+    await mutasiMentah("mts-telat", idBarang, "Masuk", 2);
+    const barang = (await listInventory(client)).barang.find(
+      (item) => item.id_barang === idBarang,
+    );
+    expect(barang?.bisa_dihapus).toBe(false);
+    expect(barang?.status_aktif).toBe(false);
+  });
+
+  test("menolak barang yang sudah punya unit", async () => {
+    const idBarang = await barangBaru();
+    await client.execute({
+      sql: "INSERT INTO inventory_unit (id_unit, id_barang, kode_unit) VALUES ('unit-1', ?, 'BRG-0001-001');",
+      args: [idBarang],
+    });
+    await expect(deleteItem(client, idBarang)).rejects.toThrow();
   });
 });
 

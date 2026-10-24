@@ -76,6 +76,7 @@ const STUDENT_DAPODIK_MIGRATION_VERSION = 57;
 const PMB_UNIT_MIGRATION_VERSION = 58;
 const STUDENT_FILES_MIGRATION_VERSION = 59;
 const UNIT_JP_BELL_MIGRATION_VERSION = 60;
+const INVENTORY_ITEM_DELETE_MIGRATION_VERSION = 61;
 
 /**
  * Bentuk `akademik_jam_pelajaran` sejak v60: jenis `Pulang`, cakupan unit +
@@ -688,6 +689,12 @@ export async function runDatabaseMigrations(client: Client) {
     ],
     // Email guru dan karyawan (v56). Cerminan `ensure_column` di `turso.rs`.
     ["master_data", "email", "ALTER TABLE master_data ADD COLUMN email TEXT;"],
+    // Hapus barang salah input (v61). NULL = belum dihapus.
+    [
+      "inventory_barang",
+      "dihapus_pada",
+      "ALTER TABLE inventory_barang ADD COLUMN dihapus_pada TEXT;",
+    ],
   ] as const) {
     if (
       (await hasTable(client, table)) &&
@@ -1641,7 +1648,8 @@ export async function runDatabaseMigrations(client: Client) {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       atribut TEXT,
-      desimal INTEGER NOT NULL DEFAULT 0 CHECK (desimal IN (0, 1))
+      desimal INTEGER NOT NULL DEFAULT 0 CHECK (desimal IN (0, 1)),
+      dihapus_pada TEXT
     );
   `);
   await client.execute(`
@@ -3105,5 +3113,11 @@ export async function runDatabaseMigrations(client: Client) {
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'unit-jp-bell', ?);`,
     args: [UNIT_JP_BELL_MIGRATION_VERSION, now],
+  });
+  // v61: hapus barang salah input (ALTER-nya ada di daftar kolom di atas).
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'inventory-item-delete', ?);`,
+    args: [INVENTORY_ITEM_DELETE_MIGRATION_VERSION, now],
   });
 }

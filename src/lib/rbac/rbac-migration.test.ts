@@ -173,6 +173,8 @@ describe("dynamic RBAC migration", () => {
       59,
       // v60 — unit mapel/rombel, jam pelajaran per unit dan hari, bunyi bel.
       60,
+      // v61 — hapus barang salah input (`inventory_barang.dihapus_pada`).
+      61,
     ]);
 
     const sessionColumns = await client.execute(

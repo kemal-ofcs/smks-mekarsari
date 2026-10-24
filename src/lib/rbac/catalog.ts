@@ -365,6 +365,11 @@ export const PERMISSION_CATALOG = [
     group: "Sarpras",
   },
   {
+    key: "inventory.item.delete",
+    name: "Hapus Barang Salah Input",
+    group: "Sarpras",
+  },
+  {
     key: "uks.view",
     name: "Lihat Buku Kunjungan UKS",
     group: "UKS",
@@ -512,6 +517,9 @@ export const SENSITIVE_MUTATION_PERMISSIONS = new Set<PermissionKey>([
   // Menghapus kolom tambahan memusnahkan isinya di SEMUA barang sekaligus, dan
   // tidak ada jalan mengembalikannya.
   "inventory.column.delete",
+  // Menghapus barang mengeluarkannya dari daftar, label, dan impor di semua
+  // perangkat, dan tidak bisa dikembalikan dari aplikasi.
+  "inventory.item.delete",
   // Menghapus kunjungan UKS menghilangkan satu-satunya catatan siapa yang
   // ditangani, kapan, dan obat apa yang diberikan untuknya.
   "uks.delete",
