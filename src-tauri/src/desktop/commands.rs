@@ -1284,7 +1284,7 @@ async fn attach_personnel_photo(state: &DesktopState, input: &Value, mut result:
     };
     let mime = photo.get("foto_mime").and_then(Value::as_str).unwrap_or("");
     let base64 = photo.get("foto_base64").and_then(Value::as_str).unwrap_or("");
-    if !mime.is_empty() && !base64.trim().is_empty() {
+    if matches!(mime, "image/jpeg" | "image/png" | "image/webp") && !base64.trim().is_empty() {
         result["fotoPersonil"] = json!(format!("data:{mime};base64,{base64}"));
     }
     result

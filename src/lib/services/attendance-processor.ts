@@ -169,10 +169,11 @@ async function withPersonnelPhoto(
         args: [result.idKaryawan, parsed.token],
       })
     ).rows[0];
-    if (!row) return result;
+    const mime = String(row?.foto_mime ?? "");
+    if (!row || !ALLOWED_PHOTO_MIME.includes(mime)) return result;
     return {
       ...result,
-      fotoPersonil: `data:${String(row.foto_mime)};base64,${String(row.foto_base64)}`,
+      fotoPersonil: `data:${mime};base64,${String(row.foto_base64)}`,
     };
   } catch {
     // Scan sudah tersimpan; foto yang gagal dibaca tidak boleh membatalkannya.

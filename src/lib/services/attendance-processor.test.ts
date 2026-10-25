@@ -495,6 +495,15 @@ describe("notifikasi wali dari scanner Web", () => {
     // Pegawai tanpa NISN: nama saja, tanpa tanda kurung.
     const pegawai = await scanAt(jakarta("2026-08-12", "06:32"));
     expect(pegawai.pesan).not.toContain("(");
+
+    await client.execute({
+      sql: "UPDATE personil_foto SET foto_mime = 'text/html' WHERE id_unik = ?;",
+      args: [SISWA.id],
+    });
+    const mimeAsing = await scanAt(jakarta("2026-08-12", "06:33"), {
+      qrText: `${SISWA.id}|${SISWA.token}`,
+    });
+    expect(mimeAsing.fotoPersonil).toBeUndefined();
   });
 });
 
