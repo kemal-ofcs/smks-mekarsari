@@ -89,6 +89,8 @@ interface EmployeeContext {
   nama: string;
   divisi: string;
   idShift: number;
+  /** Kosong untuk guru/pegawai dan siswa yang NISN-nya belum diisi. */
+  nisn: string;
   row: Row;
 }
 
@@ -129,20 +131,52 @@ export async function processWebAttendanceScan(
   const waktuScan = explicitDate(context.waktuScan);
   const transaction = await client.transaction("write");
 
+  let result: ScanResult;
   try {
-    const result = await processInTransaction(
+    result = await processInTransaction(
       transaction,
       payload,
       waktuScan,
       context.policy ?? {},
     );
     await transaction.commit();
-    return result;
   } catch (error) {
     await transaction.rollback();
     throw error;
   } finally {
     transaction.close();
+  }
+  return withPersonnelPhoto(client, payload.qrText, result);
+}
+
+/** Pasangan `attach_personnel_photo` di `commands.rs`. */
+async function withPersonnelPhoto(
+  client: Client,
+  qrText: string,
+  result: ScanResult,
+): Promise<ScanResult> {
+  const parsed = parseQrToken(qrText);
+  if (!parsed.valid || !result.idKaryawan) return result;
+  try {
+    const row = (
+      await client.execute({
+        sql: `SELECT f.foto_mime, f.foto_base64
+              FROM master_data m
+              JOIN personil_foto f ON f.id_unik = m.id_unik
+              WHERE m.id_unik = ? AND TRIM(COALESCE(m.token_absensi, '')) = ?
+                AND TRIM(COALESCE(f.foto_base64, '')) <> ''
+              LIMIT 1;`,
+        args: [result.idKaryawan, parsed.token],
+      })
+    ).rows[0];
+    if (!row) return result;
+    return {
+      ...result,
+      fotoPersonil: `data:${String(row.foto_mime)};base64,${String(row.foto_base64)}`,
+    };
+  } catch {
+    // Scan sudah tersimpan; foto yang gagal dibaca tidak boleh membatalkannya.
+    return result;
   }
 }
 
@@ -166,7 +200,7 @@ async function processInTransaction(
   }
 
   const masterResult = await transaction.execute({
-    sql: "SELECT * FROM master_data WHERE id_unik = ? OR kode_karyawan = ? LIMIT 1;",
+    sql: "SELECT m.*, (SELECT s.nisn FROM siswa_data s WHERE s.id_siswa = m.id_unik LIMIT 1) AS nisn_siswa FROM master_data m WHERE m.id_unik = ? OR m.kode_karyawan = ? LIMIT 1;",
     args: [parsed.idUnik, parsed.idUnik],
   });
   const master = masterResult.rows[0] as Row | undefined;
@@ -185,6 +219,7 @@ async function processInTransaction(
     nama: String(master.nama),
     divisi: String(master.divisi),
     idShift: Number(master.id_shift),
+    nisn: String(master.nisn_siswa ?? "").trim(),
     row: master,
   };
   const baseShiftRow = await getShiftRow(transaction, employee.idShift);
@@ -1266,7 +1301,7 @@ function resultFromDecision(
   idSesi: string,
 ): ScanResult {
   let pesan = keputusan.boleh
-    ? `Jam ${keputusan.jenisScan} ${employee.nama} (${employee.id}) berhasil dicatat.\nStatus: ${keputusan.keterangan}`
+    ? `Jam ${keputusan.jenisScan} ${employee.nama}${employee.nisn ? ` (NISN ${employee.nisn})` : ""} berhasil dicatat.\nStatus: ${keputusan.keterangan}`
     : rejectedDecisionMessage(keputusan);
   if (keputusan.menitTerlambat > 0) {
     pesan += `\nTerlambat: ${keputusan.menitTerlambat} menit.`;

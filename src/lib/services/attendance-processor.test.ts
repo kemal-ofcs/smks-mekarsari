@@ -460,6 +460,42 @@ describe("notifikasi wali dari scanner Web", () => {
     expect(hasil.sukses).toBe(true);
     expect(await antrean()).toHaveLength(0);
   });
+
+  test("pesan memakai NISN, bukan id; foto hanya untuk token yang cocok", async () => {
+    await siapkanSiswa("false");
+    await client.batch(
+      [
+        "DELETE FROM personil_foto;",
+        {
+          sql: "UPDATE siswa_data SET nisn = '0012345678' WHERE id_siswa = ?;",
+          args: [SISWA.id],
+        },
+        {
+          sql: `INSERT INTO personil_foto (id_unik, foto_mime, foto_base64, updated_at)
+                VALUES (?, 'image/jpeg', 'QUJD', '');`,
+          args: [SISWA.id],
+        },
+      ],
+      "write",
+    );
+
+    const hasil = await scanAt(jakarta("2026-08-12", "06:30"), {
+      qrText: `${SISWA.id}|${SISWA.token}`,
+    });
+    expect(hasil.pesan).toContain("Siswa Web (NISN 0012345678) berhasil");
+    expect(hasil.pesan).not.toContain(SISWA.id);
+    expect(hasil.fotoPersonil).toBe("data:image/jpeg;base64,QUJD");
+
+    const palsu = await scanAt(jakarta("2026-08-12", "06:31"), {
+      qrText: `${SISWA.id}|TOKEN-SALAH`,
+    });
+    expect(palsu.sukses).toBe(false);
+    expect(palsu.fotoPersonil).toBeUndefined();
+
+    // Pegawai tanpa NISN: nama saja, tanpa tanda kurung.
+    const pegawai = await scanAt(jakarta("2026-08-12", "06:32"));
+    expect(pegawai.pesan).not.toContain("(");
+  });
 });
 
 describe("guard dan konsistensi integrasi Web", () => {

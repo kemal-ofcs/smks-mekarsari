@@ -1248,19 +1248,46 @@ pub fn desktop_delete_shift(
 }
 
 #[tauri::command]
-pub fn desktop_submit_qr_scan(
+pub async fn desktop_submit_qr_scan(
     state: State<'_, DesktopState>,
     input: Value,
 ) -> Result<Value, CommandError> {
-    let operator = require_permission(&state, "scanner.use")?;
-    // Kebijakan diambil dari sesi, bukan dari payload: terminal yang dikuasai
-    // penyerang tidak boleh bisa mematikan kewajiban fotonya sendiri hanya
-    // dengan tidak mengirimkan sakelarnya.
-    let policy = scanner::ScanSecurityPolicy {
-        require_photo: operator.require_scan_photo,
-        require_ip_allowlist: operator.require_scan_ip_allowlist,
+    let result = {
+        let operator = require_permission(&state, "scanner.use")?;
+        // Kebijakan diambil dari sesi, bukan dari payload: terminal yang dikuasai
+        // penyerang tidak boleh bisa mematikan kewajiban fotonya sendiri hanya
+        // dengan tidak mengirimkan sakelarnya.
+        let policy = scanner::ScanSecurityPolicy {
+            require_photo: operator.require_scan_photo,
+            require_ip_allowlist: operator.require_scan_ip_allowlist,
+        };
+        scanner::submit(&state, &input, &operator.kode_operator, policy)?
     };
-    scanner::submit(&state, &input, &operator.kode_operator, policy)
+    Ok(attach_personnel_photo(&state, &input, result).await)
+}
+
+/// Foto profil di kartu hasil scan, hanya bila token QR cocok dengan pemiliknya:
+/// operator tidak bisa mengetik `id|asal` untuk melihat foto orang lain.
+/// Pasangan `withPersonnelPhoto` di `attendance-processor.ts`. Scan sudah
+/// tersimpan, jadi foto yang gagal dibaca tidak pernah membatalkannya.
+async fn attach_personnel_photo(state: &DesktopState, input: &Value, mut result: Value) -> Value {
+    let id_unik = result
+        .get("idKaryawan")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    if !matches!(scanner::qr_token_matches(state, input, &id_unik), Ok(true)) {
+        return result;
+    }
+    let Ok(photo) = load_personnel_photo(state, &id_unik).await else {
+        return result;
+    };
+    let mime = photo.get("foto_mime").and_then(Value::as_str).unwrap_or("");
+    let base64 = photo.get("foto_base64").and_then(Value::as_str).unwrap_or("");
+    if !mime.is_empty() && !base64.trim().is_empty() {
+        result["fotoPersonil"] = json!(format!("data:{mime};base64,{base64}"));
+    }
+    result
 }
 
 /// Foto bukti absensi.
@@ -3641,20 +3668,28 @@ pub async fn desktop_get_personnel_photo(
 ) -> Result<Value, CommandError> {
     let kind = academic::personnel_kind(&state, &id_unik)?;
     require_any_permission(&state, &kind.view_permissions())?;
+    load_personnel_photo(&state, &id_unik).await
+}
 
-    let local = academic::get_personnel_photo(&state, &id_unik)?;
+/// Isi `desktop_get_personnel_photo` tanpa cek izin; pemanggil wajib sudah
+/// memastikan haknya.
+async fn load_personnel_photo(
+    state: &DesktopState,
+    id_unik: &str,
+) -> Result<Value, CommandError> {
+    let local = academic::get_personnel_photo(state, id_unik)?;
     let local_updated_at = local
         .get("updated_at")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let pending = academic::has_pending_photo_change(&state, &id_unik)?;
+    let pending = academic::has_pending_photo_change(state, id_unik)?;
     let client = state.get_turso_client().ok();
 
     let cloud_stamp = match (&client, pending) {
         (Some(client), false) => {
             match tokio::time::timeout(
                 PHOTO_CLOUD_TIMEOUT,
-                client.get_personnel_photo_stamp(&id_unik),
+                client.get_personnel_photo_stamp(id_unik),
             )
             .await
             {
@@ -3673,22 +3708,22 @@ pub async fn desktop_get_personnel_photo(
         academic::PhotoSource::Local => Ok(local),
         academic::PhotoSource::Missing => Ok(Value::Null),
         academic::PhotoSource::DropLocal => {
-            academic::drop_personnel_photo_cache(&state, &id_unik)?;
+            academic::drop_personnel_photo_cache(state, id_unik)?;
             Ok(Value::Null)
         }
         academic::PhotoSource::Cloud => {
             let Some(client) = client else {
                 return Ok(local);
             };
-            match tokio::time::timeout(PHOTO_CLOUD_TIMEOUT, client.get_personnel_photo(&id_unik))
+            match tokio::time::timeout(PHOTO_CLOUD_TIMEOUT, client.get_personnel_photo(id_unik))
                 .await
             {
                 Ok(Ok(photo)) if photo.is_null() => {
-                    academic::drop_personnel_photo_cache(&state, &id_unik)?;
+                    academic::drop_personnel_photo_cache(state, id_unik)?;
                     Ok(Value::Null)
                 }
                 Ok(Ok(photo)) => {
-                    academic::cache_personnel_photo_local(&state, &photo)?;
+                    academic::cache_personnel_photo_local(state, &photo)?;
                     Ok(photo)
                 }
                 // Gagal mengambil versi baru: salinan lokal (bila ada) lebih
