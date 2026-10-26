@@ -77,6 +77,8 @@ const PMB_UNIT_MIGRATION_VERSION = 58;
 const STUDENT_FILES_MIGRATION_VERSION = 59;
 const UNIT_JP_BELL_MIGRATION_VERSION = 60;
 const INVENTORY_ITEM_DELETE_MIGRATION_VERSION = 61;
+const JOURNAL_SOURCE_INVENTORY_MIGRATION_VERSION = 62;
+const INVENTORY_SERVICE_MIGRATION_VERSION = 63;
 
 /**
  * Bentuk `akademik_jam_pelajaran` sejak v60: jenis `Pulang`, cakupan unit +
@@ -1762,6 +1764,33 @@ export async function runDatabaseMigrations(client: Client) {
   await client.execute(
     "CREATE INDEX IF NOT EXISTS idx_inventory_unit_barang ON inventory_unit(id_barang);",
   );
+  // v63: servis aset. DDL WAJIB identik dengan `storage.rs` dan `turso.rs`.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_servis (
+      id_servis TEXT PRIMARY KEY,
+      id_barang TEXT NOT NULL,
+      id_unit TEXT,
+      jumlah INTEGER NOT NULL CHECK (jumlah > 0),
+      tempat TEXT NOT NULL,
+      kondisi_awal TEXT NOT NULL CHECK (kondisi_awal IN ('Baik', 'Rusak Ringan', 'Rusak Berat')),
+      tanggal_mulai TEXT NOT NULL,
+      penyedia TEXT,
+      keluhan TEXT NOT NULL,
+      tanggal_selesai TEXT,
+      hasil TEXT CHECK (hasil IS NULL OR hasil IN ('Baik', 'Rusak Ringan', 'Rusak Berat', 'Tidak Bisa Diperbaiki')),
+      biaya INTEGER CHECK (biaya IS NULL OR biaya >= 0),
+      catatan_selesai TEXT,
+      dibatalkan_pada TEXT,
+      alasan_batal TEXT,
+      dibuka_oleh TEXT NOT NULL,
+      ditutup_oleh TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_servis_barang ON inventory_servis(id_barang);",
+  );
   await client.execute({
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'inventory-unit', ?);`,
@@ -1811,7 +1840,7 @@ export async function runDatabaseMigrations(client: Client) {
       nomor_urut INTEGER NOT NULL CHECK (nomor_urut > 0),
       nomor TEXT NOT NULL,
       keterangan TEXT NOT NULL,
-      sumber TEXT NOT NULL CHECK (sumber IN ('Manual', 'Kasbon', 'Payroll', 'Pembayaran', 'Tagihan', 'Pembatalan')),
+      sumber TEXT NOT NULL CHECK (sumber IN ('Manual', 'Kasbon', 'Payroll', 'Pembayaran', 'Tagihan', 'Inventaris', 'Pembatalan')),
       id_sumber TEXT,
       id_jurnal_batal TEXT,
       dibuat_oleh TEXT NOT NULL,
@@ -3119,5 +3148,55 @@ export async function runDatabaseMigrations(client: Client) {
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'inventory-item-delete', ?);`,
     args: [INVENTORY_ITEM_DELETE_MIGRATION_VERSION, now],
+  });
+  // v62: sumber jurnal `Inventaris`. Cermin `ensure_journal_source_values` di
+  // `storage.rs`/`turso.rs`. Indeks dan trigger cloud dipasang ulang dari
+  // definisinya sendiri SETELAH baris disalin: trigger `trg_sync_append_*`
+  // hanya dibuat Rust, dan tanpanya perangkat tidak pernah menerima jurnal
+  // baru dari Web.
+  const jurnalDdl = await client.execute(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'keu_jurnal';",
+  );
+  const ddlJurnal = String(jurnalDdl.rows[0]?.sql ?? "");
+  if (ddlJurnal && !ddlJurnal.includes("'Inventaris'")) {
+    const turunan = await client.execute(
+      "SELECT sql FROM sqlite_master WHERE tbl_name = 'keu_jurnal' AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type, name;",
+    );
+    const kolom =
+      "id_jurnal, tanggal, seri, nomor_urut, nomor, keterangan, sumber, id_sumber, id_jurnal_batal, dibuat_oleh, created_at";
+    await client.batch(
+      [
+        "DROP TABLE IF EXISTS keu_jurnal__rebuild;",
+        `CREATE TABLE keu_jurnal__rebuild (
+          id_jurnal TEXT PRIMARY KEY,
+          tanggal TEXT NOT NULL,
+          seri TEXT NOT NULL,
+          nomor_urut INTEGER NOT NULL CHECK (nomor_urut > 0),
+          nomor TEXT NOT NULL,
+          keterangan TEXT NOT NULL,
+          sumber TEXT NOT NULL CHECK (sumber IN ('Manual', 'Kasbon', 'Payroll', 'Pembayaran', 'Tagihan', 'Inventaris', 'Pembatalan')),
+          id_sumber TEXT,
+          id_jurnal_batal TEXT,
+          dibuat_oleh TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );`,
+        `INSERT INTO keu_jurnal__rebuild (${kolom}) SELECT ${kolom} FROM keu_jurnal;`,
+        "DROP TABLE keu_jurnal;",
+        "ALTER TABLE keu_jurnal__rebuild RENAME TO keu_jurnal;",
+        ...turunan.rows.map((row) => String(row.sql)),
+      ],
+      "write",
+    );
+  }
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'journal-source-inventory', ?);`,
+    args: [JOURNAL_SOURCE_INVENTORY_MIGRATION_VERSION, now],
+  });
+  // v63: servis aset (DDL-nya di blok v37 di atas, bersama `inventory_unit`).
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'inventory-service', ?);`,
+    args: [INVENTORY_SERVICE_MIGRATION_VERSION, now],
   });
 }

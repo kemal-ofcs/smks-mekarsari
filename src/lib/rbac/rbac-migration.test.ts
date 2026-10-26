@@ -175,6 +175,10 @@ describe("dynamic RBAC migration", () => {
       60,
       // v61 — hapus barang salah input (`inventory_barang.dihapus_pada`).
       61,
+      // v62 — sumber jurnal `Inventaris` (CHECK `keu_jurnal.sumber`).
+      62,
+      // v63 — servis aset (`inventory_servis`).
+      63,
     ]);
 
     const sessionColumns = await client.execute(

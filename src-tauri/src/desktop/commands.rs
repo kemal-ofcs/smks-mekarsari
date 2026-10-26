@@ -3449,6 +3449,70 @@ pub fn desktop_inventory_procurement(
     inventory::procurement(&state, &dari, &sampai)
 }
 
+/// Membuka servis aset, atau mengubah isian servis yang masih terbuka.
+#[tauri::command]
+pub fn desktop_inventory_service_save(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "inventory.record")?;
+    inventory::save_service(&state, &operator.username, draft)
+}
+
+/// Menutup servis; kondisi barang yang berubah dicatat sebagai mutasi.
+#[tauri::command]
+pub fn desktop_inventory_service_close(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "inventory.record")?;
+    inventory::close_service(&state, &operator.username, draft)
+}
+
+/// Membatalkan servis yang belum ditutup. Stok tidak berubah.
+#[tauri::command]
+pub fn desktop_inventory_service_cancel(
+    state: State<'_, DesktopState>,
+    id_servis: String,
+    alasan: String,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "inventory.record")?;
+    inventory::cancel_service(&state, &operator.username, &id_servis, &alasan)
+}
+
+/// Riwayat servis per rentang tanggal dibawa, opsional untuk satu barang.
+#[tauri::command]
+pub fn desktop_inventory_service_history(
+    state: State<'_, DesktopState>,
+    dari: String,
+    sampai: String,
+    id_barang: Option<String>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "inventory.view")?;
+    inventory::service_history(&state, &dari, &sampai, id_barang)
+}
+
+/// Pengadaan dan hibah yang belum dijurnal, plus jurnal yang mutasinya sudah dibatalkan.
+#[tauri::command]
+pub fn desktop_inventory_journal_pending(
+    state: State<'_, DesktopState>,
+    dari: String,
+    sampai: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "accounting.view")?;
+    inventory::journal_pending(&state, &dari, &sampai)
+}
+
+/// Menjurnal baris inventaris yang dicentang dan membalik jurnal yatimnya.
+#[tauri::command]
+pub fn desktop_inventory_journal_post(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "accounting.manage")?;
+    inventory::journal_post(&state, &operator.username, draft)
+}
+
 /// Riwayat kunjungan UKS dan daftar "Sedang di UKS". Membaca cloud bila
 /// terhubung, lalu menggabungkan salinan lokal yang belum terkirim.
 #[tauri::command]

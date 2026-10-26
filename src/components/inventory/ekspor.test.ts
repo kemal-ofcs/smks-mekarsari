@@ -56,6 +56,7 @@ const data: DaftarInventaris = {
   kode_prefix: [],
   hari_ini: "2026-10-22",
   nama_sekolah: null,
+  servis: [],
   kolom: [
     {
       id_kolom: "kol-1",

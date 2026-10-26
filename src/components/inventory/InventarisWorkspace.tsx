@@ -49,6 +49,7 @@ import {
   MAKS_KODE_PREFIX,
   normalizeKodePrefix,
   PENERIMA_TIPE,
+  type ServisInventaris,
   TIPE_BARANG,
 } from "@/lib/validations/inventory";
 import { DialogEkspor } from "./DialogEkspor";
@@ -83,6 +84,15 @@ import {
   type TujuanRingkasan,
 } from "./PanelPemantauan";
 import {
+  type AksiServis,
+  DialogServis,
+  jumlahDiservis,
+  keteranganServis,
+  PanelServis,
+  ServisBarang,
+  servisPerUnit,
+} from "./Servis";
+import {
   bisaDaftarkanUnit,
   DialogDaftarkanUnit,
   DialogUnit,
@@ -102,6 +112,7 @@ type Tab =
   | "catat"
   | "kedaluwarsa"
   | "dipinjam"
+  | "servis"
   | "opname"
   | "kartu";
 type Feedback = { tone: "success" | "error"; message: string } | null;
@@ -214,6 +225,7 @@ export function InventarisWorkspace({
     | { jenis: "ubah"; barang: BarangInventaris; posisi: PosisiStok }
     | null
   >(null);
+  const [aksiServis, setAksiServis] = useState<AksiServis | null>(null);
   const isSubmittingRef = useRef(false);
   const [mengimpor, setMengimpor] = useState(false);
 
@@ -354,6 +366,7 @@ export function InventarisWorkspace({
     catat: "Catat Mutasi",
     kedaluwarsa: "Kedaluwarsa",
     dipinjam: "Dipinjam",
+    servis: "Servis",
     opname: "Opname",
     kartu: "Kartu Stok",
   };
@@ -364,6 +377,7 @@ export function InventarisWorkspace({
         "catat",
         "kedaluwarsa",
         "dipinjam",
+        "servis",
         "barang",
         "ringkasan",
         "opname",
@@ -375,6 +389,7 @@ export function InventarisWorkspace({
         "catat",
         "kedaluwarsa",
         "dipinjam",
+        "servis",
         "opname",
         "kartu",
       ];
@@ -480,6 +495,19 @@ export function InventarisWorkspace({
             onSelesai={selesai}
             onGalat={galat}
           />
+        ) : tab === "servis" ? (
+          <PanelServis
+            data={data}
+            canRecord={canRecord}
+            canAdjust={canAdjust}
+            onAksi={setAksiServis}
+            onAfkir={(idBarang) => {
+              setBarangCatat(idBarang);
+              setTab("catat");
+            }}
+            onInfo={info}
+            onGalat={galat}
+          />
         ) : tab === "opname" ? (
           <PanelOpname
             data={data}
@@ -517,6 +545,7 @@ export function InventarisWorkspace({
             onUbahUnit={(barang, posisi) =>
               setUnitAksi({ jenis: "ubah", barang, posisi })
             }
+            onServis={setAksiServis}
             onUbahStatus={(barang) =>
               void jalankan(
                 () =>
@@ -570,6 +599,19 @@ export function InventarisWorkspace({
             setFormBarang(null);
             setFeedback({ tone: "success", message });
             await muat();
+          }}
+        />
+      ) : null}
+
+      {aksiServis && data ? (
+        <DialogServis
+          aksi={aksiServis}
+          data={data}
+          isSubmittingRef={isSubmittingRef}
+          onClose={() => setAksiServis(null)}
+          onSelesai={async (message) => {
+            setAksiServis(null);
+            await selesai(message);
           }}
         />
       ) : null}
@@ -655,6 +697,7 @@ function DaftarBarang({
   onKartu,
   onDaftarkanUnit,
   onUbahUnit,
+  onServis,
   onUbahStatus,
   onHapus,
 }: {
@@ -676,6 +719,7 @@ function DaftarBarang({
   onKartu: (barang: BarangInventaris) => void;
   onDaftarkanUnit: (barang: BarangInventaris) => void;
   onUbahUnit: (barang: BarangInventaris, posisi: PosisiStok) => void;
+  onServis: (aksi: AksiServis) => void;
   onUbahStatus: (barang: BarangInventaris) => void;
   onHapus: (barang: BarangInventaris) => void;
 }) {
@@ -693,6 +737,7 @@ function DaftarBarang({
     () => data.kolom.filter((kolom) => kolom.is_aktif),
     [data.kolom],
   );
+  const servisUnit = useMemo(() => servisPerUnit(data), [data]);
 
   const daftar = useMemo(() => {
     const kata = cari.trim().toLowerCase();
@@ -1075,6 +1120,34 @@ function DaftarBarang({
                                 · kedaluwarsa {posisi.tanggal_expired}
                               </span>
                             ) : null}
+                            {posisi.id_batch &&
+                            servisUnit.has(posisi.id_batch) ? (
+                              <span className="block text-xs text-amber-300">
+                                {keteranganServis(
+                                  servisUnit.get(
+                                    posisi.id_batch,
+                                  ) as ServisInventaris,
+                                )}
+                              </span>
+                            ) : !barang.dilacak_unit &&
+                              jumlahDiservis(
+                                data,
+                                barang.id_barang,
+                                posisi.tempat,
+                                posisi.kondisi,
+                              ) > 0 ? (
+                              <span className="block text-xs text-amber-300">
+                                {angka(
+                                  jumlahDiservis(
+                                    data,
+                                    barang.id_barang,
+                                    posisi.tempat,
+                                    posisi.kondisi,
+                                  ),
+                                )}{" "}
+                                {barang.satuan} sedang diservis
+                              </span>
+                            ) : null}
                           </span>
                           <span
                             className={`font-semibold ${
@@ -1101,6 +1174,14 @@ function DaftarBarang({
                       ))}
                     </ul>
                   )
+                ) : null}
+                {buka && barang.tipe === "Aset" ? (
+                  <ServisBarang
+                    data={data}
+                    barang={barang}
+                    canRecord={canRecord}
+                    onAksi={onServis}
+                  />
                 ) : null}
                 {buka && canManage ? (
                   <AksiBarang
@@ -2184,6 +2265,13 @@ function FormMutasi({
                         {unit.nomor_seri ? (
                           <span className="text-slate-400">
                             SN {unit.nomor_seri}
+                          </span>
+                        ) : null}
+                        {servisPerUnit(data).has(id) ? (
+                          <span className="text-amber-300">
+                            {keteranganServis(
+                              servisPerUnit(data).get(id) as ServisInventaris,
+                            )}
                           </span>
                         ) : null}
                       </label>

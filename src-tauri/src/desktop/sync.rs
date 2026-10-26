@@ -19,7 +19,7 @@ use super::{
 /// `CURRENT_SCHEMA_VERSION` di `web-desktop/src/lib/db-schema.ts` setiap kali
 /// migrasi baru ditambahkan, karena keduanya membaca tabel `schema_migration`
 /// yang sama di Turso.
-pub const CLIENT_SCHEMA_VERSION: i64 = 61;
+pub const CLIENT_SCHEMA_VERSION: i64 = 63;
 
 /// Hanya `cloud > client` yang berbahaya; `cloud <= client` adalah kondisi normal.
 fn is_client_schema_outdated(cloud_version: i64) -> bool {
@@ -1019,6 +1019,40 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
         entity_column: "id_mutasi",
         delete_missing: false,
     },
+    // ── v63: Servis aset ──
+    //
+    // `delete_missing: false`: servis tidak pernah dihapus; batal dan selesai
+    // adalah kolom. Barisnya berubah (buka → tutup), dan handler cloud hanya
+    // menulis selama servis masih terbuka.
+    SnapshotTable {
+        payload_key: "inventoryServices",
+        domain: "inventory-service",
+        table: "inventory_servis",
+        columns: &[
+            "id_servis",
+            "id_barang",
+            "id_unit",
+            "jumlah",
+            "tempat",
+            "kondisi_awal",
+            "tanggal_mulai",
+            "penyedia",
+            "keluhan",
+            "tanggal_selesai",
+            "hasil",
+            "biaya",
+            "catatan_selesai",
+            "dibatalkan_pada",
+            "alasan_batal",
+            "dibuka_oleh",
+            "ditutup_oleh",
+            "created_at",
+            "updated_at",
+        ],
+        conflict_column: "id_servis",
+        entity_column: "id_servis",
+        delete_missing: false,
+    },
     // ── v37: Registri aset per unit ──
     //
     // `delete_missing: false`: unit tidak pernah dihapus. Unit yang afkir atau
@@ -1468,6 +1502,9 @@ pub(crate) const CANONICAL_SYNC_ROUTES: &[(&str, &str)] = &[
     ("inventory-item", "save"),
     ("inventory-mutation", "create"),
     ("inventory-unit", "save"),
+    ("inventory-service", "save"),
+    ("inventory-service", "close"),
+    ("inventory-service", "cancel"),
     ("inventory-column", "save"),
     ("accounting-account", "save"),
     ("accounting-journal", "post"),

@@ -23,12 +23,13 @@ use super::{config::DesktopState, license, models::CommandError, storage, sync};
 pub const KELOMPOK_AKUN: [&str; 5] = ["Aset", "Kewajiban", "Aset Neto", "Pendapatan", "Beban"];
 pub const SALDO_NORMAL: [&str; 2] = ["Debit", "Kredit"];
 /// WAJIB sama dengan CHECK `keu_jurnal.sumber` di ketiga DDL.
-pub const SUMBER_JURNAL: [&str; 6] = [
+pub const SUMBER_JURNAL: [&str; 7] = [
     "Manual",
     "Kasbon",
     "Payroll",
     "Pembayaran",
     "Tagihan",
+    "Inventaris",
     "Pembatalan",
 ];
 
@@ -1372,6 +1373,7 @@ pub fn label_sumber_kas(sumber: &str) -> &'static str {
         "Payroll" => "Pembayaran gaji",
         "Kasbon" => "Kasbon karyawan",
         "Tagihan" => "Tagihan siswa",
+        "Inventaris" => "Pembelian barang dan servis",
         "Manual" => "Jurnal umum",
         _ => "Pembatalan",
     }
