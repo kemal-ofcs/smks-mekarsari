@@ -80,6 +80,7 @@ const INVENTORY_ITEM_DELETE_MIGRATION_VERSION = 61;
 const JOURNAL_SOURCE_INVENTORY_MIGRATION_VERSION = 62;
 const INVENTORY_SERVICE_MIGRATION_VERSION = 63;
 const INVENTORY_REQUEST_MIGRATION_VERSION = 64;
+const INVENTORY_INSTALLMENT_MIGRATION_VERSION = 65;
 
 /**
  * Bentuk `akademik_jam_pelajaran` sejak v60: jenis `Pulang`, cakupan unit +
@@ -1841,7 +1842,7 @@ export async function runDatabaseMigrations(client: Client) {
       nomor_urut INTEGER NOT NULL CHECK (nomor_urut > 0),
       nomor TEXT NOT NULL,
       keterangan TEXT NOT NULL,
-      sumber TEXT NOT NULL CHECK (sumber IN ('Manual', 'Kasbon', 'Payroll', 'Pembayaran', 'Tagihan', 'Inventaris', 'Pembatalan')),
+      sumber TEXT NOT NULL CHECK (sumber IN ('Manual', 'Kasbon', 'Payroll', 'Pembayaran', 'Tagihan', 'Inventaris', 'Cicilan', 'Pembatalan')),
       id_sumber TEXT,
       id_jurnal_batal TEXT,
       dibuat_oleh TEXT NOT NULL,
@@ -3150,7 +3151,7 @@ export async function runDatabaseMigrations(client: Client) {
           VALUES (?, 'inventory-item-delete', ?);`,
     args: [INVENTORY_ITEM_DELETE_MIGRATION_VERSION, now],
   });
-  // v62: sumber jurnal `Inventaris`. Cermin `ensure_journal_source_values` di
+  // v62: sumber jurnal `Inventaris`, lalu v65: `Cicilan`. Cermin `ensure_journal_source_values` di
   // `storage.rs`/`turso.rs`. Indeks dan trigger cloud dipasang ulang dari
   // definisinya sendiri SETELAH baris disalin: trigger `trg_sync_append_*`
   // hanya dibuat Rust, dan tanpanya perangkat tidak pernah menerima jurnal
@@ -3159,7 +3160,7 @@ export async function runDatabaseMigrations(client: Client) {
     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'keu_jurnal';",
   );
   const ddlJurnal = String(jurnalDdl.rows[0]?.sql ?? "");
-  if (ddlJurnal && !ddlJurnal.includes("'Inventaris'")) {
+  if (ddlJurnal && !ddlJurnal.includes("'Cicilan'")) {
     const turunan = await client.execute(
       "SELECT sql FROM sqlite_master WHERE tbl_name = 'keu_jurnal' AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type, name;",
     );
@@ -3175,7 +3176,7 @@ export async function runDatabaseMigrations(client: Client) {
           nomor_urut INTEGER NOT NULL CHECK (nomor_urut > 0),
           nomor TEXT NOT NULL,
           keterangan TEXT NOT NULL,
-          sumber TEXT NOT NULL CHECK (sumber IN ('Manual', 'Kasbon', 'Payroll', 'Pembayaran', 'Tagihan', 'Inventaris', 'Pembatalan')),
+          sumber TEXT NOT NULL CHECK (sumber IN ('Manual', 'Kasbon', 'Payroll', 'Pembayaran', 'Tagihan', 'Inventaris', 'Cicilan', 'Pembatalan')),
           id_sumber TEXT,
           id_jurnal_batal TEXT,
           dibuat_oleh TEXT NOT NULL,
@@ -3230,7 +3231,8 @@ export async function runDatabaseMigrations(client: Client) {
       ditutup_oleh TEXT,
       alasan_tutup TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      cara_bayar TEXT NOT NULL DEFAULT 'Tunai' CHECK (cara_bayar IN ('Tunai', 'Cicilan'))
     );
   `);
   await client.execute(
@@ -3283,5 +3285,87 @@ export async function runDatabaseMigrations(client: Client) {
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'inventory-request', ?);`,
     args: [INVENTORY_REQUEST_MIGRATION_VERSION, now],
+  });
+
+  // v65: pembelian cicilan. DDL WAJIB identik dengan `storage.rs` dan
+  // `turso.rs`. Sumber jurnal `Cicilan` ikut rebuild v62 di atas; tiga akun
+  // bawaannya ikut seed `akun-bawaan.json` (`INSERT OR IGNORE`).
+  if (!(await hasColumn(client, "inventory_pengajuan", "cara_bayar"))) {
+    await client.execute(
+      "ALTER TABLE inventory_pengajuan ADD COLUMN cara_bayar TEXT NOT NULL DEFAULT 'Tunai' CHECK (cara_bayar IN ('Tunai', 'Cicilan'));",
+    );
+  }
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS keu_cicilan (
+      id_cicilan TEXT PRIMARY KEY,
+      id_pengajuan TEXT NOT NULL,
+      kreditur TEXT NOT NULL,
+      nomor_kontrak TEXT,
+      uang_muka INTEGER NOT NULL CHECK (uang_muka >= 0),
+      pola TEXT NOT NULL CHECK (pola IN ('Berkala', 'Manual')),
+      setiap INTEGER,
+      satuan TEXT CHECK (satuan IS NULL OR satuan IN ('Hari', 'Minggu', 'Bulan', 'Tahun')),
+      id_akun_utang TEXT NOT NULL,
+      id_akun_bunga TEXT NOT NULL,
+      id_akun_denda TEXT NOT NULL,
+      sidik_syarat TEXT NOT NULL,
+      total_disetujui INTEGER,
+      diaktifkan_pada TEXT,
+      disetujui_ulang_pada TEXT,
+      disetujui_ulang_oleh TEXT,
+      sidik_disetujui_ulang TEXT,
+      ditutup_pada TEXT,
+      ditutup_oleh TEXT,
+      alasan_tutup TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_keu_cicilan_pengajuan ON keu_cicilan(id_pengajuan);",
+  );
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS keu_cicilan_jadwal (
+      id_jadwal TEXT PRIMARY KEY,
+      id_cicilan TEXT NOT NULL,
+      ke INTEGER NOT NULL CHECK (ke >= 0),
+      jatuh_tempo TEXT NOT NULL,
+      nominal INTEGER NOT NULL CHECK (nominal >= 0)
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_keu_cicilan_jadwal_induk ON keu_cicilan_jadwal(id_cicilan);",
+  );
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS keu_cicilan_bayar (
+      id_bayar TEXT PRIMARY KEY,
+      id_cicilan TEXT NOT NULL,
+      jenis TEXT NOT NULL CHECK (jenis IN ('Bayar', 'Denda')),
+      tanggal TEXT NOT NULL,
+      nominal INTEGER NOT NULL CHECK (nominal >= 0),
+      potongan INTEGER NOT NULL DEFAULT 0 CHECK (potongan >= 0),
+      alasan_potongan TEXT,
+      keterangan TEXT,
+      referensi TEXT,
+      id_akun_bayar TEXT NOT NULL,
+      dicatat_oleh TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_keu_cicilan_bayar_induk ON keu_cicilan_bayar(id_cicilan);",
+  );
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS keu_cicilan_bayar_batal (
+      id_bayar TEXT PRIMARY KEY,
+      alasan TEXT NOT NULL,
+      dibatalkan_oleh TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'inventory-installment', ?);`,
+    args: [INVENTORY_INSTALLMENT_MIGRATION_VERSION, now],
   });
 }

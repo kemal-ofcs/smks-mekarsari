@@ -57,6 +57,7 @@ const data: DaftarInventaris = {
   hari_ini: "2026-10-22",
   nama_sekolah: null,
   servis: [],
+  belum_lunas: [],
   kolom: [
     {
       id_kolom: "kol-1",

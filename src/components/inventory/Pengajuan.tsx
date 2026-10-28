@@ -11,6 +11,7 @@ import {
 import { Modal } from "@/components/ui/Modal";
 import { optimizeImageFile } from "@/lib/client/image-optimizer";
 import { useAuth } from "@/lib/context/AuthContext";
+import { type AkunItem, daftarAkun } from "@/lib/gateways/accounting";
 import type { DaftarInventaris } from "@/lib/gateways/inventory";
 import {
   ambilFotoPenerimaan,
@@ -66,6 +67,14 @@ import {
 } from "./gaya";
 import { DialogLabel, MAKS_LABEL_PER_BARANG } from "./LabelQr";
 import { bisaCetakBeritaAcara } from "./PanelPemantauan";
+import {
+  draftSyarat,
+  FormSyarat,
+  type IsianSyarat,
+  isianSyaratAwal,
+  periksaSyarat,
+  RingkasanSyarat,
+} from "./SyaratCicilan";
 
 /**
  * Pengajuan pembelian (v64): tab Pengajuan di Inventaris (ajukan, terima
@@ -96,6 +105,19 @@ export function jumlahPerluDiterima(daftar: DaftarPengajuan): number {
 /** Tanda angka tab Dari Inventaris di Keuangan. */
 export function jumlahMenunggu(daftar: DaftarPengajuan): number {
   return daftar.pengajuan.filter((p) => p.status === "Menunggu").length;
+}
+
+/** Nilai barang yang sudah diterima: harga tunai final pengajuan Cicilan. */
+function nilaiDiterima(p: Pengajuan): number {
+  return p.baris.reduce(
+    (total, b) =>
+      total +
+      b.harga_diterima.reduce(
+        (sub, h) => sub + nilaiBaris(h.jumlah, h.harga_satuan, b.desimal),
+        0,
+      ),
+    0,
+  );
 }
 
 function keteranganStatus(p: Pengajuan): string {
@@ -131,6 +153,16 @@ export function RincianPengajuan({ pengajuan }: { pengajuan: Pengajuan }) {
         <p className="text-slate-400 wrap-break-word">
           Catatan akuntansi: {pengajuan.catatan_persetujuan}
         </p>
+      ) : null}
+      {pengajuan.cicilan ? (
+        <RingkasanSyarat
+          syarat={pengajuan.cicilan}
+          hargaTunai={
+            pengajuan.cicilan.diaktifkan_pada
+              ? nilaiDiterima(pengajuan)
+              : pengajuan.total
+          }
+        />
       ) : null}
       <ul className="divide-y divide-slate-800 rounded-lg border border-slate-800 bg-slate-950/40">
         {pengajuan.baris.map((b) => (
@@ -309,6 +341,12 @@ function DialogPenerimaan({
   onSelesai: (hasil: HasilPenerimaan) => Promise<void>;
 }) {
   const sisa = pengajuan.baris.filter((b) => b.diterima < b.jumlah);
+  // Pengajuan Cicilan wajib diterima penuh, dengan syarat dari kontrak yang
+  // ditandatangani (keputusan C dan A, v65).
+  const bercicilan = pengajuan.cara_bayar === "Cicilan";
+  const [syarat, setSyarat] = useState<IsianSyarat>(() =>
+    isianSyaratAwal(pengajuan.cicilan, data.hari_ini),
+  );
   const barangDari = (idBarang: string | null) =>
     idBarang
       ? (data.barang.find((x) => x.id_barang === idBarang) ?? null)
@@ -321,7 +359,7 @@ function DialogPenerimaan({
       sisa.map((b) => [
         b.id_baris,
         {
-          jumlah: "",
+          jumlah: bercicilan ? angka(b.jumlah - b.diterima, b.desimal) : "",
           harga: angka(b.harga_satuan),
           tempat: barangDari(b.barang_terdaftar)?.tempat_utama ?? "",
           kondisi: "Baik",
@@ -345,6 +383,26 @@ function DialogPenerimaan({
       ...lama,
       [idBaris]: { ...(lama[idBaris] as IsianTerima), ...isi },
     }));
+
+  /** Harga tunai final = nilai barang yang diterima, dengan harga sebenarnya. */
+  const hargaTunai = bercicilan
+    ? nilaiDiterima(pengajuan) +
+      sisa.reduce((total, b) => {
+        const i = isian[b.id_baris];
+        const harga = Number((i?.harga ?? "").replace(/[.\s]/g, ""));
+        return Number.isFinite(harga)
+          ? total + nilaiBaris(b.jumlah - b.diterima, harga, b.desimal)
+          : total;
+      }, 0)
+    : 0;
+  const cekSyarat = bercicilan
+    ? periksaSyarat(syarat, hargaTunai, pengajuan.tanggal, tanggal)
+    : null;
+  const totalDisetujui = pengajuan.cicilan?.total_disetujui ?? null;
+  const lebihMahal =
+    cekSyarat?.ok === true &&
+    totalDisetujui !== null &&
+    cekSyarat.value.jadwal.reduce((t, b) => t + b.nominal, 0) > totalDisetujui;
 
   /** Kedaluwarsa dan pilihan per unit menurut barang terdaftar atau isian barang baru. */
   const aturan = (idBarangTerdaftar: string | null, i: IsianTerima) => {
@@ -432,6 +490,7 @@ function DialogPenerimaan({
           mime_type: "image/jpeg",
           data_base64: f.base64,
         })),
+        cicilan: bercicilan ? draftSyarat(syarat) : null,
       });
       await onSelesai(hasil);
     } catch (error) {
@@ -452,8 +511,9 @@ function DialogPenerimaan({
     >
       <form onSubmit={kirim} className="space-y-4 text-sm">
         <p className="text-slate-300 wrap-break-word">
-          {pengajuan.keperluan}. Isi hanya barang yang sudah datang; sisanya
-          bisa dicatat di penerimaan berikutnya.
+          {bercicilan
+            ? `${pengajuan.keperluan}. Pembelian cicilan wajib diterima penuh sekaligus.`
+            : `${pengajuan.keperluan}. Isi hanya barang yang sudah datang; sisanya bisa dicatat di penerimaan berikutnya.`}
         </p>
         <div>
           <label htmlFor="inv-pgj-terima-tanggal" className={LABEL}>
@@ -505,6 +565,7 @@ function DialogPenerimaan({
                     id={`${id}-jumlah`}
                     {...isianJumlah(b.desimal)}
                     placeholder="0"
+                    readOnly={bercicilan}
                     value={i.jumlah}
                     onChange={(e) =>
                       ubah(b.id_baris, { jumlah: e.target.value })
@@ -647,6 +708,31 @@ function DialogPenerimaan({
           );
         })}
 
+        {bercicilan ? (
+          <div className="space-y-2">
+            <p className="text-xs text-slate-400">
+              Sesuaikan syarat dengan kontrak yang benar-benar ditandatangani.
+              Setelah disimpan, syaratnya tidak bisa diubah lagi.
+            </p>
+            <FormSyarat
+              idAwal="inv-pgj-terima-syarat"
+              isian={syarat}
+              onChange={setSyarat}
+              hargaTunai={hargaTunai}
+              tanggalAwal={pengajuan.tanggal}
+              tanggalDp={tanggal}
+            />
+            {lebihMahal ? (
+              <p className="text-sm text-amber-300">
+                Total bayar melebihi yang di-ACC (
+                {formatRupiah(totalDisetujui ?? 0)}). Barang tetap masuk stok,
+                tetapi pembayaran baru bisa dicatat setelah akuntansi meng-ACC
+                ulang.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="space-y-2">
           <label htmlFor="inv-pgj-terima-foto" className={LABEL}>
             Foto barang yang diterima (wajib, paling banyak{" "}
@@ -783,7 +869,7 @@ type IsianBaris = {
 };
 
 function bacaHarga(teks: string, nomor: number): number {
-  const bersih = teks.replace(/[.\s]/g, "");
+  const bersih = teks.replace(/[.s]/g, "");
   if (!/^\d+$/.test(bersih)) {
     throw new Error(
       `Harga satuan baris ${nomor} harus angka rupiah bulat, misalnya 55.000.`,
@@ -831,6 +917,12 @@ function DialogPengajuan({
   const [keperluan, setKeperluan] = useState(awal?.keperluan ?? "");
   const [sumberDana, setSumberDana] = useState(awal?.sumber_dana ?? "");
   const [catatan, setCatatan] = useState(awal?.catatan ?? "");
+  const [caraBayar, setCaraBayar] = useState<"Tunai" | "Cicilan">(
+    awal?.cara_bayar ?? "Tunai",
+  );
+  const [syarat, setSyarat] = useState<IsianSyarat>(() =>
+    isianSyaratAwal(awal?.cicilan ?? null, hariIni),
+  );
   const [baris, setBaris] = useState<IsianBaris[]>(() =>
     awal
       ? awal.baris.map((b) =>
@@ -857,7 +949,7 @@ function DialogPengajuan({
   const nilaiIsian = (isian: IsianBaris): number | null => {
     const desimal = desimalDari(isian);
     const jumlah = jumlahDariKetikan(isian.jumlah, desimal);
-    const harga = isian.harga.replace(/[.\s]/g, "");
+    const harga = isian.harga.replace(/[.s]/g, "");
     if (jumlah === null || !/^\d+$/.test(harga)) return null;
     return nilaiBaris(jumlah, Number(harga), desimal);
   };
@@ -881,6 +973,8 @@ function DialogPengajuan({
         keperluan,
         sumber_dana: sumberDana,
         catatan,
+        cara_bayar: caraBayar,
+        cicilan: caraBayar === "Cicilan" ? draftSyarat(syarat) : null,
         baris: baris.map((b, indeks) => {
           const terdaftar = b.idBarang !== "";
           const desimal = desimalDari(b);
@@ -1143,6 +1237,37 @@ function DialogPengajuan({
         <p className="text-sm font-semibold text-slate-100">
           Total perkiraan {formatRupiah(total)}
         </p>
+        <fieldset className="space-y-2">
+          <legend className={LABEL}>Cara bayar</legend>
+          <div className="flex flex-wrap gap-4">
+            {(["Tunai", "Cicilan"] as const).map((cara) => (
+              <label
+                key={cara}
+                className="flex min-h-11 items-center gap-2 text-sm text-slate-300"
+              >
+                <input
+                  type="radio"
+                  name="inv-pgj-cara-bayar"
+                  value={cara}
+                  checked={caraBayar === cara}
+                  onChange={() => setCaraBayar(cara)}
+                  className="h-4 w-4"
+                />
+                {cara}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {caraBayar === "Cicilan" ? (
+          <FormSyarat
+            idAwal="inv-pgj-syarat"
+            isian={syarat}
+            onChange={setSyarat}
+            hargaTunai={total}
+            tanggalAwal={tanggal}
+            tanggalDp={tanggal}
+          />
+        ) : null}
         <p className="text-xs text-slate-400">
           Barang baru dibuat saat barangnya diterima. Setelah akuntansi
           memutuskan, pengajuan tidak bisa diubah lagi.
@@ -1165,7 +1290,7 @@ function DialogPengajuan({
   );
 }
 
-function DialogAlasan({
+export function DialogAlasan({
   judul,
   label,
   tombol,
@@ -1425,6 +1550,9 @@ export function PanelPengajuan({
                       {p.nomor_ganda ? " (nomor ganda)" : ""} ·{" "}
                       {tanggalTampil(p.tanggal)} · {p.baris.length} barang ·{" "}
                       {formatRupiah(p.total)}
+                      {p.cara_bayar === "Cicilan" ? (
+                        <span className="text-violet-300"> · Cicilan</span>
+                      ) : null}
                     </p>
                     <p className={`wrap-break-word ${WARNA_STATUS[p.status]}`}>
                       {p.status}
@@ -1589,6 +1717,29 @@ function DialogKeputusan({
   const [catatan, setCatatan] = useState("");
   const [menyimpan, setMenyimpan] = useState(false);
   const [galat, setGalat] = useState<string | null>(null);
+  const cicilan = pengajuan.cicilan;
+  const [akunKontrak, setAkunKontrak] = useState(() => ({
+    utang: cicilan?.id_akun_utang ?? "",
+    bunga: cicilan?.id_akun_bunga ?? "",
+    denda: cicilan?.id_akun_denda ?? "",
+  }));
+  const [akun, setAkun] = useState<AkunItem[] | null>(null);
+  useEffect(() => {
+    if (!cicilan) return;
+    let aktif = true;
+    daftarAkun().then(
+      (hasil) => {
+        if (aktif) setAkun(hasil.items.filter((a) => a.is_aktif));
+      },
+      () => {
+        // Akun bawaan kontrak tetap dipakai bila daftar akun gagal dimuat.
+        if (aktif) setAkun([]);
+      },
+    );
+    return () => {
+      aktif = false;
+    };
+  }, [cicilan]);
 
   const putuskan = async (keputusan: "ACC" | "Tolak") => {
     if (isSubmittingRef.current) return;
@@ -1601,6 +1752,10 @@ function DialogKeputusan({
         keputusan,
         sidik_baris: pengajuan.sidik_baris,
         catatan,
+        sidik_syarat: cicilan?.sidik_syarat ?? null,
+        id_akun_utang: cicilan ? akunKontrak.utang : null,
+        id_akun_bunga: cicilan ? akunKontrak.bunga : null,
+        id_akun_denda: cicilan ? akunKontrak.denda : null,
       });
       await onSelesai(
         keputusan === "ACC"
@@ -1638,6 +1793,59 @@ function DialogKeputusan({
         <p className="font-semibold text-slate-100">
           Total {formatRupiah(pengajuan.total)}
         </p>
+        {cicilan ? (
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-semibold text-slate-100">
+              Akun kontrak cicilan
+            </legend>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(
+                [
+                  ["utang", "Akun utang", "Kewajiban"],
+                  ["bunga", "Akun beban bunga", "Beban"],
+                  ["denda", "Akun beban denda", "Beban"],
+                ] as const
+              ).map(([kunci, label, kelompok]) => (
+                <div key={kunci}>
+                  <label htmlFor={`keu-pgj-akun-${kunci}`} className={LABEL}>
+                    {label}
+                  </label>
+                  <select
+                    id={`keu-pgj-akun-${kunci}`}
+                    value={akunKontrak[kunci]}
+                    disabled={akun === null}
+                    onChange={(e) =>
+                      setAkunKontrak((lama) => ({
+                        ...lama,
+                        [kunci]: e.target.value,
+                      }))
+                    }
+                    className={INPUT}
+                  >
+                    {(akun ?? [])
+                      .filter(
+                        (a) =>
+                          a.kelompok === kelompok ||
+                          a.id_akun === akunKontrak[kunci],
+                      )
+                      .map((a) => (
+                        <option key={a.id_akun} value={a.id_akun}>
+                          {a.kode} {a.nama}
+                        </option>
+                      ))}
+                    {akun === null || akun.length === 0 ? (
+                      <option value={akunKontrak[kunci]}>Akun bawaan</option>
+                    ) : null}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400">
+              ACC juga mengunci syarat cicilan di atas. Bila syaratnya berubah
+              sebelum ACC ini sampai, pengajuan kembali menunggu.
+            </p>
+          </fieldset>
+        ) : null}
         <div>
           <label htmlFor="keu-pgj-catatan" className={LABEL}>
             Catatan (wajib bila ditolak)

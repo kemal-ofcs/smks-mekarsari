@@ -88,6 +88,14 @@
     "sistem": false
   },
   {
+    "id_akun": "akun-utang-cicilan",
+    "kode": "2-1600",
+    "nama": "Utang Cicilan",
+    "kelompok": "Kewajiban",
+    "saldo_normal": "Kredit",
+    "sistem": false
+  },
+  {
     "id_akun": "akun-aset-neto-bebas",
     "kode": "3-1000",
     "nama": "Aset Neto Tanpa Pembatasan",
@@ -179,6 +187,22 @@
     "id_akun": "akun-beban-pemeliharaan",
     "kode": "5-1400",
     "nama": "Beban Pemeliharaan",
+    "kelompok": "Beban",
+    "saldo_normal": "Debit",
+    "sistem": false
+  },
+  {
+    "id_akun": "akun-beban-bunga",
+    "kode": "5-1500",
+    "nama": "Beban Bunga",
+    "kelompok": "Beban",
+    "saldo_normal": "Debit",
+    "sistem": false
+  },
+  {
+    "id_akun": "akun-beban-denda",
+    "kode": "5-1600",
+    "nama": "Beban Denda",
     "kelompok": "Beban",
     "saldo_normal": "Debit",
     "sistem": false
