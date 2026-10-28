@@ -10,6 +10,7 @@ import {
   TOMBOL_KEDUA,
   TOMBOL_UTAMA,
 } from "@/components/inventory/gaya";
+import { PengajuanKeuangan } from "@/components/inventory/Pengajuan";
 import type { AkunItem } from "@/lib/gateways/accounting";
 import {
   catatJurnalInventaris,
@@ -78,6 +79,8 @@ export function JurnalInventaris({
   const [sibuk, setSibuk] = useState(false);
   const [galatSimpan, setGalatSimpan] = useState<string | null>(null);
   const isSubmittingRef = useRef(false);
+  // Pengajuan yang laporan penerimaannya dibuka dari baris Belum dijurnal.
+  const [lihatPengajuan, setLihatPengajuan] = useState<string | null>(null);
 
   const muat = useCallback(async () => {
     setGalat(null);
@@ -174,6 +177,15 @@ export function JurnalInventaris({
 
   return (
     <div className="space-y-4">
+      <PengajuanKeuangan
+        bolehKelola={bolehKelola}
+        dari={dari}
+        sampai={sampai}
+        lihat={lihatPengajuan}
+        onTutupLihat={() => setLihatPengajuan(null)}
+        onInfo={onInfo}
+        onBerubah={onBerubah}
+      />
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label htmlFor="jinv-dari" className={LABEL}>
@@ -318,6 +330,15 @@ export function JurnalInventaris({
                         {b.nomor_dokumen ? ` · ${b.nomor_dokumen}` : ""}
                         {b.periode_tertutup ? " · periode sudah ditutup" : ""}
                       </p>
+                      {b.id_pengajuan ? (
+                        <button
+                          type="button"
+                          onClick={() => setLihatPengajuan(b.id_pengajuan)}
+                          className="mt-1 text-sm font-medium text-sky-300 underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                        >
+                          Lihat penerimaan
+                        </button>
+                      ) : null}
                     </div>
                     <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-100">
                       {formatRupiah(b.nilai)}

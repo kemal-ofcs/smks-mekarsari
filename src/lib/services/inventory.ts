@@ -7,6 +7,7 @@ import { batasTutup } from "@/lib/services/tutup-buku";
 import {
   ALASAN_FORMULIR,
   asciiLower,
+  type BarangDraftParsed,
   type BarangInventaris,
   type BarisBelumDijurnal,
   type BarisDokumen,
@@ -99,7 +100,7 @@ import {
  * Desktop/Mobile memeriksa saldo lokalnya sendiri.
  */
 
-type Executor = Pick<Client | Transaction, "execute">;
+export type Executor = Pick<Client | Transaction, "execute">;
 
 /**
  * Nilai satu mutasi dalam rupiah. Harga satuan selalu per 1 satuan, jadi
@@ -110,7 +111,7 @@ const NILAI_MUTASI_SQL = `CASE WHEN b.desimal = 1
         THEN (m.jumlah * COALESCE(m.harga_satuan, 0) + 50) / 100
         ELSE m.jumlah * COALESCE(m.harga_satuan, 0) END`;
 
-function newHexId(prefix: string): string {
+export function newHexId(prefix: string): string {
   return `${prefix}${randomUUID().replaceAll("-", "")}`;
 }
 
@@ -343,14 +344,14 @@ export async function deleteItem(
   });
 }
 
-async function wibToday(client: Executor): Promise<string> {
+export async function wibToday(client: Executor): Promise<string> {
   const result = await client.execute(
     "SELECT date('now', '+7 hours') AS hari;",
   );
   return String(result.rows[0]?.hari ?? "");
 }
 
-async function withTransaction<T>(
+export async function withTransaction<T>(
   client: Client,
   work: (tx: Transaction) => Promise<T>,
 ): Promise<T> {
@@ -367,7 +368,7 @@ async function withTransaction<T>(
   }
 }
 
-function text(value: unknown): string | null {
+export function text(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value);
 }
 
@@ -578,68 +579,79 @@ export async function saveItem(
 ): Promise<{ sukses: true; id_barang: string; kode_barang: string }> {
   const parsed = barangDraftSchema.safeParse(rawDraft);
   if (!parsed.success) throw new Error("Data barang tidak valid.");
-  const checked = validateBarang(parsed.data);
+  const draft = parsed.data;
+  return withTransaction(client, async (tx) => ({
+    sukses: true as const,
+    ...(await saveItemTx(tx, draft, null)),
+  }));
+}
+
+/**
+ * Cermin `save_item_tx`: inti `saveItem` di dalam transaksi pemanggil.
+ * `idBaru` = id untuk barang baru (penerimaan pengajuan memakai
+ * `brg-<id_baris>`); null = id acak.
+ */
+export async function saveItemTx(
+  tx: Transaction,
+  draft: BarangDraftParsed,
+  idBaru: string | null,
+): Promise<{ id_barang: string; kode_barang: string }> {
+  const checked = validateBarang(draft);
   if (!checked.ok) throw new Error(checked.error);
   const valid = checked.value;
-
-  return withTransaction(client, async (tx) => {
-    const requestedId = parsed.data.id_barang?.trim() || null;
-    let idBarang = requestedId ?? newHexId("brg-");
-    if (requestedId) {
-      const existing = await tx.execute({
-        sql: "SELECT satuan, bisa_expired, desimal, dihapus_pada FROM inventory_barang WHERE id_barang = ?;",
+  const requestedId = draft.id_barang?.trim() || null;
+  let idBarang = requestedId ?? idBaru ?? newHexId("brg-");
+  if (requestedId) {
+    const existing = await tx.execute({
+      sql: "SELECT satuan, bisa_expired, desimal, dihapus_pada FROM inventory_barang WHERE id_barang = ?;",
+      args: [requestedId],
+    });
+    const row = existing.rows[0];
+    if (!row) throw new Error("Barang tidak ditemukan.");
+    if (row.dihapus_pada !== null) throw new Error("Barang ini sudah dihapus.");
+    // Desimal mengubah arti setiap jumlah yang sudah tercatat (×100).
+    const berubah =
+      String(row.satuan) !== valid.satuan ||
+      (Number(row.bisa_expired) === 1) !== valid.bisa_expired ||
+      (Number(row.desimal) === 1) !== valid.desimal;
+    if (berubah) {
+      const history = await tx.execute({
+        sql: "SELECT EXISTS(SELECT 1 FROM inventory_mutasi WHERE id_barang = ? LIMIT 1) AS ada;",
         args: [requestedId],
       });
-      const row = existing.rows[0];
-      if (!row) throw new Error("Barang tidak ditemukan.");
-      if (row.dihapus_pada !== null)
-        throw new Error("Barang ini sudah dihapus.");
-      // Desimal mengubah arti setiap jumlah yang sudah tercatat (×100).
-      const berubah =
-        String(row.satuan) !== valid.satuan ||
-        (Number(row.bisa_expired) === 1) !== valid.bisa_expired ||
-        (Number(row.desimal) === 1) !== valid.desimal;
-      if (berubah) {
-        const history = await tx.execute({
-          sql: "SELECT EXISTS(SELECT 1 FROM inventory_mutasi WHERE id_barang = ? LIMIT 1) AS ada;",
-          args: [requestedId],
-        });
-        if (Number(history.rows[0]?.ada) === 1) {
-          throw new Error(
-            "Satuan, desimal, dan pengaturan kedaluwarsa tidak bisa diubah setelah barang punya riwayat mutasi.",
-          );
-        }
+      if (Number(history.rows[0]?.ada) === 1) {
+        throw new Error(
+          "Satuan, desimal, dan pengaturan kedaluwarsa tidak bisa diubah setelah barang punya riwayat mutasi.",
+        );
       }
-      idBarang = requestedId;
     }
+    idBarang = requestedId;
+  }
 
-    let kode = valid.kode_barang;
-    if (kode !== null) {
-      if (await kodeDipakai(tx, kode, idBarang)) {
-        throw new Error("Kode barang sudah dipakai barang lain.");
-      }
-    } else {
-      const prefixes = await readKodePrefixes(tx);
-      const diminta = parsed.data.kode_prefix?.trim();
-      let prefix = prefixes[0] as string;
-      if (diminta) {
-        const normal = normalizeKodePrefix(diminta);
-        if (normal === null || !prefixes.includes(normal)) {
-          throw new Error("Awalan kode tidak terdaftar.");
-        }
-        prefix = normal;
-      }
-      kode = await nextItemCode(tx, prefix, idBarang);
+  let kode = valid.kode_barang;
+  if (kode !== null) {
+    if (await kodeDipakai(tx, kode, idBarang)) {
+      throw new Error("Kode barang sudah dipakai barang lain.");
     }
-    const tempatUtama = await canonicalTempat(tx, valid.tempat_utama);
-    const atribut = validateAtribut(
-      parsed.data.atribut,
-      await kolomUntukAtribut(tx),
-    );
-    if (!atribut.ok) throw new Error(atribut.error);
+  } else {
+    const prefixes = await readKodePrefixes(tx);
+    const diminta = draft.kode_prefix?.trim();
+    let prefix = prefixes[0] as string;
+    if (diminta) {
+      const normal = normalizeKodePrefix(diminta);
+      if (normal === null || !prefixes.includes(normal)) {
+        throw new Error("Awalan kode tidak terdaftar.");
+      }
+      prefix = normal;
+    }
+    kode = await nextItemCode(tx, prefix, idBarang);
+  }
+  const tempatUtama = await canonicalTempat(tx, valid.tempat_utama);
+  const atribut = validateAtribut(draft.atribut, await kolomUntukAtribut(tx));
+  if (!atribut.ok) throw new Error(atribut.error);
 
-    await tx.execute({
-      sql: `INSERT INTO inventory_barang (
+  await tx.execute({
+    sql: `INSERT INTO inventory_barang (
               id_barang, kode_barang, nama_barang, kategori, tipe, satuan, bisa_expired,
               stok_minimum, tempat_utama, catatan, status_aktif, created_at, updated_at, atribut,
               desimal
@@ -658,26 +670,25 @@ export async function saveItem(
               updated_at = excluded.updated_at,
               atribut = excluded.atribut,
               desimal = excluded.desimal;`,
-      args: [
-        idBarang,
-        kode,
-        valid.nama_barang,
-        valid.kategori,
-        valid.tipe,
-        valid.satuan,
-        valid.bisa_expired ? 1 : 0,
-        valid.stok_minimum,
-        tempatUtama,
-        valid.catatan,
-        valid.status_aktif ? 1 : 0,
-        Object.keys(atribut.value).length > 0
-          ? JSON.stringify(atribut.value)
-          : null,
-        valid.desimal ? 1 : 0,
-      ],
-    });
-    return { sukses: true as const, id_barang: idBarang, kode_barang: kode };
+    args: [
+      idBarang,
+      kode,
+      valid.nama_barang,
+      valid.kategori,
+      valid.tipe,
+      valid.satuan,
+      valid.bisa_expired ? 1 : 0,
+      valid.stok_minimum,
+      tempatUtama,
+      valid.catatan,
+      valid.status_aktif ? 1 : 0,
+      Object.keys(atribut.value).length > 0
+        ? JSON.stringify(atribut.value)
+        : null,
+      valid.desimal ? 1 : 0,
+    ],
   });
+  return { id_barang: idBarang, kode_barang: kode };
 }
 
 function insertMutasiStatement(
@@ -1628,7 +1639,8 @@ export async function journalPending(
   const batas = await batasTutup(client);
   const result = await client.execute({
     sql: `SELECT ${KOLOM_BARIS_JURNAL}, ${NILAI_MUTASI_SQL} AS nilai, m.nomor_dokumen,
-                 b.kode_barang, COALESCE(m.sumber_dana, '') AS sumber_dana, m.harga_satuan
+                 b.kode_barang, COALESCE(m.sumber_dana, '') AS sumber_dana, m.harga_satuan,
+                 (SELECT r.id_pengajuan FROM inventory_pengajuan_baris r WHERE r.id_baris = m.id_ref) AS id_pengajuan
           FROM inventory_mutasi m
           JOIN inventory_barang b ON b.id_barang = m.id_barang
           WHERE ${SYARAT_JURNAL_INVENTARIS_SQL}
@@ -1652,6 +1664,7 @@ export async function journalPending(
     nilai: Number(row.nilai),
     sumber_dana: String(row.sumber_dana),
     nomor_dokumen: text(row.nomor_dokumen),
+    id_pengajuan: text(row.id_pengajuan),
     periode_tertutup: batas !== null && String(row.tanggal) <= batas,
   }));
   const yatim = await client.execute(JURNAL_INVENTARIS_YATIM_SQL);

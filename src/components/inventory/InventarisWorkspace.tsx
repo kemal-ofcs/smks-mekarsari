@@ -34,6 +34,7 @@ import {
   simpanAwalanKodeInventaris,
   simpanBarangInventaris,
 } from "@/lib/gateways/inventory";
+import { getPengajuan } from "@/lib/gateways/inventory-pengajuan";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import {
   ALASAN_FORMULIR,
@@ -66,6 +67,7 @@ import {
   isianJumlah,
   LABEL,
   pesanGalat,
+  SUMBER_DANA_UMUM,
   TOMBOL_BAHAYA,
   TOMBOL_KEDUA,
   TOMBOL_UTAMA,
@@ -83,6 +85,7 @@ import {
   PanelRingkasan,
   type TujuanRingkasan,
 } from "./PanelPemantauan";
+import { jumlahPerluDiterima, PanelPengajuan } from "./Pengajuan";
 import {
   type AksiServis,
   DialogServis,
@@ -113,6 +116,7 @@ type Tab =
   | "kedaluwarsa"
   | "dipinjam"
   | "servis"
+  | "pengajuan"
   | "opname"
   | "kartu";
 type Feedback = { tone: "success" | "error"; message: string } | null;
@@ -134,15 +138,6 @@ const ALASAN_BAWAAN: Record<JenisMutasi, string> = {
   Keluar: "Pemakaian",
   Pindah: "Distribusi",
 };
-const SUMBER_DANA_UMUM = [
-  "BOSP Reguler",
-  "BOSP Kinerja",
-  "BOP",
-  "APBD",
-  "Yayasan",
-  "Komite",
-  "Hibah",
-];
 
 /** Draft simpan yang membawa semua isi barang apa adanya, kecuali statusnya. */
 function draftDenganStatus(
@@ -360,6 +355,25 @@ export function InventarisWorkspace({
 
   useEffect(() => subscribeSyncCompleted(() => void muat()), [muat]);
 
+  // Tanda angka tab Pengajuan: di-ACC, barangnya belum diterima penuh.
+  const [perluDiterima, setPerluDiterima] = useState(0);
+  const muatPengajuan = useCallback(async () => {
+    try {
+      const hari = hariIniWib();
+      setPerluDiterima(jumlahPerluDiterima(await getPengajuan(hari, hari)));
+    } catch {
+      // Hanya tanda angka; tabnya sendiri menampilkan kegagalannya.
+      setPerluDiterima(0);
+    }
+  }, []);
+  useEffect(() => {
+    void muatPengajuan();
+  }, [muatPengajuan]);
+  useEffect(
+    () => subscribeSyncCompleted(() => void muatPengajuan()),
+    [muatPengajuan],
+  );
+
   const daftarTab: Record<Tab, string> = {
     ringkasan: "Ringkasan",
     barang: "Barang",
@@ -367,6 +381,7 @@ export function InventarisWorkspace({
     kedaluwarsa: "Kedaluwarsa",
     dipinjam: "Dipinjam",
     servis: "Servis",
+    pengajuan: perluDiterima > 0 ? `Pengajuan (${perluDiterima})` : "Pengajuan",
     opname: "Opname",
     kartu: "Kartu Stok",
   };
@@ -378,6 +393,7 @@ export function InventarisWorkspace({
         "kedaluwarsa",
         "dipinjam",
         "servis",
+        "pengajuan",
         "barang",
         "ringkasan",
         "opname",
@@ -390,6 +406,7 @@ export function InventarisWorkspace({
         "kedaluwarsa",
         "dipinjam",
         "servis",
+        "pengajuan",
         "opname",
         "kartu",
       ];
@@ -507,6 +524,17 @@ export function InventarisWorkspace({
             }}
             onInfo={info}
             onGalat={galat}
+          />
+        ) : tab === "pengajuan" ? (
+          <PanelPengajuan
+            data={data}
+            canRecord={canRecord}
+            onInfo={info}
+            onBerubah={() => {
+              void muatPengajuan();
+              // Penerimaan menambah stok dan bisa membuat barang baru.
+              void muat();
+            }}
           />
         ) : tab === "opname" ? (
           <PanelOpname

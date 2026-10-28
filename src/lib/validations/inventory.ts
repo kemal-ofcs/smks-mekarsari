@@ -325,7 +325,7 @@ export const barangDraftSchema = z
   .strict();
 
 export type BarangDraft = z.input<typeof barangDraftSchema>;
-type BarangDraftParsed = z.output<typeof barangDraftSchema>;
+export type BarangDraftParsed = z.output<typeof barangDraftSchema>;
 
 export interface BarangValid {
   kode_barang: string | null;
@@ -1659,6 +1659,8 @@ export interface BarisBelumDijurnal {
   nilai: number;
   sumber_dana: string;
   nomor_dokumen: string | null;
+  /** Masuk hasil penerimaan pengajuan (v64); null untuk Masuk biasa. */
+  id_pengajuan: string | null;
   periode_tertutup: boolean;
 }
 

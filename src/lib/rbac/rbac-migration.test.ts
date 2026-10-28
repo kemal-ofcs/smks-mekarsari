@@ -179,6 +179,8 @@ describe("dynamic RBAC migration", () => {
       62,
       // v63 — servis aset (`inventory_servis`).
       63,
+      // v64 — pengajuan pembelian dan penerimaannya (`inventory_pengajuan`).
+      64,
     ]);
 
     const sessionColumns = await client.execute(

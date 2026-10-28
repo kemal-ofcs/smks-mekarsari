@@ -79,6 +79,7 @@ const UNIT_JP_BELL_MIGRATION_VERSION = 60;
 const INVENTORY_ITEM_DELETE_MIGRATION_VERSION = 61;
 const JOURNAL_SOURCE_INVENTORY_MIGRATION_VERSION = 62;
 const INVENTORY_SERVICE_MIGRATION_VERSION = 63;
+const INVENTORY_REQUEST_MIGRATION_VERSION = 64;
 
 /**
  * Bentuk `akademik_jam_pelajaran` sejak v60: jenis `Pulang`, cakupan unit +
@@ -3198,5 +3199,89 @@ export async function runDatabaseMigrations(client: Client) {
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'inventory-service', ?);`,
     args: [INVENTORY_SERVICE_MIGRATION_VERSION, now],
+  });
+
+  // v64: pengajuan pembelian dan penerimaannya. DDL WAJIB identik dengan
+  // `storage.rs` dan `turso.rs`. Foto penerimaan di luar snapshot, pola
+  // `absensi_foto`.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_pengajuan (
+      id_pengajuan TEXT PRIMARY KEY,
+      tanggal TEXT NOT NULL,
+      seri TEXT NOT NULL,
+      nomor_urut INTEGER NOT NULL,
+      nomor TEXT NOT NULL,
+      keperluan TEXT NOT NULL,
+      sumber_dana TEXT,
+      catatan TEXT,
+      sidik_baris TEXT NOT NULL,
+      diajukan_oleh TEXT NOT NULL,
+      disetujui_pada TEXT,
+      disetujui_oleh TEXT,
+      sidik_disetujui TEXT,
+      catatan_persetujuan TEXT,
+      ditolak_pada TEXT,
+      ditolak_oleh TEXT,
+      alasan_tolak TEXT,
+      dibatalkan_pada TEXT,
+      dibatalkan_oleh TEXT,
+      alasan_batal TEXT,
+      ditutup_pada TEXT,
+      ditutup_oleh TEXT,
+      alasan_tutup TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_pengajuan_tanggal ON inventory_pengajuan(tanggal);",
+  );
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_pengajuan_baris (
+      id_baris TEXT PRIMARY KEY,
+      id_pengajuan TEXT NOT NULL,
+      urutan INTEGER NOT NULL CHECK (urutan >= 1),
+      id_barang TEXT,
+      nama_barang TEXT NOT NULL,
+      satuan TEXT NOT NULL,
+      desimal INTEGER NOT NULL DEFAULT 0 CHECK (desimal IN (0, 1)),
+      jumlah INTEGER NOT NULL CHECK (jumlah > 0),
+      harga_satuan INTEGER NOT NULL CHECK (harga_satuan >= 0)
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_pengajuan_baris_induk ON inventory_pengajuan_baris(id_pengajuan);",
+  );
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_penerimaan (
+      id_penerimaan TEXT PRIMARY KEY,
+      id_pengajuan TEXT NOT NULL,
+      tanggal TEXT NOT NULL,
+      catatan TEXT,
+      jumlah_foto INTEGER NOT NULL CHECK (jumlah_foto BETWEEN 1 AND 5),
+      dicatat_oleh TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_penerimaan_pengajuan ON inventory_penerimaan(id_pengajuan);",
+  );
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_penerimaan_foto (
+      id_foto TEXT PRIMARY KEY,
+      id_penerimaan TEXT NOT NULL,
+      urutan INTEGER NOT NULL CHECK (urutan BETWEEN 1 AND 5),
+      mime_type TEXT NOT NULL CHECK (mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
+      data_base64 TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_inventory_penerimaan_foto_induk ON inventory_penerimaan_foto(id_penerimaan);",
+  );
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'inventory-request', ?);`,
+    args: [INVENTORY_REQUEST_MIGRATION_VERSION, now],
   });
 }

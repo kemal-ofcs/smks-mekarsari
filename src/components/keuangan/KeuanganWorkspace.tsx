@@ -17,6 +17,7 @@ import {
   TOMBOL_KEDUA,
   TOMBOL_UTAMA,
 } from "@/components/inventory/gaya";
+import { jumlahMenunggu } from "@/components/inventory/Pengajuan";
 import {
   eksporBukuBesar,
   eksporNeracaSaldo,
@@ -47,6 +48,7 @@ import {
   simpanAkun,
 } from "@/lib/gateways/accounting";
 import { getJurnalInventaris } from "@/lib/gateways/inventory";
+import { getPengajuan } from "@/lib/gateways/inventory-pengajuan";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import {
   BATAS_DAFTAR_JURNAL,
@@ -150,13 +152,21 @@ export function KeuanganWorkspace() {
   );
 
   // Tanda angka di tab Dari Inventaris: semua yang belum dijurnal sepanjang
-  // masa ditambah jurnal yang perlu dibalik.
+  // masa, jurnal yang perlu dibalik, dan pengajuan pembelian yang menunggu.
   const [belumDijurnal, setBelumDijurnal] = useState(0);
   const muatBelumDijurnal = useCallback(async () => {
     try {
-      const hasil = await getJurnalInventaris("2000-01-01", hariIniWib());
+      const hari = hariIniWib();
+      const menunggu = await getPengajuan(hari, hari).then(
+        jumlahMenunggu,
+        () => 0,
+      );
+      const hasil = await getJurnalInventaris("2000-01-01", hari);
       setBelumDijurnal(
-        hasil.baris.length + hasil.perlu_dibalik.length + hasil.servis.length,
+        hasil.baris.length +
+          hasil.perlu_dibalik.length +
+          hasil.servis.length +
+          menunggu,
       );
     } catch {
       // Hanya tanda angka; tabnya sendiri menampilkan kegagalannya.

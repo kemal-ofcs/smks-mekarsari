@@ -23,6 +23,7 @@ pub mod face_match;
 pub mod grades;
 pub mod hari_kerja;
 pub mod inventory;
+pub mod inventory_pengajuan;
 pub mod konten_gambar;
 pub mod license;
 pub mod loan;

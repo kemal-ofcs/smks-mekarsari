@@ -902,6 +902,70 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_inventory_servis_barang ON inventory_servis(id_barang);
+      -- Pengajuan pembelian (v64). Status diturunkan dari kolom waktu dan
+      -- jumlah yang sudah diterima. DDL WAJIB identik dengan `turso.rs` dan
+      -- `db-migrations.ts`.
+      CREATE TABLE IF NOT EXISTS inventory_pengajuan (
+        id_pengajuan TEXT PRIMARY KEY,
+        tanggal TEXT NOT NULL,
+        seri TEXT NOT NULL,
+        nomor_urut INTEGER NOT NULL,
+        nomor TEXT NOT NULL,
+        keperluan TEXT NOT NULL,
+        sumber_dana TEXT,
+        catatan TEXT,
+        sidik_baris TEXT NOT NULL,
+        diajukan_oleh TEXT NOT NULL,
+        disetujui_pada TEXT,
+        disetujui_oleh TEXT,
+        sidik_disetujui TEXT,
+        catatan_persetujuan TEXT,
+        ditolak_pada TEXT,
+        ditolak_oleh TEXT,
+        alasan_tolak TEXT,
+        dibatalkan_pada TEXT,
+        dibatalkan_oleh TEXT,
+        alasan_batal TEXT,
+        ditutup_pada TEXT,
+        ditutup_oleh TEXT,
+        alasan_tutup TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inventory_pengajuan_tanggal ON inventory_pengajuan(tanggal);
+      CREATE TABLE IF NOT EXISTS inventory_pengajuan_baris (
+        id_baris TEXT PRIMARY KEY,
+        id_pengajuan TEXT NOT NULL,
+        urutan INTEGER NOT NULL CHECK (urutan >= 1),
+        id_barang TEXT,
+        nama_barang TEXT NOT NULL,
+        satuan TEXT NOT NULL,
+        desimal INTEGER NOT NULL DEFAULT 0 CHECK (desimal IN (0, 1)),
+        jumlah INTEGER NOT NULL CHECK (jumlah > 0),
+        harga_satuan INTEGER NOT NULL CHECK (harga_satuan >= 0)
+      );
+      CREATE INDEX IF NOT EXISTS idx_inventory_pengajuan_baris_induk ON inventory_pengajuan_baris(id_pengajuan);
+      CREATE TABLE IF NOT EXISTS inventory_penerimaan (
+        id_penerimaan TEXT PRIMARY KEY,
+        id_pengajuan TEXT NOT NULL,
+        tanggal TEXT NOT NULL,
+        catatan TEXT,
+        jumlah_foto INTEGER NOT NULL CHECK (jumlah_foto BETWEEN 1 AND 5),
+        dicatat_oleh TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inventory_penerimaan_pengajuan ON inventory_penerimaan(id_pengajuan);
+      -- Di luar snapshot, pola `absensi_foto`: didorong lewat outbox, ditarik
+      -- saat dibuka.
+      CREATE TABLE IF NOT EXISTS inventory_penerimaan_foto (
+        id_foto TEXT PRIMARY KEY,
+        id_penerimaan TEXT NOT NULL,
+        urutan INTEGER NOT NULL CHECK (urutan BETWEEN 1 AND 5),
+        mime_type TEXT NOT NULL CHECK (mime_type IN ('image/jpeg', 'image/png', 'image/webp')),
+        data_base64 TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inventory_penerimaan_foto_induk ON inventory_penerimaan_foto(id_penerimaan);
       -- Definisi kolom tambahan barang (v53). Isinya di `inventory_barang.atribut`
       -- (JSON berkunci id_kolom); hapus = nonaktif. DDL WAJIB identik dengan
       -- `turso.rs` dan `db-migrations.ts`.
@@ -2294,6 +2358,10 @@ pub(crate) const CLOUD_MIRRORED_TABLES: &[&str] = &[
     "inventory_mutasi",
     "inventory_unit",
     "inventory_servis",
+    "inventory_pengajuan",
+    "inventory_pengajuan_baris",
+    "inventory_penerimaan",
+    "inventory_penerimaan_foto",
     "inventory_kolom",
     "personil_wajah",
     // v39 — akuntansi. Ikut dibuang saat pindah database: pembukuan milik

@@ -645,7 +645,7 @@ pub fn is_valid_date(value: &str) -> bool {
     (1..=max_day).contains(&day)
 }
 
-fn clean(value: &Option<String>) -> Option<String> {
+pub(crate) fn clean(value: &Option<String>) -> Option<String> {
     value
         .as_deref()
         .map(str::trim)
@@ -1346,11 +1346,11 @@ pub fn validate_unit_edit(draft: &UnitDraft) -> Result<(Option<String>, Option<S
 
 // ── I/O ─────────────────────────────────────────────────────────────────────
 
-fn invalid(message: impl Into<String>) -> CommandError {
+pub(crate) fn invalid(message: impl Into<String>) -> CommandError {
     CommandError::new("VALIDATION_ERROR", message)
 }
 
-fn new_hex_id(prefix: &str) -> String {
+pub(crate) fn new_hex_id(prefix: &str) -> String {
     let mut bytes = [0u8; 16];
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut bytes);
     let mut id = String::with_capacity(prefix.len() + 32);
@@ -1749,7 +1749,7 @@ pub fn delete_item(state: &DesktopState, id_barang: &str) -> Result<Value, Comma
     Ok(json!({ "sukses": true }))
 }
 
-fn wib_today(connection: &Connection) -> String {
+pub(crate) fn wib_today(connection: &Connection) -> String {
     connection
         .query_row("SELECT date('now', '+7 hours');", [], |row| row.get(0))
         .unwrap_or_default()
@@ -2112,14 +2112,26 @@ pub fn list_recipients(state: &DesktopState) -> Result<Value, CommandError> {
 pub fn save_item(state: &DesktopState, draft: Value) -> Result<Value, CommandError> {
     let draft: BarangDraft =
         serde_json::from_value(draft).map_err(|_| invalid("Data barang tidak valid."))?;
-    let valid = validate_barang(&draft).map_err(invalid)?;
     let client_id = sync::ensure_client_id(state)?;
-
     let mut connection = storage::database(&state.data_dir)?;
     let transaction = connection
         .transaction()
         .map_err(|_| CommandError::internal())?;
+    let (id_barang, kode_barang) = save_item_tx(&transaction, &client_id, &draft, None)?;
+    transaction.commit().map_err(|_| CommandError::internal())?;
+    Ok(json!({ "sukses": true, "id_barang": id_barang, "kode_barang": kode_barang }))
+}
 
+/// Inti `save_item` di dalam transaksi pemanggil. `id_baru` = id untuk barang
+/// baru (penerimaan pengajuan memakai `brg-<id_baris>`); kosong = id acak.
+/// Cermin `saveItemTx`.
+pub(crate) fn save_item_tx(
+    transaction: &Transaction<'_>,
+    client_id: &str,
+    draft: &BarangDraft,
+    id_baru: Option<&str>,
+) -> Result<(String, String), CommandError> {
+    let valid = validate_barang(draft).map_err(invalid)?;
     let requested_id = clean(&draft.id_barang);
     let existing: Option<(String, i64, i64, bool)> = match requested_id.as_deref() {
         Some(id) => Some(
@@ -2136,7 +2148,9 @@ pub fn save_item(state: &DesktopState, draft: Value) -> Result<Value, CommandErr
         ),
         None => None,
     };
-    let id_barang = requested_id.unwrap_or_else(|| new_hex_id("brg-"));
+    let id_barang = requested_id
+        .or_else(|| id_baru.map(str::to_owned))
+        .unwrap_or_else(|| new_hex_id("brg-"));
 
     if let Some((satuan_lama, expired_lama, desimal_lama, dihapus)) = existing {
         if dihapus {
@@ -2228,18 +2242,17 @@ pub fn save_item(state: &DesktopState, draft: Value) -> Result<Value, CommandErr
         )
         .map_err(|_| CommandError::internal())?;
 
-    let payload = barang_json(&transaction, &id_barang)?.ok_or_else(CommandError::internal)?;
+    let payload = barang_json(transaction, &id_barang)?.ok_or_else(CommandError::internal)?;
     sync::enqueue(
-        &transaction,
-        &client_id,
+        transaction,
+        client_id,
         "inventory-item",
         "save",
         &id_barang,
         &payload,
         None,
     )?;
-    transaction.commit().map_err(|_| CommandError::internal())?;
-    Ok(json!({ "sukses": true, "id_barang": id_barang, "kode_barang": kode_barang }))
+    Ok((id_barang, kode_barang))
 }
 
 fn kode_dipakai(
@@ -3561,7 +3574,8 @@ pub fn journal_pending(state: &DesktopState, dari: &str, sampai: &str) -> Result
     let mut statement = connection
         .prepare(&format!(
             "SELECT {KOLOM_BARIS_JURNAL}, {NILAI_MUTASI_SQL} AS nilai, m.nomor_dokumen,
-                    b.kode_barang, COALESCE(m.sumber_dana, '') AS sumber_dana, m.harga_satuan
+                    b.kode_barang, COALESCE(m.sumber_dana, '') AS sumber_dana, m.harga_satuan,
+                    (SELECT r.id_pengajuan FROM inventory_pengajuan_baris r WHERE r.id_baris = m.id_ref)
              FROM inventory_mutasi m
              JOIN inventory_barang b ON b.id_barang = m.id_barang
              WHERE {SYARAT_JURNAL_INVENTARIS_SQL}
@@ -3589,6 +3603,8 @@ pub fn journal_pending(state: &DesktopState, dari: &str, sampai: &str) -> Result
                 "nilai": item.nilai,
                 "sumber_dana": row.get::<_, String>(11)?,
                 "nomor_dokumen": item.nomor_dokumen,
+                // Masuk hasil penerimaan pengajuan (v64): tautan ke laporannya.
+                "id_pengajuan": row.get::<_, Option<String>>(13)?,
                 "periode_tertutup": tertutup,
             }))
         })
@@ -4515,7 +4531,7 @@ pub fn stock_card(
 
 // ── Cloud ───────────────────────────────────────────────────────────────────
 
-fn payload_text(row: &Value, key: &str) -> Option<String> {
+pub(crate) fn payload_text(row: &Value, key: &str) -> Option<String> {
     row.get(key)
         .and_then(Value::as_str)
         .map(str::trim)

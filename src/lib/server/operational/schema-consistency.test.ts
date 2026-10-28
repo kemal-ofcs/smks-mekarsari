@@ -51,6 +51,7 @@ describe("Schema Consistency & Zero-Drift Guard", () => {
         'berita', 'konten_publik', 'riwayat_identitas_karyawan',
         'inventory_barang', 'inventory_mutasi', 'uks_kunjungan',
         'inventory_unit', 'inventory_servis', 'personil_wajah',
+        'inventory_pengajuan', 'inventory_pengajuan_baris', 'inventory_penerimaan', 'inventory_penerimaan_foto',
         'keu_akun', 'keu_jurnal', 'keu_jurnal_baris',
         'keu_pinjaman', 'keu_pinjaman_mutasi', 'keu_pinjaman_tunda',
         'keu_jenis_tagihan', 'keu_tarif_tagihan', 'keu_keringanan',
