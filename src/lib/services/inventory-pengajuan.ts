@@ -654,8 +654,8 @@ export async function receivePengajuan(
             await saveItemTx(
               tx,
               barangDraftSchema.parse({
-                nama_barang: baris.nama_barang,
-                satuan: baris.satuan,
+                nama_barang: isian.nama_barang?.trim() || baris.nama_barang,
+                satuan: isian.satuan?.trim() || baris.satuan,
                 desimal: baris.desimal,
                 tipe: isian.tipe ?? "",
                 kategori: isian.kategori ?? null,

@@ -454,7 +454,12 @@ pub struct BarisTerimaDraft {
     /// Barang Masuk pertama yang memulai pencatatan per unit.
     #[serde(default)]
     pub per_unit: bool,
-    // Hanya untuk barang baru.
+    // Hanya untuk barang baru. Nama dan satuan yang dirapikan saat diterima;
+    // kosong = dari baris pengajuan, yang tetap menyimpan ejaan aslinya.
+    #[serde(default)]
+    pub nama_barang: Option<String>,
+    #[serde(default)]
+    pub satuan: Option<String>,
     #[serde(default)]
     pub tipe: Option<String>,
     #[serde(default)]
@@ -1458,7 +1463,15 @@ pub fn receive_request(
             "SELECT nomor, sumber_dana, disetujui_pada, tanggal, cara_bayar
              FROM inventory_pengajuan WHERE id_pengajuan = ?;",
             params![id_pengajuan],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .map_err(|_| CommandError::internal())?;
     let acc: Vec<BarisAccLokal> = {
@@ -1535,8 +1548,9 @@ pub fn receive_request(
                     .map_err(|_| CommandError::internal())?;
                 if !ada {
                     let barang = BarangDraft {
-                        nama_barang: baris.nama_barang.clone(),
-                        satuan: baris.satuan.clone(),
+                        nama_barang: clean(&isian.nama_barang)
+                            .unwrap_or_else(|| baris.nama_barang.clone()),
+                        satuan: clean(&isian.satuan).unwrap_or_else(|| baris.satuan.clone()),
                         desimal: baris.desimal,
                         tipe: isian.tipe.clone().unwrap_or_default(),
                         kategori: isian.kategori.clone(),
@@ -1597,8 +1611,8 @@ pub fn receive_request(
                 |row| row.get(0),
             )
             .map_err(|_| CommandError::internal())?;
-        let syarat =
-            cicilan::validate_syarat(isian, harga, &tanggal_pengajuan, &valid.tanggal).map_err(invalid)?;
+        let syarat = cicilan::validate_syarat(isian, harga, &tanggal_pengajuan, &valid.tanggal)
+            .map_err(invalid)?;
         cicilan::aktifkan_tx(&transaction, &client_id, &id_pengajuan, &syarat)?;
     }
 
@@ -2544,13 +2558,28 @@ mod tests {
         )
         .expect("acc");
 
+        // Satuan barang baru yang dirapikan tetap diperiksa aturan barang.
+        let satuan_panjang = receive_request(
+            &state,
+            "sarpras",
+            json!({"id_pengajuan": id, "tanggal": hari, "baris": [
+                {"id_baris": format!("{id}-3"), "jumlah": 2, "harga_satuan": 4000000, "tempat": "Lab",
+                 "tipe": "Aset", "satuan": "s".repeat(21)}], "foto": foto}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            satuan_panjang.message,
+            "Baris 3: Satuan maksimal 20 karakter."
+        );
+
         let terima = receive_request(
             &state,
             "sarpras",
             json!({"id_pengajuan": id, "tanggal": hari, "baris": [
                 {"id_baris": format!("{id}-1"), "jumlah": 10, "harga_satuan": 9000, "tempat": "Gudang"},
                 {"id_baris": format!("{id}-3"), "jumlah": 2, "harga_satuan": 4000000, "tempat": "Lab",
-                 "tipe": "Aset", "kategori": "Elektronik", "per_unit": true}], "foto": foto}),
+                 "tipe": "Aset", "kategori": "Elektronik", "per_unit": true,
+                 "nama_barang": " Proyektor Epson EB-X51 "}], "foto": foto}),
         )
         .expect("terima pertama");
         assert_eq!(terima["label"][1]["id_barang"], format!("brg-{id}-3"));
@@ -2592,6 +2621,18 @@ mod tests {
             )
             .expect("hitung");
         assert_eq!(barang_baru, 2);
+        let nama_proyektor: String = connection
+            .query_row(
+                "SELECT nama_barang FROM inventory_barang WHERE id_barang = ?;",
+                params![format!("brg-{id}-3")],
+                |row| row.get(0),
+            )
+            .expect("nama");
+        assert_eq!(nama_proyektor, "Proyektor Epson EB-X51");
+        assert_eq!(
+            daftar["pengajuan"][0]["baris"][2]["nama_barang"],
+            "Proyektor"
+        );
         let foto_lokal = receipt_photo_local(
             &state,
             &format!("{}-2", terima["id_penerimaan"].as_str().unwrap()),

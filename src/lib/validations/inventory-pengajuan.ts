@@ -453,6 +453,8 @@ const barisTerimaDraftSchema = z
     kondisi: z.string().max(40).nullable().optional(),
     tanggal_expired: z.string().max(10).nullable().optional(),
     per_unit: z.boolean().default(false),
+    nama_barang: z.string().max(1000).nullable().optional(),
+    satuan: z.string().max(200).nullable().optional(),
     tipe: z.string().max(40).nullable().optional(),
     kategori: z.string().max(400).nullable().optional(),
     bisa_expired: z.boolean().default(false),

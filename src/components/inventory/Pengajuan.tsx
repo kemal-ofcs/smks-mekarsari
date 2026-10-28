@@ -320,6 +320,8 @@ type IsianTerima = {
   expired: string;
   perUnit: boolean;
   // Hanya barang baru.
+  nama: string;
+  satuan: string;
   tipe: TipeBarang;
   kategori: string;
   bisaExpired: boolean;
@@ -365,6 +367,8 @@ function DialogPenerimaan({
           kondisi: "Baik",
           expired: "",
           perUnit: false,
+          nama: b.nama_barang,
+          satuan: b.satuan,
           tipe: "Habis Pakai",
           kategori: "",
           bisaExpired: false,
@@ -475,6 +479,8 @@ function DialogPenerimaan({
             kondisi: i.kondisi,
             tanggal_expired: bisaExpired ? i.expired : null,
             per_unit: bolehPerUnit && i.perUnit,
+            nama_barang: barang ? null : i.nama,
+            satuan: barang ? null : i.satuan,
             tipe: barang ? null : i.tipe,
             kategori: barang ? null : i.kategori,
             bisa_expired: barang ? false : i.bisaExpired,
@@ -625,6 +631,36 @@ function DialogPenerimaan({
                 </div>
                 {barang ? null : (
                   <>
+                    <div>
+                      <label htmlFor={`${id}-nama`} className={LABEL}>
+                        Nama barang
+                      </label>
+                      <input
+                        id={`${id}-nama`}
+                        required
+                        maxLength={MAKS_NAMA_BARANG}
+                        value={i.nama}
+                        onChange={(e) =>
+                          ubah(b.id_baris, { nama: e.target.value })
+                        }
+                        className={INPUT}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor={`${id}-satuan`} className={LABEL}>
+                        Satuan
+                      </label>
+                      <input
+                        id={`${id}-satuan`}
+                        required
+                        maxLength={MAKS_SATUAN}
+                        value={i.satuan}
+                        onChange={(e) =>
+                          ubah(b.id_baris, { satuan: e.target.value })
+                        }
+                        className={INPUT}
+                      />
+                    </div>
                     <div>
                       <label htmlFor={`${id}-tipe`} className={LABEL}>
                         Tipe barang
