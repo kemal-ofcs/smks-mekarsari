@@ -579,6 +579,7 @@ export function InventarisWorkspace({
         ) : tab === "opname" ? (
           <PanelOpname
             data={data}
+            idPengguna={user?.id ?? 0}
             isSubmittingRef={isSubmittingRef}
             onSelesai={selesai}
             onGalat={galat}
