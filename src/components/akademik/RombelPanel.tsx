@@ -2,6 +2,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import { Icon } from "@/components/ui/Icon";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { formatTingkatDisplay } from "@/lib/constants/academic-levels";
 import type { RombelInput } from "@/lib/gateways/academic";
 
@@ -65,7 +66,7 @@ export function RombelPanel({
         >
           Filter Tahun Ajaran:
         </label>
-        <select
+        <PilihCari
           id="ta-filter-rombel"
           value={selectedTaForRombel}
           onChange={(e) => void handleTaFilterChange(e.target.value)}
@@ -80,7 +81,7 @@ export function RombelPanel({
               {String(ta.nama_tahun)} ({String(ta.semester)})
             </option>
           ))}
-        </select>
+        </PilihCari>
       </div>
 
       {canManage && tanpaUnit > 0 && (unitList?.length ?? 0) > 0 ? (

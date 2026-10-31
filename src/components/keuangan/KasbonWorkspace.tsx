@@ -18,6 +18,7 @@ import {
 } from "@/components/inventory/gaya";
 import { PilihAkunBayar } from "@/components/keuangan/PilihAkunBayar";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -337,7 +338,7 @@ function DialogPengajuan({
           <label className={LABEL} htmlFor="kasbon-orang">
             Peminjam
           </label>
-          <select
+          <PilihCari
             id="kasbon-orang"
             required
             className={INPUT}
@@ -353,7 +354,7 @@ function DialogPengajuan({
                 {item.nama} ({item.divisi})
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>

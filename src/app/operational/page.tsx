@@ -738,6 +738,7 @@ export default function OperationalPage() {
           <button
             type="button"
             disabled={busy}
+            data-konfirmasi
             onClick={submitCorrection}
             className="min-h-11 w-full rounded-xl bg-sky-400 font-black text-slate-950 transition hover:bg-sky-300 disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm shadow-md flex items-center justify-center gap-2"
           >
@@ -872,6 +873,7 @@ export default function OperationalPage() {
           <button
             type="button"
             disabled={busy}
+            data-konfirmasi
             onClick={submitBackup}
             className="min-h-11 w-full rounded-xl bg-sky-400 font-black text-slate-950 transition hover:bg-sky-300 disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm shadow-md flex items-center justify-center gap-2"
           >
@@ -1054,6 +1056,7 @@ export default function OperationalPage() {
               <button
                 type="button"
                 disabled={busy}
+                data-konfirmasi
                 onClick={submitManualEntry}
                 className="min-h-11 w-full rounded-xl bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-black transition disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm shadow-md flex items-center justify-center gap-2"
               >
@@ -1098,6 +1101,7 @@ export default function OperationalPage() {
                 <button
                   type="button"
                   disabled={busy}
+                  data-konfirmasi
                   onClick={submitBulkCsv}
                   className="min-h-10 w-full rounded-xl bg-amber-400 hover:bg-amber-300 font-bold text-slate-950 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-mono flex items-center justify-center gap-2"
                 >

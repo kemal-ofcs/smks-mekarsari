@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { BRANDING } from "@/lib/constants/branding";
-import { getCompanyProfile } from "@/lib/gateways/company-profile";
+import { getPublicBranding } from "@/lib/gateways/company-profile";
 import { SYNC_COMPLETED_EVENT } from "@/lib/gateways/sync-status";
 import { createBrandingMirror } from "./branding-mirror";
 
@@ -22,8 +22,8 @@ const mirror = createBrandingMirror<string>({
   encode: (name) => name?.trim() || null,
   normalize: (name) => name?.trim() || BRANDING.defaultCompanyName,
   fetchRemote: async () => {
-    const profile = await getCompanyProfile();
-    return profile.company_name?.trim() || BRANDING.defaultCompanyName;
+    const { company_name } = await getPublicBranding();
+    return company_name?.trim() || BRANDING.defaultCompanyName;
   },
 });
 

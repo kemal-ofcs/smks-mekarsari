@@ -11,6 +11,7 @@ import {
   DatabaseNotConfiguredNotice,
 } from "@/components/DatabaseNotConfiguredNotice";
 import { LicenseActivationPanel } from "@/components/license/LicenseActivationPanel";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { LoginSceneGate } from "@/components/visual/LoginSceneGate";
 import { VisualProvider } from "@/components/visual/VisualProvider";
 import { BRANDING } from "@/lib/constants/branding";
@@ -281,9 +282,7 @@ export default function LoginPage() {
           </div>
 
           <div className="pt-2">
-            <div className="w-12 h-12 bg-gradient-to-tr from-emerald-600 to-sky-500 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-emerald-950/60 font-bold text-white text-sm tracking-wider">
-              AUTH
-            </div>
+            <BrandLogo size={56} className="mx-auto" />
             <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight mt-3">
               {companyName && companyName !== BRANDING.defaultCompanyName
                 ? `${appName} — ${companyName}`

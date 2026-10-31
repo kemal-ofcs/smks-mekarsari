@@ -1955,3 +1955,60 @@ export interface BarisServisBelumDijurnal {
   nilai: number;
   periode_tertutup: boolean;
 }
+
+export interface BarisPratinjauMutasi {
+  label: string;
+  sebelum: number;
+  /** null selama jumlah belum diisi atau belum terbaca. */
+  sesudah: number | null;
+}
+
+/**
+ * Stok sebelum dan sesudah mutasi, untuk ditampilkan sebelum disimpan. Hanya
+ * gambaran dari data yang sudah dimuat; penentunya tetap backend. Jumlah dan
+ * saldo memakai satuan tersimpan yang sama (barang desimal ×100).
+ */
+export function pratinjauMutasi(masukan: {
+  jenis: JenisMutasi;
+  jumlah: number | null;
+  stokTotal: number;
+  asal: { label: string; saldo: number } | null;
+  tujuan: { label: string; saldo: number } | null;
+}): { baris: BarisPratinjauMutasi[]; melebihiStok: boolean } {
+  const { jenis, stokTotal, asal, tujuan } = masukan;
+  const jumlah =
+    masukan.jumlah !== null && masukan.jumlah > 0 ? masukan.jumlah : null;
+  const geser = (saldo: number, arah: 1 | -1) =>
+    jumlah === null ? null : saldo + arah * jumlah;
+  const baris: BarisPratinjauMutasi[] = [];
+  if (jenis !== "Masuk" && asal) {
+    baris.push({
+      label: asal.label,
+      sebelum: asal.saldo,
+      sesudah: geser(asal.saldo, -1),
+    });
+  }
+  if (jenis !== "Keluar" && tujuan) {
+    baris.push({
+      label: tujuan.label,
+      sebelum: tujuan.saldo,
+      sesudah: geser(tujuan.saldo, 1),
+    });
+  }
+  // Pindah tidak mengubah total, jadi barisnya hanya menambah bacaan.
+  if (jenis !== "Pindah") {
+    baris.push({
+      label: "Total semua tempat",
+      sebelum: stokTotal,
+      sesudah: geser(stokTotal, jenis === "Masuk" ? 1 : -1),
+    });
+  }
+  return {
+    baris,
+    melebihiStok:
+      jenis !== "Masuk" &&
+      asal !== null &&
+      jumlah !== null &&
+      jumlah > asal.saldo,
+  };
+}

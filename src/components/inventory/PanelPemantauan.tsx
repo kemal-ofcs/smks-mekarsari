@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import {
   type BarangInventaris,
   catatMutasiInventaris,
@@ -310,7 +311,11 @@ function RekapPengadaanPanel({
       >
         Rekap pengadaan per sumber dana
       </h2>
-      <form onSubmit={tampilkan} className="flex flex-wrap items-end gap-3">
+      <form
+        data-tanpa-konfirmasi
+        onSubmit={tampilkan}
+        className="flex flex-wrap items-end gap-3"
+      >
         <div>
           <label htmlFor="inv-pengadaan-dari" className={LABEL}>
             Dari tanggal
@@ -1285,7 +1290,7 @@ export function PanelOpname({
           <label htmlFor="inv-opname-tempat" className={LABEL}>
             Tempat yang dihitung
           </label>
-          <select
+          <PilihCari
             id="inv-opname-tempat"
             value={tempat}
             onChange={(e) => pilihTempat(e.target.value)}
@@ -1297,7 +1302,7 @@ export function PanelOpname({
                 {nilai}
               </option>
             ))}
-          </select>
+          </PilihCari>
           <p className="text-xs text-slate-400">
             Satu tempat sebaiknya dihitung satu orang. Saldo sistem dihitung
             ulang saat disimpan, jadi mutasi yang terjadi sementara tetap
@@ -1418,7 +1423,7 @@ export function PanelOpname({
                   <label htmlFor="inv-tambah-barang" className={LABEL}>
                     Barang
                   </label>
-                  <select
+                  <PilihCari
                     id="inv-tambah-barang"
                     value={tambahBarang}
                     onChange={(e) => {
@@ -1435,7 +1440,7 @@ export function PanelOpname({
                           {b.nama_barang} ({b.kode_barang})
                         </option>
                       ))}
-                  </select>
+                  </PilihCari>
                 </div>
                 {barangTambah?.tipe === "Aset" ? (
                   <div>
@@ -1467,7 +1472,7 @@ export function PanelOpname({
                         dengan tanggal kedaluwarsanya.
                       </p>
                     ) : (
-                      <select
+                      <PilihCari
                         id="inv-tambah-batch"
                         value={tambahBatch}
                         onChange={(e) => setTambahBatch(e.target.value)}
@@ -1479,7 +1484,7 @@ export function PanelOpname({
                             Kedaluwarsa {batch.tanggal ?? "tanpa tanggal"}
                           </option>
                         ))}
-                      </select>
+                      </PilihCari>
                     )}
                   </div>
                 ) : null}

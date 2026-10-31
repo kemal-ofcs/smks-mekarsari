@@ -3585,6 +3585,27 @@ fn current_iso(connection: &rusqlite::Connection) -> String {
 /// Cerminan `BRANDING.defaultCardTerms` di `src/lib/constants/branding.ts`.
 const DEFAULT_CARD_TERMS: &str = "1. Kartu ini adalah tanda pengenal resmi personil instansi.\n2. Wajib dibawa dan dipindai (scan QR) setiap datang dan pulang.\n3. Dilarang memindahtangankan atau meminjamkan kartu ini kepada pihak lain.\n4. Bila kartu hilang atau ditemukan, segera laporkan ke bagian tata usaha.";
 
+/// Logo dan nama instansi untuk layar login dan semua role, tanpa sesi. Hanya
+/// dua kolom ini: tanda tangan, alamat, dan kontak tetap lewat `get_company_profile`.
+pub fn get_public_branding(state: &DesktopState) -> Result<Value, CommandError> {
+    let connection = storage::database(&state.data_dir)?;
+    let (company_name, logo_url) = connection
+        .query_row(
+            "SELECT company_name, logo_url FROM company_profile WHERE id = 'default_company' LIMIT 1;",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| CommandError::internal())?
+        .unwrap_or((None, None));
+    Ok(json!({ "company_name": company_name, "logo_url": logo_url }))
+}
+
 pub fn get_company_profile(state: &DesktopState) -> Result<Value, CommandError> {
     let connection = storage::database(&state.data_dir)?;
     let result = connection

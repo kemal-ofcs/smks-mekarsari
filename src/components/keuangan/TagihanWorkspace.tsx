@@ -26,6 +26,7 @@ import {
 import { PilihAkunBayar } from "@/components/keuangan/PilihAkunBayar";
 import { RekapTagihan } from "@/components/keuangan/RekapTagihan";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -323,7 +324,7 @@ function PanelTunggakan({
           <label className={LABEL} htmlFor="tunggakan-jenis">
             Jenis tagihan
           </label>
-          <select
+          <PilihCari
             id="tunggakan-jenis"
             className={INPUT}
             value={idJenis}
@@ -335,13 +336,13 @@ function PanelTunggakan({
                 {item.nama}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label className={LABEL} htmlFor="tunggakan-rombel">
             Rombel
           </label>
-          <select
+          <PilihCari
             id="tunggakan-rombel"
             className={INPUT}
             value={idRombel}
@@ -353,7 +354,7 @@ function PanelTunggakan({
                 {item.nama_rombel}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label className={LABEL} htmlFor="tunggakan-status">
@@ -725,6 +726,7 @@ function DialogTagihan({
           </p>
         ) : item.status === "Aktif" && bolehBatal ? (
           <form
+            data-tanpa-konfirmasi
             onSubmit={batalkan}
             className="space-y-2 p-3 rounded-lg border border-rose-500/30"
           >
@@ -863,7 +865,7 @@ function PanelTerbitkan({
           <label className={LABEL} htmlFor="terbit-jenis">
             Jenis tagihan
           </label>
-          <select
+          <PilihCari
             id="terbit-jenis"
             className={INPUT}
             value={idJenis}
@@ -874,7 +876,7 @@ function PanelTerbitkan({
                 {item.nama} ({LABEL_PERIODIK[item.periodik]})
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         {jenis?.periodik === "Bulanan" ? (
           <div>
@@ -897,7 +899,7 @@ function PanelTerbitkan({
             <label className={LABEL} htmlFor="terbit-tahun">
               Tahun ajaran
             </label>
-            <select
+            <PilihCari
               id="terbit-tahun"
               className={INPUT}
               value={tahunAjaran}
@@ -908,7 +910,7 @@ function PanelTerbitkan({
                   {item}
                 </option>
               ))}
-            </select>
+            </PilihCari>
           </div>
         ) : (
           <p className="self-end text-xs text-slate-400">
@@ -931,7 +933,7 @@ function PanelTerbitkan({
           <label className={LABEL} htmlFor="terbit-unit">
             Unit
           </label>
-          <select
+          <PilihCari
             id="terbit-unit"
             className={INPUT}
             value={unit}
@@ -943,13 +945,13 @@ function PanelTerbitkan({
                 {item}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label className={LABEL} htmlFor="terbit-rombel">
             Rombel
           </label>
-          <select
+          <PilihCari
             id="terbit-rombel"
             className={INPUT}
             value={idRombel}
@@ -961,7 +963,7 @@ function PanelTerbitkan({
                 {item.nama_rombel}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
       </div>
 
@@ -1499,7 +1501,7 @@ function DialogTarif({
             <label className={LABEL} htmlFor="tarif-unit">
               Unit
             </label>
-            <select
+            <PilihCari
               id="tarif-unit"
               className={INPUT}
               value={namaUnit}
@@ -1511,7 +1513,7 @@ function DialogTarif({
                   {item}
                 </option>
               ))}
-            </select>
+            </PilihCari>
           </div>
           <div>
             <label className={LABEL} htmlFor="tarif-tingkat">
@@ -1754,7 +1756,7 @@ function DialogKeringanan({
           <label className={LABEL} htmlFor="krg-siswa">
             Siswa
           </label>
-          <select
+          <PilihCari
             id="krg-siswa"
             required
             className={INPUT}
@@ -1770,13 +1772,13 @@ function DialogKeringanan({
                 {item.nama_lengkap} {item.kelas ? `(${item.kelas})` : ""}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label className={LABEL} htmlFor="krg-jenis">
             Untuk tagihan
           </label>
-          <select
+          <PilihCari
             id="krg-jenis"
             required
             className={INPUT}
@@ -1788,7 +1790,7 @@ function DialogKeringanan({
                 {item.nama}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>

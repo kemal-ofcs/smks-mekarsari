@@ -240,6 +240,7 @@ export function ArticleManager() {
       {/* Header filter & tambah */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <form
+          data-tanpa-konfirmasi
           onSubmit={handleSearchSubmit}
           className="flex flex-1 items-center gap-2 max-w-md"
         >

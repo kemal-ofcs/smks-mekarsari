@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import {
   formatJamOperasional,
   formatTanggalOperasional,
@@ -39,7 +40,10 @@ import {
 } from "@/lib/gateways/class-attendance";
 import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
-import { useConfirmDialog } from "@/lib/hooks/useConfirmDialog";
+import {
+  PERTANYAAN_SIMPAN,
+  useConfirmDialog,
+} from "@/lib/hooks/useConfirmDialog";
 import {
   buildPresentWithoutGateScanWarning,
   DEFAULT_JP_DURATION_MINUTES,
@@ -535,22 +539,25 @@ export default function PresensiKelasPage() {
 
     // Seluruh roster berstatus Hadir secara bawaan, jadi menyimpan tanpa
     // memeriksa akan menandai hadir siswa yang benar-benar tidak masuk.
-    // Peringatan ini tidak pernah mengubah status siapa pun — gurunya yang
+    // Peringatan ini tidak pernah mengubah status siapa pun, gurunya yang
     // memutuskan.
     const peringatan = buildPresentWithoutGateScanWarning(rosterItems);
-    if (
-      peringatan &&
-      !(await konfirmasi({
-        title: "Simpan presensi ini?",
-        description: peringatan,
-        preserved:
-          "Peringatan ini tidak mengubah status siapa pun — keputusannya tetap di tangan guru.",
-        confirmLabel: "Ya, simpan",
-        tone: "warning",
-      }))
-    ) {
-      return;
-    }
+    const setuju = await konfirmasi(
+      peringatan
+        ? {
+            title: "Simpan presensi ini?",
+            description: peringatan,
+            preserved:
+              "Peringatan ini tidak mengubah status siapa pun, keputusannya tetap di tangan guru.",
+            confirmLabel: "Ya, simpan",
+            tone: "warning",
+          }
+        : {
+            ...PERTANYAAN_SIMPAN,
+            description: "Apakah data yang dicatat sudah benar?",
+          },
+    );
+    if (!setuju) return;
 
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
@@ -812,7 +819,7 @@ export default function PresensiKelasPage() {
                   >
                     Tahun Ajaran
                   </label>
-                  <select
+                  <PilihCari
                     id="input-ta"
                     value={selectedTa}
                     onChange={(e) => setSelectedTa(e.target.value)}
@@ -827,7 +834,7 @@ export default function PresensiKelasPage() {
                         {String(ta.nama_tahun)} - {String(ta.semester)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
 
                 {/* Rombel */}
@@ -838,7 +845,7 @@ export default function PresensiKelasPage() {
                   >
                     Rombel / Kelas
                   </label>
-                  <select
+                  <PilihCari
                     id="input-rombel"
                     value={selectedRombel}
                     onChange={(e) => setSelectedRombel(e.target.value)}
@@ -853,7 +860,7 @@ export default function PresensiKelasPage() {
                         {String(r.nama_rombel)} (Tingkat {String(r.tingkat)})
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
 
                 {/* Mata Pelajaran */}
@@ -864,7 +871,7 @@ export default function PresensiKelasPage() {
                   >
                     Mata Pelajaran
                   </label>
-                  <select
+                  <PilihCari
                     id="input-mapel"
                     value={selectedMapel}
                     onChange={(e) => setSelectedMapel(e.target.value)}
@@ -879,7 +886,7 @@ export default function PresensiKelasPage() {
                         {String(m.kode_mapel)} - {String(m.nama_mapel)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
 
                 {/* Guru Pengajar */}
@@ -890,7 +897,7 @@ export default function PresensiKelasPage() {
                   >
                     Guru Pengajar
                   </label>
-                  <select
+                  <PilihCari
                     id="input-guru"
                     value={selectedGuru}
                     onChange={(e) => setSelectedGuru(e.target.value)}
@@ -905,7 +912,7 @@ export default function PresensiKelasPage() {
                         {String(g.nama || g.nama_lengkap || g.id_guru)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
 
                 {/* Tanggal */}
@@ -1305,7 +1312,7 @@ export default function PresensiKelasPage() {
                   >
                     Filter Rombel (Opsional)
                   </label>
-                  <select
+                  <PilihCari
                     id="recon-rombel"
                     value={reconRombel}
                     onChange={(e) => setReconRombel(e.target.value)}
@@ -1321,7 +1328,7 @@ export default function PresensiKelasPage() {
                         {String(r.nama_rombel)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
 
                 <div className="pt-4">
@@ -1539,7 +1546,7 @@ export default function PresensiKelasPage() {
                   >
                     Rombel
                   </label>
-                  <select
+                  <PilihCari
                     id="history-rombel"
                     value={historyFilterRombel}
                     onChange={(e) => setHistoryFilterRombel(e.target.value)}
@@ -1555,7 +1562,7 @@ export default function PresensiKelasPage() {
                         {String(r.nama_rombel)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
 
                 <div className="pt-4">

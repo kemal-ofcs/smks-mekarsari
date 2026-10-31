@@ -9,6 +9,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { canAccessArea } from "@/lib/auth/access";
 import { saveFileWithPicker } from "@/lib/client/download";
@@ -1360,7 +1361,7 @@ export default function IdCardsPage() {
                 <option value="Belum">Belum Dicetak</option>
                 <option value="Berhasil">Sudah Dicetak</option>
               </select>
-              <select
+              <PilihCari
                 aria-label="Filter unit"
                 value={unitAktif}
                 onChange={(e) => {
@@ -1376,8 +1377,8 @@ export default function IdCardsPage() {
                     {nama}
                   </option>
                 ))}
-              </select>
-              <select
+              </PilihCari>
+              <PilihCari
                 aria-label="Filter kelas"
                 value={kelasAktif}
                 onChange={(e) => setKelasFilter(e.target.value)}
@@ -1389,7 +1390,7 @@ export default function IdCardsPage() {
                     {kelas.label}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
               <button
                 type="button"
                 onClick={() => void handleBackfill()}

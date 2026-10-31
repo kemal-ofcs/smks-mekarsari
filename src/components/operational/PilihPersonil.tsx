@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { getDaftarRombel } from "@/lib/gateways/academic";
 import { getDaftarSiswa } from "@/lib/gateways/student";
 import {
@@ -240,7 +241,7 @@ export function PilihPersonil({
 
       {bolehPilihKelas && banyak && rombel.length > 0 ? (
         <div className="flex gap-2">
-          <select
+          <PilihCari
             aria-label="Pilih kelas"
             className={INPUT}
             value={idRombel}
@@ -254,7 +255,7 @@ export function PilihPersonil({
                 siswa)
               </option>
             ))}
-          </select>
+          </PilihCari>
           <button
             type="button"
             disabled={disabled || !idRombel || memuatKelas}

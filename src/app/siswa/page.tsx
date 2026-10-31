@@ -31,6 +31,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { openWhatsAppChat } from "@/lib/client/open-url";
 import {
@@ -920,7 +921,7 @@ export default function SiswaPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select
+            <PilihCari
               value={filterTahun ?? ""}
               onChange={(e) => setFilterTahun(e.target.value)}
               aria-label="Filter berdasarkan tahun ajaran"
@@ -945,8 +946,8 @@ export default function SiswaPage() {
                   {Number(t.is_aktif) === 1 ? " (aktif)" : ""}
                 </option>
               ))}
-            </select>
-            <select
+            </PilihCari>
+            <PilihCari
               value={filterRombel}
               onChange={(e) => setFilterRombel(e.target.value)}
               aria-label="Filter berdasarkan rombel"
@@ -964,8 +965,8 @@ export default function SiswaPage() {
                   {labelRombel(r, tahunList)}
                 </option>
               ))}
-            </select>
-            <select
+            </PilihCari>
+            <PilihCari
               value={filterUnit}
               onChange={(e) => setFilterUnit(e.target.value)}
               aria-label="Filter berdasarkan unit"
@@ -989,7 +990,7 @@ export default function SiswaPage() {
                   {nama}
                 </option>
               ))}
-            </select>
+            </PilihCari>
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
@@ -1338,7 +1339,7 @@ export default function SiswaPage() {
                 >
                   Unit
                 </label>
-                <select
+                <PilihCari
                   id="siswa-unit"
                   value={formData.unit || ""}
                   onChange={(e) =>
@@ -1356,7 +1357,7 @@ export default function SiswaPage() {
                       {String(u.nama_unit)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
                 {unitList.length === 0 ? (
                   <p className="mt-1 text-xs text-slate-500">
                     Belum ada unit. Tambahkan lewat menu Akademik → Unit.
@@ -1453,7 +1454,7 @@ export default function SiswaPage() {
                   >
                     Kelas / Rombel
                   </label>
-                  <select
+                  <PilihCari
                     id="siswa-rombel"
                     required
                     value={formData.id_rombel}
@@ -1471,7 +1472,7 @@ export default function SiswaPage() {
                         {labelRombel(r, tahunList)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
               </div>
 
@@ -1574,7 +1575,7 @@ export default function SiswaPage() {
                 >
                   Shift / Jam Scan
                 </label>
-                <select
+                <PilihCari
                   id="siswa-shift"
                   value={formData.id_shift ?? ""}
                   disabled={shiftList.length === 0}
@@ -1604,7 +1605,7 @@ export default function SiswaPage() {
                       {shiftLabel(s)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
                 <p className="mt-1 text-[11px] text-slate-400">
                   {shiftError ??
                     (shiftList.length === 0

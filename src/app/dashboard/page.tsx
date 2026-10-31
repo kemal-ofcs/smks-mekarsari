@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { EksporLaporanKehadiran } from "@/components/dashboard/EksporLaporanKehadiran";
 import { Icon } from "@/components/ui/Icon";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { AnimatedCounter } from "@/components/visual/AnimatedCounter";
 import { AttendanceGaugeGate } from "@/components/visual/AttendanceGaugeGate";
 import { AttendanceWeeklyTrend } from "@/components/visual/AttendanceWeeklyTrend";
@@ -703,7 +704,7 @@ export default function DashboardPage() {
 
               {/* Division Filter */}
               {availableDivisions.length > 0 ? (
-                <select
+                <PilihCari
                   aria-label="Filter divisi"
                   value={divisionFilter}
                   onChange={(e) => {
@@ -718,7 +719,7 @@ export default function DashboardPage() {
                       Divisi: {div}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               ) : null}
 
               {/* Status Filter (Daily only) */}

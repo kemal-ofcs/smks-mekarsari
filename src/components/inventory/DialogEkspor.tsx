@@ -197,7 +197,11 @@ export function DialogEkspor({
               ))}
             </ul>
           ) : null}
-          <form onSubmit={tambahManual} className="flex items-end gap-2">
+          <form
+            data-tanpa-konfirmasi
+            onSubmit={tambahManual}
+            className="flex items-end gap-2"
+          >
             <div className="min-w-0 flex-1">
               <label htmlFor="inv-ekspor-manual" className={LABEL}>
                 Judul kolom baru

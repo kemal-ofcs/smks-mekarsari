@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import {
   getJadwalMengajar,
   hapusJadwalMengajar,
@@ -272,7 +273,7 @@ export function JadwalPanel({
               >
                 Unit:
               </label>
-              <select
+              <PilihCari
                 id="filter-unit-jadwal"
                 value={filterUnit}
                 onChange={(event) => {
@@ -287,7 +288,7 @@ export function JadwalPanel({
                     {String(u.nama_unit)}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </>
           ) : null}
           <label
@@ -296,7 +297,7 @@ export function JadwalPanel({
           >
             Filter Rombel:
           </label>
-          <select
+          <PilihCari
             id="filter-rombel-jadwal"
             value={filterRombel}
             onChange={(event) => setFilterRombel(event.target.value)}
@@ -308,7 +309,7 @@ export function JadwalPanel({
                 Kelas {String(rom.tingkat)} - {String(rom.nama_rombel)}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
 
         {canManage ? (
@@ -449,7 +450,7 @@ export function JadwalPanel({
             <div className="grid grid-cols-2 gap-4">
               <label className="grid gap-1.5 text-xs font-bold text-slate-400">
                 Rombel
-                <select
+                <PilihCari
                   value={draft.id_rombel}
                   onChange={(event) => {
                     const idRombel = event.target.value;
@@ -476,7 +477,7 @@ export function JadwalPanel({
                       Kelas {String(rom.tingkat)} - {String(rom.nama_rombel)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </label>
 
               <label className="grid gap-1.5 text-xs font-bold text-slate-400">
@@ -498,7 +499,7 @@ export function JadwalPanel({
 
               <label className="grid gap-1.5 text-xs font-bold text-slate-400">
                 Mata pelajaran
-                <select
+                <PilihCari
                   value={draft.id_mapel}
                   onChange={(event) =>
                     setDraft({ ...draft, id_mapel: event.target.value })
@@ -514,12 +515,12 @@ export function JadwalPanel({
                       {String(mapel.nama_mapel)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </label>
 
               <label className="grid gap-1.5 text-xs font-bold text-slate-400">
                 Pengajar
-                <select
+                <PilihCari
                   value={draft.id_guru}
                   onChange={(event) =>
                     setDraft({ ...draft, id_guru: event.target.value })
@@ -535,14 +536,14 @@ export function JadwalPanel({
                       {String(guru.nama ?? guru.nama_lengkap ?? guru.id_guru)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </label>
 
               {jamKbm.length > 0 ? (
                 <>
                   <label className="grid gap-1.5 text-xs font-bold text-slate-400">
                     Jam pelajaran dari
-                    <select
+                    <PilihCari
                       value={draft.jamDari}
                       onChange={(event) => {
                         const jamDari = Number(event.target.value);
@@ -559,12 +560,12 @@ export function JadwalPanel({
                           {item.label}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </label>
 
                   <label className="grid gap-1.5 text-xs font-bold text-slate-400">
                     Sampai jam ke
-                    <select
+                    <PilihCari
                       value={draft.jamSampai}
                       onChange={(event) =>
                         setDraft({
@@ -581,7 +582,7 @@ export function JadwalPanel({
                             {item.label}
                           </option>
                         ))}
-                    </select>
+                    </PilihCari>
                   </label>
                 </>
               ) : (

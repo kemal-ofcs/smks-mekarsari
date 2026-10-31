@@ -113,6 +113,7 @@
     "allow-desktop-save-alfa-settings",
     "allow-desktop-trigger-generate-alfa",
     "allow-desktop-get-attendance-audit",
+    "allow-desktop-get-public-branding",
     "allow-desktop-get-company-profile",
     "allow-desktop-update-company-profile",
     "allow-desktop-get-id-card-template",

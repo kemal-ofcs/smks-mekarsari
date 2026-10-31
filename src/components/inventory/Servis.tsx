@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import {
   type BarangInventaris,
   batalkanServis,
@@ -117,6 +118,9 @@ export function DialogServis({
     () => data.barang.filter((b) => b.tipe === "Aset" && b.status_aktif),
     [data.barang],
   );
+  const habisPakai = data.barang.filter(
+    (b) => b.tipe !== "Aset" && b.status_aktif,
+  ).length;
   const [idBarang, setIdBarang] = useState(
     aksi.jenis === "buka" ? (aksi.idBarang ?? "") : "",
   );
@@ -249,9 +253,10 @@ export function DialogServis({
               <label htmlFor="inv-servis-barang" className={LABEL}>
                 Barang
               </label>
-              <select
+              <PilihCari
                 id="inv-servis-barang"
                 required
+                aria-describedby="inv-servis-barang-bantuan"
                 value={idBarang}
                 onChange={(e) => {
                   setIdBarang(e.target.value);
@@ -265,14 +270,23 @@ export function DialogServis({
                     {b.nama_barang} ({b.kode_barang})
                   </option>
                 ))}
-              </select>
+              </PilihCari>
+              <p
+                id="inv-servis-barang-bantuan"
+                className="mt-1 text-xs text-slate-400"
+              >
+                Hanya barang bertipe Aset yang aktif.
+                {habisPakai > 0
+                  ? ` ${angka(habisPakai)} barang Habis Pakai tidak ditampilkan.`
+                  : ""}
+              </p>
             </div>
             {barang ? (
               <div>
                 <label htmlFor="inv-servis-posisi" className={LABEL}>
                   {barang.dilacak_unit ? "Unit" : "Diambil dari"}
                 </label>
-                <select
+                <PilihCari
                   id="inv-servis-posisi"
                   required
                   value={pilihanPosisi}
@@ -289,7 +303,7 @@ export function DialogServis({
                       {p.label}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </div>
             ) : null}
             {barang && !barang.dilacak_unit ? (
@@ -661,7 +675,11 @@ export function PanelServis({
         >
           Riwayat servis
         </h2>
-        <form onSubmit={tampilkan} className="flex flex-wrap items-end gap-3">
+        <form
+          data-tanpa-konfirmasi
+          onSubmit={tampilkan}
+          className="flex flex-wrap items-end gap-3"
+        >
           <div>
             <label htmlFor="inv-servis-dari" className={LABEL}>
               Dibawa dari tanggal

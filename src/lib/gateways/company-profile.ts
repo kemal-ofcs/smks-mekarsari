@@ -13,6 +13,20 @@ export type {
   CompanyProfileInput,
 } from "@/types/company-profile";
 
+/** Bisa dibaca tanpa login, untuk layar login dan semua role. */
+export async function getPublicBranding(): Promise<{
+  company_name: string | null;
+  logo_url: string | null;
+}> {
+  if (isDesktopRuntime()) {
+    return invokeDesktop("desktop_get_public_branding");
+  }
+  const response = await requestWebApi<{
+    data: { company_name: string | null; logo_url: string | null };
+  }>("/api/settings/branding/query", "POST", {});
+  return response.data;
+}
+
 export async function getCompanyProfile(): Promise<CompanyProfile> {
   if (isDesktopRuntime()) {
     return invokeDesktop<CompanyProfile>("desktop_get_company_profile");

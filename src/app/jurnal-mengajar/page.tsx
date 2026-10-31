@@ -7,6 +7,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarMapel, getDaftarRombel } from "@/lib/gateways/academic";
@@ -270,7 +271,7 @@ export default function JurnalMengajarPage() {
               <span className="block text-xs font-medium text-slate-400 mb-1">
                 Rombongan Belajar
               </span>
-              <select
+              <PilihCari
                 aria-label="Rombongan belajar"
                 value={selectedRombel}
                 onChange={(e) => setSelectedRombel(e.target.value)}
@@ -282,14 +283,14 @@ export default function JurnalMengajarPage() {
                     {String(r.nama_rombel)}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
 
             <div>
               <span className="block text-xs font-medium text-slate-400 mb-1">
                 Mata Pelajaran
               </span>
-              <select
+              <PilihCari
                 aria-label="Mata pelajaran"
                 value={selectedMapel}
                 onChange={(e) => setSelectedMapel(e.target.value)}
@@ -301,14 +302,14 @@ export default function JurnalMengajarPage() {
                     {String(m.nama_mapel)}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
 
             <div>
               <span className="block text-xs font-medium text-slate-400 mb-1">
                 Guru Pengampu
               </span>
-              <select
+              <PilihCari
                 aria-label="Guru pengampu"
                 value={selectedGuru}
                 onChange={(e) => setSelectedGuru(e.target.value)}
@@ -320,7 +321,7 @@ export default function JurnalMengajarPage() {
                     {String(g.nama || g.nama_guru)}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
 
             <div>

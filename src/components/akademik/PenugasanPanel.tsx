@@ -1,6 +1,7 @@
 "use client";
 
 import { Icon } from "@/components/ui/Icon";
+import { PilihCari } from "@/components/ui/PilihCari";
 
 type TabKey =
   | "tahun_ajaran"
@@ -50,7 +51,7 @@ export function PenugasanPanel({
         >
           Filter Rombel:
         </label>
-        <select
+        <PilihCari
           id="rombel-filter-penugasan"
           value={selectedRombelForPenugasan}
           onChange={(e) => void handleRombelFilterChange(e.target.value)}
@@ -65,7 +66,7 @@ export function PenugasanPanel({
               Kelas {String(rom.tingkat)} - {String(rom.nama_rombel)}
             </option>
           ))}
-        </select>
+        </PilihCari>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-900/60 shadow-xl backdrop-blur-xl">

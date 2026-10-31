@@ -11,6 +11,7 @@ import {
   TOMBOL_UTAMA,
 } from "@/components/inventory/gaya";
 import { PengajuanKeuangan } from "@/components/inventory/Pengajuan";
+import { PilihCari } from "@/components/ui/PilihCari";
 import type { AkunItem } from "@/lib/gateways/accounting";
 import {
   catatJurnalInventaris,
@@ -424,7 +425,7 @@ export function JurnalInventaris({
                       <label htmlFor={`jinv-${peran}`} className={LABEL}>
                         {LABEL_PERAN[peran]}
                       </label>
-                      <select
+                      <PilihCari
                         id={`jinv-${peran}`}
                         className={INPUT}
                         value={pilihanAkun[peran]}
@@ -441,7 +442,7 @@ export function JurnalInventaris({
                             {a.kode} {a.nama}
                           </option>
                         ))}
-                      </select>
+                      </PilihCari>
                     </div>
                   ))}
               </div>

@@ -620,6 +620,7 @@ export function NotifikasiWaCard({
           <button
             type="button"
             disabled={busy}
+            data-konfirmasi
             onClick={handleSave}
             className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-500 disabled:opacity-50"
             id="btn-save-wa-notification-settings"

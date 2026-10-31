@@ -9,6 +9,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import {
   hitungJamKerjaNormalMenit,
   isShiftFleksibel,
@@ -1136,7 +1137,7 @@ export default function ShiftPage() {
                 >
                   Lanjut ke Shift
                 </label>
-                <select
+                <PilihCari
                   id="shift-continuation"
                   value={formData.shift_lanjutan_id ?? 0}
                   onChange={(e) =>
@@ -1156,7 +1157,7 @@ export default function ShiftPage() {
                         {String(row.jam_pulang)})
                       </option>
                     ))}
-                </select>
+                </PilihCari>
                 <span className="text-[10px] text-slate-500 block mt-1.5">
                   Setelah sesi shift ini selesai, scan berikutnya membuka sesi
                   di shift tujuan dan kolom shift karyawan ikut dipindahkan ke

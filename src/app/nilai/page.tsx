@@ -8,6 +8,7 @@ import { RekapNilai } from "@/components/nilai/RekapNilai";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -361,7 +362,7 @@ export default function NilaiPage() {
             >
               Tahun ajaran
             </label>
-            <select
+            <PilihCari
               className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white"
               id={`${id}-ta`}
               onChange={(e) => setIdTahunAjaran(e.target.value)}
@@ -373,7 +374,7 @@ export default function NilaiPage() {
                   {item.nama}
                 </option>
               ))}
-            </select>
+            </PilihCari>
           </div>
           <div>
             <label
@@ -402,7 +403,7 @@ export default function NilaiPage() {
             >
               Rombel
             </label>
-            <select
+            <PilihCari
               className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white"
               id={`${id}-rombel`}
               onChange={(e) => setIdRombel(e.target.value)}
@@ -414,7 +415,7 @@ export default function NilaiPage() {
                   {item.nama}
                 </option>
               ))}
-            </select>
+            </PilihCari>
           </div>
           <div>
             <label
@@ -423,7 +424,7 @@ export default function NilaiPage() {
             >
               Mata pelajaran
             </label>
-            <select
+            <PilihCari
               className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white"
               id={`${id}-mapel`}
               onChange={(e) => setIdMapel(e.target.value)}
@@ -435,7 +436,7 @@ export default function NilaiPage() {
                   {item.nama}
                 </option>
               ))}
-            </select>
+            </PilihCari>
           </div>
           <div>
             <label
@@ -444,7 +445,7 @@ export default function NilaiPage() {
             >
               Jenis penilaian
             </label>
-            <select
+            <PilihCari
               className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white"
               id={`${id}-filter-jenis`}
               onChange={(e) => setJenis(e.target.value)}
@@ -457,7 +458,7 @@ export default function NilaiPage() {
                   {item.is_aktif === 1 ? "" : " (nonaktif)"}
                 </option>
               ))}
-            </select>
+            </PilihCari>
           </div>
         </section>
 
@@ -709,6 +710,7 @@ export default function NilaiPage() {
             {bolehKelola ? (
               <button
                 className="w-full rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-slate-950"
+                data-konfirmasi
                 onClick={() => void simpanSemuaNilai()}
                 type="button"
               >
@@ -752,7 +754,7 @@ export default function NilaiPage() {
               >
                 Jenis
               </label>
-              <select
+              <PilihCari
                 className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-white"
                 id={`${id}-jenis`}
                 onChange={(e) =>
@@ -768,7 +770,7 @@ export default function NilaiPage() {
                       {item.nama}
                     </option>
                   ))}
-              </select>
+              </PilihCari>
             </div>
             <div>
               <label

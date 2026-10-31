@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -611,7 +612,7 @@ function OperatorFormModal({
                 </p>
               </div>
             ) : (
-              <select
+              <PilihCari
                 id="operator-role"
                 value={draft.roleId}
                 onChange={(event) =>
@@ -630,7 +631,7 @@ function OperatorFormModal({
                       {role.name}
                     </option>
                   ))}
-              </select>
+              </PilihCari>
             )}
           </FormField>
           <FormField label="Status" htmlFor="operator-status">

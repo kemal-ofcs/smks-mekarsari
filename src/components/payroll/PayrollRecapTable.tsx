@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import type { PayrollRecapRow } from "@/lib/gateways/payroll";
 
 interface PayrollRecapTableProps {
@@ -106,7 +107,7 @@ export function PayrollRecapTable({
             onChange={(e) => setSearch(e.target.value)}
             className="px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-sky-500 w-full sm:w-64"
           />
-          <select
+          <PilihCari
             aria-label="Filter divisi"
             value={divisiFilter}
             onChange={(e) => setDivisiFilter(e.target.value)}
@@ -118,7 +119,7 @@ export function PayrollRecapTable({
                 {div}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div className="text-xs text-slate-400 font-medium">
           Menampilkan{" "}

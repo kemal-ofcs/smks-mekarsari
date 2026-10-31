@@ -227,7 +227,7 @@ export function PembayaranPmb({
       ) : null}
 
       {bolehKelola && keadaan === "Lunas" && pendaftar.status === "Baru" ? (
-        <form className="space-y-2" onSubmit={batalkan}>
+        <form data-tanpa-konfirmasi className="space-y-2" onSubmit={batalkan}>
           <label
             className="block text-slate-400 text-xs"
             htmlFor={`${id}-alasan`}

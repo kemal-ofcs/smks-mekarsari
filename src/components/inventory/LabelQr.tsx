@@ -109,7 +109,7 @@ export function PemindaiLabel({
             value={ketik}
             onChange={(e) => setKetik(e.target.value)}
             onKeyDown={(e) => {
-              // Bukan <form>: dialog ini dirender di dalam formulir opname,
+              // Bukan <form data-tanpa-konfirmasi>: dialog ini dirender di dalam formulir opname,
               // dan event submit React merambat melewati portal.
               if (e.key === "Enter") {
                 e.preventDefault();

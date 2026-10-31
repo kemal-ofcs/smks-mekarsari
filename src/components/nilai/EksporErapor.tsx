@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { saveFileWithPicker } from "@/lib/client/download";
 import { saveWorkbook } from "@/lib/client/xlsx";
 import { type BahanErapor, getBahanErapor } from "@/lib/gateways/grades";
@@ -251,7 +252,7 @@ function DialogErapor({
                   <label className={LABEL} htmlFor={`erapor-${kunci}`}>
                     {label}
                   </label>
-                  <select
+                  <PilihCari
                     id={`erapor-${kunci}`}
                     className={ISIAN}
                     value={pemetaan[kunci]}
@@ -262,7 +263,7 @@ function DialogErapor({
                         {j.nama}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
               ))}
             </div>
@@ -271,7 +272,7 @@ function DialogErapor({
                 <label className={LABEL} htmlFor="erapor-mapel">
                   Mata pelajaran
                 </label>
-                <select
+                <PilihCari
                   id="erapor-mapel"
                   className={ISIAN}
                   value={idMapel}
@@ -283,7 +284,7 @@ function DialogErapor({
                       {m.nama_mapel}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </div>
               <div>
                 <label className={LABEL} htmlFor="erapor-format">

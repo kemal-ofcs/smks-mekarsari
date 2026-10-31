@@ -113,6 +113,7 @@ export function DialogDaftarkanUnit({
           </button>
           <button
             type="button"
+            data-konfirmasi
             onClick={() => void kirim()}
             disabled={menyimpan}
             className={TOMBOL_UTAMA}

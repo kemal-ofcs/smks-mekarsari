@@ -7,6 +7,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { exportToCsv, exportToExcel } from "@/lib/client/excel-export";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -911,7 +912,7 @@ export default function HistoryPage() {
             <span className="text-[11px] text-slate-400 font-semibold">
               Divisi
             </span>
-            <select
+            <PilihCari
               aria-label="Filter divisi"
               value={selectedDivisi}
               onChange={(e) => {
@@ -926,7 +927,7 @@ export default function HistoryPage() {
                   {div}
                 </option>
               ))}
-            </select>
+            </PilihCari>
           </div>
 
           {/* Status Filter */}
@@ -1460,6 +1461,7 @@ export default function HistoryPage() {
               <button
                 type="button"
                 disabled={actionBusy}
+                data-konfirmasi
                 onClick={handleSaveEdit}
                 className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-mono font-bold transition disabled:opacity-50 flex items-center gap-1.5"
               >

@@ -7,6 +7,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import { getDaftarRombel, getDaftarTahunAjaran } from "@/lib/gateways/academic";
@@ -311,7 +312,7 @@ export default function LegerKehadiranPage() {
               <span className="block text-xs font-medium text-slate-400 mb-1">
                 Tahun Ajaran
               </span>
-              <select
+              <PilihCari
                 aria-label="Tahun ajaran"
                 value={selectedTa}
                 onChange={(e) => setSelectedTa(e.target.value)}
@@ -326,7 +327,7 @@ export default function LegerKehadiranPage() {
                     {String(ta.semester)})
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
 
             <div>
@@ -348,7 +349,7 @@ export default function LegerKehadiranPage() {
               <span className="block text-xs font-medium text-slate-400 mb-1">
                 Rombongan Belajar (Kelas)
               </span>
-              <select
+              <PilihCari
                 aria-label="Rombongan belajar"
                 value={selectedRombel}
                 onChange={(e) => setSelectedRombel(e.target.value)}
@@ -360,7 +361,7 @@ export default function LegerKehadiranPage() {
                     {String(r.nama_rombel)}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
           </div>
         </div>

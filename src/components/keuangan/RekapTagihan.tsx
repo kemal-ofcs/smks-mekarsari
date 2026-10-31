@@ -17,6 +17,7 @@ import {
   unduhLebarPdf,
 } from "@/components/keuangan/eksporKeuangan";
 import { BarisEkspor } from "@/components/keuangan/LaporanKeuangan";
+import { PilihCari } from "@/components/ui/PilihCari";
 import {
   getRekapPenerimaan,
   getRekapRombel,
@@ -121,7 +122,7 @@ export function RekapTagihan({ master }: { master: MasterTagihan }) {
               <label className={LABEL} htmlFor="rekap-jenis">
                 Jenis tagihan
               </label>
-              <select
+              <PilihCari
                 id="rekap-jenis"
                 className={INPUT}
                 value={idJenis}
@@ -136,7 +137,7 @@ export function RekapTagihan({ master }: { master: MasterTagihan }) {
                     {item.nama}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
           </>
         ) : (

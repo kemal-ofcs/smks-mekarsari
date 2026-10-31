@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { getCompanyProfile } from "@/lib/gateways/company-profile";
+import { getPublicBranding } from "@/lib/gateways/company-profile";
 import { SYNC_COMPLETED_EVENT } from "@/lib/gateways/sync-status";
 import { createBrandingMirror } from "./branding-mirror";
 
@@ -24,8 +24,8 @@ const mirror = createBrandingMirror<string | null>({
   encode: (logo) => logo,
   normalize: (logo) => logo,
   fetchRemote: async () => {
-    const profile = await getCompanyProfile();
-    return profile.logo_url?.trim() ? profile.logo_url : null;
+    const { logo_url } = await getPublicBranding();
+    return logo_url?.trim() ? logo_url : null;
   },
 });
 

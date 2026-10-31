@@ -30,6 +30,7 @@ import {
 } from "@/components/keuangan/LaporanKeuangan";
 import { TutupBukuPanel } from "@/components/keuangan/TutupBukuPanel";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -661,7 +662,7 @@ function DialogCatatJurnal({
                 <label className={LABEL} htmlFor={`baris-akun-${item.kunci}`}>
                   Akun baris {indeks + 1}
                 </label>
-                <select
+                <PilihCari
                   id={`baris-akun-${item.kunci}`}
                   className={INPUT}
                   value={item.id_akun}
@@ -675,7 +676,7 @@ function DialogCatatJurnal({
                       {pilihan.kode} {pilihan.nama}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </div>
               <div>
                 <label className={LABEL} htmlFor={`baris-debit-${item.kunci}`}>
@@ -946,6 +947,7 @@ function DialogDetailJurnal({
 
           {bisaDibatalkan ? (
             <form
+              data-tanpa-konfirmasi
               onSubmit={batalkan}
               className="space-y-2 p-3 rounded-lg border border-rose-500/30"
             >
@@ -1022,7 +1024,7 @@ function PanelBukuBesar({ akun }: { akun: AkunItem[] }) {
           <label className={LABEL} htmlFor="buku-akun">
             Akun
           </label>
-          <select
+          <PilihCari
             id="buku-akun"
             className={INPUT}
             value={idAkun}
@@ -1033,7 +1035,7 @@ function PanelBukuBesar({ akun }: { akun: AkunItem[] }) {
                 {item.kode} {item.nama}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label className={LABEL} htmlFor="buku-dari">

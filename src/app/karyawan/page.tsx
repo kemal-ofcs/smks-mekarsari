@@ -27,6 +27,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { saveFileWithPicker } from "@/lib/client/download";
 import {
@@ -634,6 +635,7 @@ export default function KaryawanPage() {
 
       {/* Search & Filter Bar */}
       <form
+        data-tanpa-konfirmasi
         onSubmit={(event) => {
           event.preventDefault();
           setAppliedSearch(search.trim());
@@ -658,7 +660,7 @@ export default function KaryawanPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          <select
+          <PilihCari
             aria-label="Filter berdasarkan unit"
             value={filterUnit}
             onChange={(e) => setFilterUnit(e.target.value)}
@@ -671,9 +673,9 @@ export default function KaryawanPage() {
                 {nama}
               </option>
             ))}
-          </select>
+          </PilihCari>
 
-          <select
+          <PilihCari
             aria-label="Filter divisi"
             value={filterDivisi}
             onChange={(e) => setFilterDivisi(e.target.value)}
@@ -685,7 +687,7 @@ export default function KaryawanPage() {
                 {div}
               </option>
             ))}
-          </select>
+          </PilihCari>
 
           <select
             aria-label="Filter status aktif"
@@ -1329,7 +1331,7 @@ export default function KaryawanPage() {
                 >
                   Unit:
                 </label>
-                <select
+                <PilihCari
                   id="employee-unit"
                   value={formData.unit || ""}
                   onChange={(e) =>
@@ -1343,7 +1345,7 @@ export default function KaryawanPage() {
                       {String(u.nama_unit)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </div>
               <div>
                 <label
@@ -1395,7 +1397,7 @@ export default function KaryawanPage() {
                 >
                   Shift Kerja:
                 </label>
-                <select
+                <PilihCari
                   id="employee-shift"
                   value={formData.id_shift}
                   onChange={(e) =>
@@ -1413,7 +1415,7 @@ export default function KaryawanPage() {
                       {String(s.jam_pulang)})
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </div>
               <div>
                 <label

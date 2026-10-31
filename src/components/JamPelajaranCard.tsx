@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BelPerangkatPanel } from "@/components/BelPerangkatPanel";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { getDaftarUnit } from "@/lib/gateways/academic";
 import {
   deleteLessonPeriod,
@@ -217,7 +218,7 @@ export function JamPelajaranCard() {
       {unitList.length > 0 ? (
         <label className="mt-5 grid max-w-xs gap-1.5 text-xs font-bold text-slate-300">
           Unit
-          <select
+          <PilihCari
             value={unit}
             onChange={(event) => setUnit(event.target.value)}
             className="app-input"
@@ -228,7 +229,7 @@ export function JamPelajaranCard() {
                 {String(u.nama_unit)}
               </option>
             ))}
-          </select>
+          </PilihCari>
           <span className="font-normal leading-5 text-slate-500">
             {unit
               ? khususUnit
@@ -518,7 +519,7 @@ export function JamPelajaranCard() {
               )}
               <label className="grid gap-1.5 text-xs font-bold text-slate-300">
                 Unit
-                <select
+                <PilihCari
                   value={draftBel.id_unit ?? ""}
                   onChange={(event) =>
                     setDraftBel((prev) => ({
@@ -534,7 +535,7 @@ export function JamPelajaranCard() {
                       {String(u.nama_unit)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </label>
               <label className="grid gap-1.5 text-xs font-bold text-slate-300">
                 Hari

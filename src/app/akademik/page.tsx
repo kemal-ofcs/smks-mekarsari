@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import {
   PRESET_TINGKAT_TEMPLATES,
@@ -1390,7 +1391,7 @@ export default function AkademikPage() {
                     >
                       Unit
                     </label>
-                    <select
+                    <PilihCari
                       id="jur-unit"
                       value={formJurusan.id_unit ?? ""}
                       onChange={(e) =>
@@ -1410,7 +1411,7 @@ export default function AkademikPage() {
                           {String(u.nama_unit)}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                     <p className="mt-1 text-xs text-slate-400">
                       Formulir PMB hanya menawarkan jurusan ini kepada pendaftar
                       unit tersebut.
@@ -1429,7 +1430,7 @@ export default function AkademikPage() {
                       >
                         Tahun Ajaran
                       </label>
-                      <select
+                      <PilihCari
                         id="rom-ta"
                         value={formRombel.id_tahun_ajaran}
                         onChange={(e) =>
@@ -1449,7 +1450,7 @@ export default function AkademikPage() {
                             {String(ta.nama_tahun)} ({String(ta.semester)})
                           </option>
                         ))}
-                      </select>
+                      </PilihCari>
                     </div>
                     <div>
                       <div className="flex items-center justify-between">
@@ -1539,7 +1540,7 @@ export default function AkademikPage() {
                   {unitList.length > 1 && !showCustomTingkatInput ? (
                     <div className="flex items-center gap-2 text-[11px] text-slate-400">
                       <span>Saring jenjang unit:</span>
-                      <select
+                      <PilihCari
                         aria-label="Filter unit tingkat"
                         value={rombelUnitFilter}
                         onChange={(e) => setRombelUnitFilter(e.target.value)}
@@ -1554,7 +1555,7 @@ export default function AkademikPage() {
                             {String(u.nama_unit)}
                           </option>
                         ))}
-                      </select>
+                      </PilihCari>
                     </div>
                   ) : null}
                   <div>
@@ -1564,7 +1565,7 @@ export default function AkademikPage() {
                     >
                       Unit
                     </label>
-                    <select
+                    <PilihCari
                       id="rom-unit"
                       value={formRombel.id_unit ?? ""}
                       onChange={(e) =>
@@ -1586,7 +1587,7 @@ export default function AkademikPage() {
                           {String(u.nama_unit)}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                     <p className="mt-1 text-xs text-slate-400">
                       Menentukan jam pelajaran dan jadwal bel yang berlaku.
                       Terisi otomatis dari tingkat bila tingkat itu milik satu
@@ -1600,7 +1601,7 @@ export default function AkademikPage() {
                     >
                       Jurusan
                     </label>
-                    <select
+                    <PilihCari
                       id="rom-jur"
                       value={formRombel.id_jurusan || ""}
                       onChange={(e) =>
@@ -1623,7 +1624,7 @@ export default function AkademikPage() {
                           {String(j.kode_jurusan)} - {String(j.nama_jurusan)}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </div>
                   <div>
                     <label
@@ -1653,7 +1654,7 @@ export default function AkademikPage() {
                     >
                       Wali Kelas
                     </label>
-                    <select
+                    <PilihCari
                       id="rom-wali"
                       value={formRombel.id_wali_kelas || ""}
                       onChange={(e) =>
@@ -1676,7 +1677,7 @@ export default function AkademikPage() {
                           {String(g.nama)} {g.nip ? `(${String(g.nip)})` : ""}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -1830,7 +1831,7 @@ export default function AkademikPage() {
                     >
                       Unit
                     </label>
-                    <select
+                    <PilihCari
                       id="map-unit"
                       value={formMapel.id_unit ?? ""}
                       onChange={(e) =>
@@ -1850,7 +1851,7 @@ export default function AkademikPage() {
                           {String(u.nama_unit)}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                     <p className="mt-1 text-xs text-slate-400">
                       Kode mapel boleh sama di unit berbeda, misalnya IND untuk
                       SMP dan SMK. Jadwal Mengajar hanya menawarkan mapel ini ke
@@ -1915,7 +1916,7 @@ export default function AkademikPage() {
                     >
                       Tahun Ajaran
                     </label>
-                    <select
+                    <PilihCari
                       id="pen-ta"
                       value={formPenugasan.id_tahun_ajaran}
                       onChange={(e) =>
@@ -1935,7 +1936,7 @@ export default function AkademikPage() {
                           {String(ta.nama_tahun)} ({String(ta.semester)})
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </div>
                   <div>
                     <label
@@ -1944,7 +1945,7 @@ export default function AkademikPage() {
                     >
                       Rombel / Kelas
                     </label>
-                    <select
+                    <PilihCari
                       id="pen-rombel"
                       value={formPenugasan.id_rombel}
                       onChange={(e) =>
@@ -1965,7 +1966,7 @@ export default function AkademikPage() {
                           {String(rom.nama_rombel)}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </div>
                   <div>
                     <label
@@ -1974,7 +1975,7 @@ export default function AkademikPage() {
                     >
                       Mata Pelajaran
                     </label>
-                    <select
+                    <PilihCari
                       id="pen-mapel"
                       value={formPenugasan.id_mapel}
                       onChange={(e) =>
@@ -1995,7 +1996,7 @@ export default function AkademikPage() {
                           {String(m.beban_jam)} JP)
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </div>
                   <div>
                     <label
@@ -2004,7 +2005,7 @@ export default function AkademikPage() {
                     >
                       Guru Pengampu
                     </label>
-                    <select
+                    <PilihCari
                       id="pen-guru"
                       value={formPenugasan.id_guru}
                       onChange={(e) =>
@@ -2024,7 +2025,7 @@ export default function AkademikPage() {
                           {String(g.nama)} {g.nip ? `(${String(g.nip)})` : ""}
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </div>
                 </>
               ) : null}

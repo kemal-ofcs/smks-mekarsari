@@ -41,8 +41,27 @@ export interface PermintaanKonfirmasi {
   preserved?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  tone?: "danger" | "warning";
+  tone?: "danger" | "warning" | "info";
 }
+
+/** Judul, tombol, dan warna pemeriksaan sebelum data isian disimpan. */
+export const PERTANYAAN_SIMPAN = {
+  title: "Periksa lagi sebelum disimpan",
+  confirmLabel: "Lanjut",
+  cancelLabel: "Belum",
+  tone: "info",
+} as const;
+
+const WARNA_TOMBOL = {
+  danger: "bg-rose-500 text-white hover:bg-rose-400",
+  warning: "bg-amber-400 text-slate-950 hover:bg-amber-300",
+  info: "bg-sky-500 text-slate-950 hover:bg-sky-400",
+};
+const WARNA_ISI = {
+  danger: "border-rose-400/25 bg-rose-400/10 text-rose-100",
+  warning: "border-amber-300/25 bg-amber-300/10 text-amber-100",
+  info: "border-white/10 bg-slate-950/60 text-slate-200",
+};
 
 interface Hasil {
   konfirmasi: (permintaan: PermintaanKonfirmasi) => Promise<boolean>;
@@ -73,7 +92,7 @@ export function useConfirmDialog(): Hasil {
     resolve?.(setuju);
   }, []);
 
-  const merah = permintaan?.tone !== "warning";
+  const nada = permintaan?.tone ?? "danger";
 
   const dialogKonfirmasi = permintaan ? (
     <Modal
@@ -93,11 +112,7 @@ export function useConfirmDialog(): Hasil {
           <button
             type="button"
             onClick={() => jawab(true)}
-            className={`min-h-10 rounded-xl px-4 text-xs font-black transition active:scale-95 ${
-              merah
-                ? "bg-rose-500 text-white hover:bg-rose-400"
-                : "bg-amber-400 text-slate-950 hover:bg-amber-300"
-            }`}
+            className={`min-h-10 rounded-xl px-4 text-xs font-black transition active:scale-95 ${WARNA_TOMBOL[nada]}`}
           >
             {permintaan.confirmLabel ?? "Ya, lanjutkan"}
           </button>
@@ -105,13 +120,7 @@ export function useConfirmDialog(): Hasil {
       }
     >
       <div className="space-y-3 text-xs leading-relaxed">
-        <div
-          className={`rounded-2xl border p-3 ${
-            merah
-              ? "border-rose-400/25 bg-rose-400/10 text-rose-100"
-              : "border-amber-300/25 bg-amber-300/10 text-amber-100"
-          }`}
-        >
+        <div className={`rounded-2xl border p-3 ${WARNA_ISI[nada]}`}>
           {permintaan.description}
         </div>
         {permintaan.preserved ? (

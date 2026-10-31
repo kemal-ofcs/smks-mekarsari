@@ -818,6 +818,7 @@ export function DialogKuitansi({
 
           {p.status === "Sah" && bolehBatal ? (
             <form
+              data-tanpa-konfirmasi
               onSubmit={jalankan}
               className="space-y-2 p-3 rounded-lg border border-rose-500/30"
             >

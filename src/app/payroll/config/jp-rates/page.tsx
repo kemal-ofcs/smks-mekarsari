@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -352,7 +353,7 @@ export default function JpRatesPage() {
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">
                   <span>Mata Pelajaran</span>
-                  <select
+                  <PilihCari
                     value={draft.id_mapel ?? ""}
                     onChange={(e) =>
                       setDraft((prev) => ({
@@ -372,14 +373,14 @@ export default function JpRatesPage() {
                         {String(mapel.nama_mapel)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </label>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">
                   <span>Berlaku Untuk</span>
-                  <select
+                  <PilihCari
                     value={draft.id_guru ?? ""}
                     onChange={(e) =>
                       setDraft((prev) => ({
@@ -398,7 +399,7 @@ export default function JpRatesPage() {
                         {String(guru.nama)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </label>
                 <p className="mt-1 text-xs text-slate-500">
                   Pilih seorang guru untuk tarif khusus, misalnya guru senior

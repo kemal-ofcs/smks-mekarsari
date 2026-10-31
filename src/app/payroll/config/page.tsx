@@ -8,6 +8,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -711,7 +712,7 @@ export default function PayrollConfigPage() {
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1">
                   <span>Pilih Karyawan</span>
-                  <select
+                  <PilihCari
                     value={draftSalary.id_karyawan}
                     onChange={(e) =>
                       setDraftSalary((prev) => ({
@@ -738,7 +739,7 @@ export default function PayrollConfigPage() {
                         {String(emp.id_unik)})
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </label>
               </div>
 

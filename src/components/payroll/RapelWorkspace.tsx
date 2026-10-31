@@ -338,6 +338,7 @@ function DialogCari({
     >
       <div className="space-y-4">
         <form
+          data-tanpa-konfirmasi
           onSubmit={hitung}
           className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
         >
@@ -511,7 +512,7 @@ function DialogBatal({
 
   return (
     <Modal isOpen onClose={onClose} title="Batalkan rapel" hideFooter>
-      <form onSubmit={kirim} className="space-y-3">
+      <form data-tanpa-konfirmasi onSubmit={kirim} className="space-y-3">
         <p className="text-sm text-slate-300">
           {item.nama_karyawan}, {item.label}:{" "}
           <span className="tabular-nums">{formatRupiah(item.jumlah)}</span>.

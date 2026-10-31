@@ -24,6 +24,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import {
   describeImportReport,
@@ -635,7 +636,7 @@ export default function GuruPage() {
                 Kontrak
               </option>
             </select>
-            <select
+            <PilihCari
               value={filterUnit}
               onChange={(e) => setFilterUnit(e.target.value)}
               aria-label="Filter berdasarkan unit"
@@ -659,7 +660,7 @@ export default function GuruPage() {
                   {nama}
                 </option>
               ))}
-            </select>
+            </PilihCari>
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
@@ -963,7 +964,7 @@ export default function GuruPage() {
                 >
                   Unit
                 </label>
-                <select
+                <PilihCari
                   id="guru-unit"
                   value={formData.unit || ""}
                   onChange={(e) =>
@@ -981,7 +982,7 @@ export default function GuruPage() {
                       {String(u.nama_unit)}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
                 {unitList.length === 0 ? (
                   <p className="mt-1 text-xs text-slate-500">
                     Belum ada unit. Tambahkan lewat Akademik → Unit.
@@ -1165,7 +1166,7 @@ export default function GuruPage() {
                   >
                     Shift / Jam Scan
                   </label>
-                  <select
+                  <PilihCari
                     id="guru-shift"
                     value={formData.id_shift || 1}
                     onChange={(e) =>
@@ -1185,7 +1186,7 @@ export default function GuruPage() {
                         {shiftLabel(s)}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
                 <div>
                   <label

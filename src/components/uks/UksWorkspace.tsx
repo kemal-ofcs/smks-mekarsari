@@ -20,6 +20,7 @@ import {
   TOMBOL_UTAMA,
 } from "@/components/inventory/gaya";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { hasPermission } from "@/lib/auth/access";
 import { useAuth } from "@/lib/context/AuthContext";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
@@ -433,6 +434,7 @@ function Riwayat({
         Riwayat kunjungan
       </h2>
       <form
+        data-tanpa-konfirmasi
         onSubmit={(event) => {
           event.preventDefault();
           onFilter({
@@ -730,7 +732,7 @@ function BarisObat({
               <label htmlFor={`uks-obat-${index}`} className={LABEL}>
                 Obat
               </label>
-              <select
+              <PilihCari
                 id={`uks-obat-${index}`}
                 value={item.id_barang}
                 onChange={(e) =>
@@ -744,13 +746,13 @@ function BarisObat({
                     {b.nama_barang}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
             <div>
               <label htmlFor={`uks-obat-posisi-${index}`} className={LABEL}>
                 Diambil dari
               </label>
-              <select
+              <PilihCari
                 id={`uks-obat-posisi-${index}`}
                 value={item.posisi}
                 onChange={(e) => ubah(item.kunci, { posisi: e.target.value })}
@@ -769,7 +771,7 @@ function BarisObat({
                     (sisa {angka(p.saldo, barang?.desimal ?? false)})
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
             <div>
               <label htmlFor={`uks-obat-jumlah-${index}`} className={LABEL}>
@@ -938,7 +940,7 @@ function FormBuka({
               <label htmlFor="uks-personil" className={LABEL}>
                 Yang berkunjung
               </label>
-              <select
+              <PilihCari
                 id="uks-personil"
                 required
                 value={idPersonil}
@@ -956,7 +958,7 @@ function FormBuka({
                         : ""}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
             <div>
               <label htmlFor="uks-keluhan" className={LABEL}>

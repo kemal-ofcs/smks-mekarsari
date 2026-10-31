@@ -37,6 +37,7 @@ import {
   parseKodePrefixes,
   pasanganAkunJurnalInventaris,
   pasanganAkunJurnalServis,
+  pratinjauMutasi,
   rekapSumberDana,
   type StatusKedaluwarsa,
   servisDraftSchema,
@@ -1394,5 +1395,85 @@ describe("servis aset (vektor kembar inventory.rs)", () => {
       tutupServisDraftSchema.safeParse({ id_servis: "s", ditutup_oleh: "y" })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("pratinjauMutasi", () => {
+  const gudang = { label: "Gudang · Baik", saldo: 10 };
+  const lab = { label: "Lab · Baik", saldo: 3 };
+
+  test("Keluar mengurangi tempat asal dan total", () => {
+    expect(
+      pratinjauMutasi({
+        jenis: "Keluar",
+        jumlah: 4,
+        stokTotal: 25,
+        asal: gudang,
+        tujuan: null,
+      }),
+    ).toEqual({
+      baris: [
+        { label: "Gudang · Baik", sebelum: 10, sesudah: 6 },
+        { label: "Total semua tempat", sebelum: 25, sesudah: 21 },
+      ],
+      melebihiStok: false,
+    });
+  });
+
+  test("Masuk menambah tempat tujuan dan total", () => {
+    expect(
+      pratinjauMutasi({
+        jenis: "Masuk",
+        jumlah: 2,
+        stokTotal: 25,
+        asal: null,
+        tujuan: lab,
+      }).baris,
+    ).toEqual([
+      { label: "Lab · Baik", sebelum: 3, sesudah: 5 },
+      { label: "Total semua tempat", sebelum: 25, sesudah: 27 },
+    ]);
+  });
+
+  test("Pindah memindahkan antartempat tanpa baris total", () => {
+    expect(
+      pratinjauMutasi({
+        jenis: "Pindah",
+        jumlah: 4,
+        stokTotal: 25,
+        asal: gudang,
+        tujuan: lab,
+      }).baris,
+    ).toEqual([
+      { label: "Gudang · Baik", sebelum: 10, sesudah: 6 },
+      { label: "Lab · Baik", sebelum: 3, sesudah: 7 },
+    ]);
+  });
+
+  test("jumlah melebihi saldo asal ditandai, sama persis saldo tidak", () => {
+    const dengan = (jumlah: number) =>
+      pratinjauMutasi({
+        jenis: "Keluar",
+        jumlah,
+        stokTotal: 25,
+        asal: gudang,
+        tujuan: null,
+      }).melebihiStok;
+    expect(dengan(11)).toBe(true);
+    expect(dengan(10)).toBe(false);
+  });
+
+  test("jumlah kosong atau nol belum menghitung sesudah", () => {
+    for (const jumlah of [null, 0]) {
+      const hasil = pratinjauMutasi({
+        jenis: "Keluar",
+        jumlah,
+        stokTotal: 25,
+        asal: gudang,
+        tujuan: null,
+      });
+      expect(hasil.baris.map((b) => b.sesudah)).toEqual([null, null]);
+      expect(hasil.melebihiStok).toBe(false);
+    }
   });
 });

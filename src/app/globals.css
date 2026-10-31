@@ -506,11 +506,13 @@ html.light
   color: #ffffff !important;
 }
 
-/* Inactive Segmented Tab Buttons */
+/* Inactive Segmented Tab Buttons. Tombol utama (`bg-sky-600`) dan bahaya (`bg-rose-600`) di dalam panel tetap berwarna. */
 html[data-theme="light"] .bg-slate-900\/60
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ),
 html[data-theme="light"]
@@ -518,6 +520,8 @@ html[data-theme="light"]
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ),
 html[data-theme="light"]
@@ -525,6 +529,8 @@ html[data-theme="light"]
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ),
 html.light
@@ -532,6 +538,8 @@ html.light
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ),
 html.light
@@ -539,6 +547,8 @@ html.light
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ),
 html.light
@@ -546,6 +556,8 @@ html.light
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ) {
   color: #475569 !important;
@@ -556,6 +568,8 @@ html[data-theme="light"]
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ):hover,
 html[data-theme="light"]
@@ -563,6 +577,8 @@ html[data-theme="light"]
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ):hover,
 html[data-theme="light"]
@@ -570,6 +586,8 @@ html[data-theme="light"]
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ):hover,
 html.light
@@ -577,6 +595,8 @@ html.light
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ):hover,
 html.light
@@ -584,6 +604,8 @@ html.light
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ):hover,
 html.light
@@ -591,6 +613,8 @@ html.light
   button:not(.bg-gradient-to-r):not(
     .bg-sky-500,
     .bg-sky-700,
+    .bg-sky-600,
+    .bg-rose-600,
     .status-kehadiran-pilihan
   ):hover {
   color: #0f172a !important;

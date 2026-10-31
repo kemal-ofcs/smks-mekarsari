@@ -378,6 +378,7 @@ export function LiburMassalDialog({
           </button>
           <button
             type="button"
+            data-konfirmasi
             onClick={simpan}
             disabled={saving || jumlahSimpan === 0}
             className="min-h-11 rounded-xl bg-sky-700 px-5 text-sm font-bold text-white transition hover:bg-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 disabled:opacity-50"

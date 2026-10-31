@@ -7,6 +7,7 @@ import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { formatTanggalOperasional } from "@/lib/attendance/time-policy";
 import { canAccessArea, hasPermission } from "@/lib/auth/access";
 import { companyInitials } from "@/lib/constants/branding";
@@ -600,7 +601,7 @@ export default function BimbinganKonselingPage() {
               >
                 Tahun Ajaran
               </label>
-              <select
+              <PilihCari
                 id="filter-ta"
                 value={selectedYearId}
                 onChange={(e) => setSelectedYearId(e.target.value)}
@@ -616,7 +617,7 @@ export default function BimbinganKonselingPage() {
                     {Number(y.is_aktif) === 1 ? " [Aktif]" : ""}
                   </option>
                 ))}
-              </select>
+              </PilihCari>
             </div>
 
             <div>
@@ -825,7 +826,7 @@ export default function BimbinganKonselingPage() {
                 >
                   Pilih Siswa
                 </label>
-                <select
+                <PilihCari
                   id="create-id-siswa"
                   value={newCaseDraft.id_siswa}
                   onChange={(e) =>
@@ -844,7 +845,7 @@ export default function BimbinganKonselingPage() {
                       - NIPD: {String(s.nis || "-")}
                     </option>
                   ))}
-                </select>
+                </PilihCari>
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

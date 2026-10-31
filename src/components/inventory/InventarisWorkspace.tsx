@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { hasPermission } from "@/lib/auth/access";
 import {
   describeImportReport,
@@ -37,19 +38,26 @@ import {
 import { getPengajuan } from "@/lib/gateways/inventory-pengajuan";
 import { subscribeSyncCompleted } from "@/lib/gateways/sync-status";
 import {
+  PERTANYAAN_SIMPAN,
+  useConfirmDialog,
+} from "@/lib/hooks/useConfirmDialog";
+import {
   ALASAN_FORMULIR,
   alasanSahUntuk,
   angkaDariKetikan,
+  type BarisPratinjauMutasi,
   formatAngka,
   izinUntukAlasan,
   JENIS_MUTASI,
   type JenisMutasi,
   jenisBeritaAcara,
+  jumlahDariKetikan,
   KONDISI_BARANG,
   KONFIRMASI_HAPUS_PERMANEN,
   MAKS_KODE_PREFIX,
   normalizeKodePrefix,
   PENERIMA_TIPE,
+  pratinjauMutasi,
   type ServisInventaris,
   TIPE_BARANG,
 } from "@/lib/validations/inventory";
@@ -163,6 +171,38 @@ function draftDenganStatus(
 
 function awalBulan(tanggal: string): string {
   return `${tanggal.slice(0, 8)}01`;
+}
+
+/** "Gudang · Baik   10 → 7 pcs", di formulir mutasi dan dialog konfirmasinya. */
+function RincianPratinjau({
+  baris,
+  barang,
+}: {
+  baris: BarisPratinjauMutasi[];
+  barang: BarangInventaris;
+}) {
+  return (
+    <div className="space-y-1">
+      {baris.map((item) => (
+        <p key={item.label} className="flex flex-wrap justify-between gap-x-4">
+          <span className="text-slate-300">{item.label}</span>
+          <span
+            className={`font-semibold ${
+              item.sesudah !== null && item.sesudah < 0
+                ? "text-rose-300"
+                : "text-slate-100"
+            }`}
+          >
+            {angka(item.sebelum, barang.desimal)}
+            {item.sesudah === null
+              ? ""
+              : ` → ${angka(item.sesudah, barang.desimal)}`}{" "}
+            {barang.satuan}
+          </span>
+        </p>
+      ))}
+    </div>
+  );
 }
 
 function labelPosisi(
@@ -879,7 +919,7 @@ function DaftarBarang({
           <label htmlFor="inv-filter-kategori" className={LABEL}>
             Kategori
           </label>
-          <select
+          <PilihCari
             id="inv-filter-kategori"
             value={kategori}
             onChange={(e) => setKategori(e.target.value)}
@@ -891,13 +931,13 @@ function DaftarBarang({
                 {nama}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label htmlFor="inv-filter-tempat" className={LABEL}>
             Tempat
           </label>
-          <select
+          <PilihCari
             id="inv-filter-tempat"
             value={tempat}
             onChange={(e) => setTempat(e.target.value)}
@@ -909,7 +949,7 @@ function DaftarBarang({
                 {nama}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label htmlFor="inv-filter-stok" className={LABEL}>
@@ -1358,7 +1398,7 @@ function FormBarang({
   const [nama, setNama] = useState(barang?.nama_barang ?? "");
   const [kode, setKode] = useState(barang?.kode_barang ?? "");
   const [awalan, setAwalan] = useState(data.kode_prefix[0] ?? "BRG");
-  const [tipe, setTipe] = useState<string>(barang?.tipe ?? "Habis Pakai");
+  const [tipe, setTipe] = useState<string>(barang?.tipe ?? "");
   const [satuan, setSatuan] = useState(barang?.satuan ?? "");
   const [kategori, setKategori] = useState(barang?.kategori ?? "");
   const [tempatUtama, setTempatUtama] = useState(barang?.tempat_utama ?? "");
@@ -1511,10 +1551,12 @@ function FormBarang({
             </label>
             <select
               id="inv-tipe"
+              required
               value={tipe}
               onChange={(e) => setTipe(e.target.value)}
               className={INPUT}
             >
+              {barang ? null : <option value="">Pilih tipe</option>}
               {TIPE_BARANG.map((nilai) => (
                 <option key={nilai} value={nilai}>
                   {nilai}
@@ -1857,6 +1899,7 @@ function FormAwalanKode({
           </button>
           <button
             type="button"
+            data-konfirmasi
             onClick={() => void simpan()}
             disabled={menyimpan}
             className={TOMBOL_UTAMA}
@@ -1929,7 +1972,6 @@ function FormMutasi({
   const [penerimaTipe, setPenerimaTipe] = useState("");
   const [penerimaId, setPenerimaId] = useState("");
   const [penerimaNama, setPenerimaNama] = useState("");
-  const [cariPenerima, setCariPenerima] = useState("");
   const [keperluan, setKeperluan] = useState("");
   const [catatan, setCatatan] = useState("");
   const [penerima, setPenerima] = useState<PenerimaInventaris | null>(null);
@@ -1973,6 +2015,44 @@ function FormMutasi({
   const [unitDipilih, setUnitDipilih] = useState<string[]>([]);
   const [perUnit, setPerUnit] = useState(false);
   const grupAsal = kelompokUnit[Number(kelompokAsal)] ?? null;
+  const { konfirmasi, dialogKonfirmasi } = useConfirmDialog();
+  const tempatAsal = pakaiUnit ? grupAsal : asal;
+  const kondisiPratinjau = barang?.tipe === "Aset" ? kondisiTujuan : "Baik";
+  const samaDenganAsal = (tempat: string, kondisi: string) =>
+    tempatAsal !== null &&
+    tempatAsal.tempat.toLowerCase() === tempat.trim().toLowerCase() &&
+    tempatAsal.kondisi === kondisi;
+  const pratinjau = pratinjauMutasi({
+    jenis,
+    jumlah: pakaiUnit
+      ? unitDipilih.length
+      : barang
+        ? jumlahDariKetikan(jumlah, barang.desimal)
+        : null,
+    stokTotal: barang?.stok_total ?? 0,
+    asal: tempatAsal
+      ? {
+          label: `${tempatAsal.tempat} · ${tempatAsal.kondisi}`,
+          saldo: pakaiUnit ? (grupAsal?.unit.length ?? 0) : (asal?.saldo ?? 0),
+        }
+      : null,
+    tujuan:
+      barang &&
+      tempatTujuan.trim() &&
+      !(jenis === "Pindah" && samaDenganAsal(tempatTujuan, kondisiPratinjau))
+        ? {
+            label: `${tempatTujuan.trim()} · ${kondisiPratinjau}`,
+            saldo: barang.posisi
+              .filter(
+                (p) =>
+                  p.tempat.toLowerCase() ===
+                    tempatTujuan.trim().toLowerCase() &&
+                  p.kondisi === kondisiPratinjau,
+              )
+              .reduce((jumlahSaldo, p) => jumlahSaldo + p.saldo, 0),
+          }
+        : null,
+  });
   const bolehPerUnit =
     jenis === "Masuk" &&
     !dilacak &&
@@ -2016,13 +2096,6 @@ function FormMutasi({
       );
   }, [butuhPenerima, penerima]);
 
-  const personilTersaring = useMemo(() => {
-    const kata = cariPenerima.trim().toLowerCase();
-    return (penerima?.personil ?? [])
-      .filter((orang) => !kata || orang.nama.toLowerCase().includes(kata))
-      .slice(0, 100);
-  }, [penerima, cariPenerima]);
-
   const reset = () => {
     setJumlah("");
     setUnitDipilih([]);
@@ -2033,19 +2106,31 @@ function FormMutasi({
     setCatatan("");
     setPenerimaId("");
     setPenerimaNama("");
-    setCariPenerima("");
   };
 
   const simpan = async (event: FormEvent) => {
     event.preventDefault();
     if (isSubmittingRef.current || !barang) return;
     isSubmittingRef.current = true;
-    setMenyimpan(true);
     try {
       const aset = barang.tipe === "Aset";
       const jumlahCatat = pakaiUnit
         ? unitDipilih.length
         : bacaJumlah(jumlah, barang.desimal);
+      const setuju = await konfirmasi({
+        ...PERTANYAAN_SIMPAN,
+        description: (
+          <div className="space-y-2">
+            <p>
+              {jenis} {angka(jumlahCatat, barang.desimal)} {barang.satuan}{" "}
+              {barang.nama_barang}. Apakah data yang dicatat sudah benar?
+            </p>
+            <RincianPratinjau baris={pratinjau.baris} barang={barang} />
+          </div>
+        ),
+      });
+      if (!setuju) return;
+      setMenyimpan(true);
       await catatMutasiInventaris({
         id_barang: barang.id_barang,
         jenis,
@@ -2104,526 +2189,546 @@ function FormMutasi({
   }
 
   return (
-    <form
-      onSubmit={simpan}
-      className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 space-y-4"
-    >
-      <fieldset>
-        <legend className={LABEL}>Jenis mutasi</legend>
-        <div className="flex gap-1 p-1 rounded-lg border border-slate-700 bg-slate-950/40">
-          {jenisTersedia.map((nilai) => (
-            <label
-              key={nilai}
-              className={`min-h-11 flex-1 flex items-center justify-center rounded-md text-sm font-medium cursor-pointer focus-within:ring-2 focus-within:ring-sky-500 ${
-                jenis === nilai
-                  ? "bg-sky-700 text-white"
-                  : "text-slate-300 hover:bg-slate-800"
-              }`}
-            >
-              <input
-                type="radio"
-                name="inv-jenis"
-                value={nilai}
-                checked={jenis === nilai}
-                onChange={() => pilihJenis(nilai)}
-                className="sr-only"
-              />
-              {nilai}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="sm:col-span-2">
-          <label htmlFor="inv-mutasi-barang" className={LABEL}>
-            Barang
-          </label>
-          <select
-            id="inv-mutasi-barang"
-            required
-            value={idBarang}
-            onChange={(e) => pilihBarang(e.target.value)}
-            className={INPUT}
-          >
-            <option value="">Pilih barang</option>
-            {pilihanBarang.map((item) => (
-              <option key={item.id_barang} value={item.id_barang}>
-                {item.nama_barang} ({item.kode_barang})
-              </option>
-            ))}
-          </select>
-          {jenis !== "Masuk" && pilihanBarang.length === 0 ? (
-            <p className="mt-1 text-xs text-amber-300">
-              Belum ada barang yang punya stok. Catat barang Masuk lebih dulu.
-            </p>
-          ) : null}
-        </div>
-
-        <div>
-          <label htmlFor="inv-alasan" className={LABEL}>
-            Alasan
-          </label>
-          <select
-            id="inv-alasan"
-            required
-            value={alasan}
-            onChange={(e) => setAlasan(e.target.value)}
-            className={INPUT}
-          >
-            {pilihanAlasan.map((nilai) => (
-              <option key={nilai} value={nilai}>
+    <>
+      <form
+        data-tanpa-konfirmasi
+        onSubmit={simpan}
+        className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 space-y-4"
+      >
+        <fieldset>
+          <legend className={LABEL}>Jenis mutasi</legend>
+          <div className="flex gap-1 p-1 rounded-lg border border-slate-700 bg-slate-950/40">
+            {jenisTersedia.map((nilai) => (
+              <label
+                key={nilai}
+                className={`min-h-11 flex-1 flex items-center justify-center rounded-md text-sm font-medium cursor-pointer focus-within:ring-2 focus-within:ring-sky-500 ${
+                  jenis === nilai
+                    ? "bg-sky-700 text-white"
+                    : "text-slate-300 hover:bg-slate-800"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="inv-jenis"
+                  value={nilai}
+                  checked={jenis === nilai}
+                  onChange={() => pilihJenis(nilai)}
+                  className="sr-only"
+                />
                 {nilai}
-              </option>
+              </label>
             ))}
-          </select>
-          {jenis === "Keluar" &&
-          barang &&
-          data.belum_lunas.some((b) => b.id_barang === barang.id_barang) ? (
-            <p className="mt-1 text-xs text-violet-300">
-              Barang ini masih dicicil dan belum lunas. Pastikan kreditur dan
-              akuntansi tahu sebelum barangnya dikeluarkan.
-            </p>
-          ) : null}
-        </div>
-        {pakaiUnit ? (
-          <div>
-            <p className={LABEL}>Jumlah</p>
-            <p className="min-h-11 flex items-center text-sm text-slate-200">
-              {unitDipilih.length} unit dipilih
-            </p>
           </div>
-        ) : (
-          <div>
-            <label htmlFor="inv-jumlah" className={LABEL}>
-              Jumlah{barang ? ` (${barang.satuan})` : ""}
+        </fieldset>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="sm:col-span-2">
+            <label htmlFor="inv-mutasi-barang" className={LABEL}>
+              Barang
             </label>
-            <input
-              id="inv-jumlah"
-              {...isianJumlah(barang?.desimal ?? false)}
+            <PilihCari
+              id="inv-mutasi-barang"
               required
-              value={jumlah}
-              onChange={(e) => setJumlah(e.target.value)}
+              value={idBarang}
+              onChange={(e) => pilihBarang(e.target.value)}
               className={INPUT}
-            />
-            {jenis === "Masuk" && dilacak ? (
-              <p className="mt-1 text-xs text-slate-400">
-                Setiap {barang?.satuan} menjadi unit baru bernomor, paling
-                banyak 200 sekali catat.
+            >
+              <option value="">Pilih barang</option>
+              {pilihanBarang.map((item) => (
+                <option key={item.id_barang} value={item.id_barang}>
+                  {item.nama_barang} ({item.kode_barang})
+                </option>
+              ))}
+            </PilihCari>
+            {jenis !== "Masuk" && pilihanBarang.length === 0 ? (
+              <p className="mt-1 text-xs text-amber-300">
+                Belum ada barang yang punya stok. Catat barang Masuk lebih dulu.
               </p>
             ) : null}
           </div>
-        )}
-        <div>
-          <label htmlFor="inv-tanggal" className={LABEL}>
-            Tanggal
-          </label>
-          <input
-            id="inv-tanggal"
-            type="date"
-            required
-            max={hariIni}
-            value={tanggal}
-            onChange={(e) => setTanggal(e.target.value)}
-            className={INPUT}
-          />
-        </div>
 
-        {bolehPerUnit ? (
-          <div className="sm:col-span-2 flex items-start gap-2">
-            <input
-              id="inv-per-unit"
-              type="checkbox"
-              checked={perUnit}
-              onChange={(e) => setPerUnit(e.target.checked)}
-              className="mt-1 h-4 w-4"
-              aria-describedby="inv-per-unit-bantuan"
-            />
+          <div>
+            <label htmlFor="inv-alasan" className={LABEL}>
+              Alasan
+            </label>
+            <select
+              id="inv-alasan"
+              required
+              value={alasan}
+              onChange={(e) => setAlasan(e.target.value)}
+              className={INPUT}
+            >
+              {pilihanAlasan.map((nilai) => (
+                <option key={nilai} value={nilai}>
+                  {nilai}
+                </option>
+              ))}
+            </select>
+            {jenis === "Keluar" &&
+            barang &&
+            data.belum_lunas.some((b) => b.id_barang === barang.id_barang) ? (
+              <p className="mt-1 text-xs text-violet-300">
+                Barang ini masih dicicil dan belum lunas. Pastikan kreditur dan
+                akuntansi tahu sebelum barangnya dikeluarkan.
+              </p>
+            ) : null}
+          </div>
+          {pakaiUnit ? (
             <div>
-              <label
-                htmlFor="inv-per-unit"
-                className="text-sm font-medium text-slate-200"
-              >
-                Catat per unit
-              </label>
-              <p id="inv-per-unit-bantuan" className="text-xs text-slate-400">
-                Setiap {barang?.satuan} mendapat kode unit sendiri, bisa diberi
-                nomor seri, dan dicetak labelnya satu per satu. Cocok untuk
-                laptop atau proyektor; kursi cukup dicatat per jumlah.
+              <p className={LABEL}>Jumlah</p>
+              <p className="min-h-11 flex items-center text-sm text-slate-200">
+                {unitDipilih.length} unit dipilih
               </p>
             </div>
-          </div>
-        ) : null}
-
-        {pakaiUnit && barang ? (
-          <div className="sm:col-span-2 space-y-2">
-            <label htmlFor="inv-asal-unit" className={LABEL}>
-              Ambil dari
+          ) : (
+            <div>
+              <label htmlFor="inv-jumlah" className={LABEL}>
+                Jumlah{barang ? ` (${barang.satuan})` : ""}
+              </label>
+              <input
+                id="inv-jumlah"
+                {...isianJumlah(barang?.desimal ?? false)}
+                required
+                value={jumlah}
+                onChange={(e) => setJumlah(e.target.value)}
+                className={INPUT}
+              />
+              {jenis === "Masuk" && dilacak ? (
+                <p className="mt-1 text-xs text-slate-400">
+                  Setiap {barang?.satuan} menjadi unit baru bernomor, paling
+                  banyak 200 sekali catat.
+                </p>
+              ) : null}
+            </div>
+          )}
+          <div>
+            <label htmlFor="inv-tanggal" className={LABEL}>
+              Tanggal
             </label>
-            {kelompokUnit.length === 0 ? (
-              <p className="text-sm text-amber-300">
-                Belum ada unit bernomor yang tersedia.
-                {stokBelumBernomor(barang).length > 0
-                  ? " Daftarkan stok tanpa nomor di bagian Barang lebih dulu."
-                  : ""}
-              </p>
-            ) : (
-              <>
+            <input
+              id="inv-tanggal"
+              type="date"
+              required
+              max={hariIni}
+              value={tanggal}
+              onChange={(e) => setTanggal(e.target.value)}
+              className={INPUT}
+            />
+          </div>
+
+          {bolehPerUnit ? (
+            <div className="sm:col-span-2 flex items-start gap-2">
+              <input
+                id="inv-per-unit"
+                type="checkbox"
+                checked={perUnit}
+                onChange={(e) => setPerUnit(e.target.checked)}
+                className="mt-1 h-4 w-4"
+                aria-describedby="inv-per-unit-bantuan"
+              />
+              <div>
+                <label
+                  htmlFor="inv-per-unit"
+                  className="text-sm font-medium text-slate-200"
+                >
+                  Catat per unit
+                </label>
+                <p id="inv-per-unit-bantuan" className="text-xs text-slate-400">
+                  Setiap {barang?.satuan} mendapat kode unit sendiri, bisa
+                  diberi nomor seri, dan dicetak labelnya satu per satu. Cocok
+                  untuk laptop atau proyektor; kursi cukup dicatat per jumlah.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {pakaiUnit && barang ? (
+            <div className="sm:col-span-2 space-y-2">
+              <label htmlFor="inv-asal-unit" className={LABEL}>
+                Ambil dari
+              </label>
+              {kelompokUnit.length === 0 ? (
+                <p className="text-sm text-amber-300">
+                  Belum ada unit bernomor yang tersedia.
+                  {stokBelumBernomor(barang).length > 0
+                    ? " Daftarkan stok tanpa nomor di bagian Barang lebih dulu."
+                    : ""}
+                </p>
+              ) : (
+                <>
+                  <PilihCari
+                    id="inv-asal-unit"
+                    value={kelompokAsal}
+                    onChange={(e) => {
+                      setKelompokAsal(e.target.value);
+                      setUnitDipilih([]);
+                    }}
+                    className={INPUT}
+                  >
+                    {kelompokUnit.map((grup, index) => (
+                      <option
+                        key={`${grup.tempat}|${grup.kondisi}`}
+                        value={String(index)}
+                      >
+                        {grup.tempat} · {grup.kondisi} ({grup.unit.length} unit)
+                      </option>
+                    ))}
+                  </PilihCari>
+                  <fieldset className="max-h-60 overflow-y-auto rounded-lg border border-slate-800 divide-y divide-slate-800">
+                    <legend className="sr-only">Unit yang dicatat</legend>
+                    {(grupAsal?.unit ?? []).map((unit) => {
+                      const id = unit.id_batch as string;
+                      return (
+                        <label
+                          key={id}
+                          className="flex min-h-11 items-center gap-2 px-3 py-2 text-sm text-slate-200"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={unitDipilih.includes(id)}
+                            onChange={(e) =>
+                              setUnitDipilih(
+                                e.target.checked
+                                  ? [...unitDipilih, id]
+                                  : unitDipilih.filter((item) => item !== id),
+                              )
+                            }
+                            className="h-4 w-4"
+                          />
+                          {unit.kode_unit}
+                          {unit.nomor_seri ? (
+                            <span className="text-slate-400">
+                              SN {unit.nomor_seri}
+                            </span>
+                          ) : null}
+                          {servisPerUnit(data).has(id) ? (
+                            <span className="text-amber-300">
+                              {keteranganServis(
+                                servisPerUnit(data).get(id) as ServisInventaris,
+                              )}
+                            </span>
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                  </fieldset>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {jenis !== "Masuk" && barang && !pakaiUnit ? (
+            <div className="sm:col-span-2">
+              <label htmlFor="inv-asal" className={LABEL}>
+                Ambil dari
+              </label>
+              {posisiTersedia.length === 0 ? (
+                <p className="text-sm text-amber-300">
+                  Stok barang ini kosong di semua tempat.
+                </p>
+              ) : (
+                <PilihCari
+                  id="inv-asal"
+                  required
+                  value={posisiAsal}
+                  onChange={(e) => setPosisiAsal(e.target.value)}
+                  className={INPUT}
+                >
+                  {posisiTersedia.map((posisi, index) => (
+                    <option
+                      key={`${posisi.tempat}|${posisi.kondisi}|${posisi.id_batch ?? ""}`}
+                      value={String(index)}
+                    >
+                      {labelPosisi(posisi, barang.satuan, barang.desimal)}
+                    </option>
+                  ))}
+                </PilihCari>
+              )}
+            </div>
+          ) : null}
+
+          {jenis !== "Keluar" ? (
+            <>
+              <div>
+                <label htmlFor="inv-tujuan" className={LABEL}>
+                  {jenis === "Masuk" ? "Disimpan di" : "Pindah ke"}
+                </label>
+                <input
+                  id="inv-tujuan"
+                  required
+                  list="inv-tempat-saran-mutasi"
+                  value={tempatTujuan}
+                  onChange={(e) => setTempatTujuan(e.target.value)}
+                  className={INPUT}
+                />
+                <datalist id="inv-tempat-saran-mutasi">
+                  {data.tempat.map((nilai) => (
+                    <option key={nilai} value={nilai} />
+                  ))}
+                </datalist>
+              </div>
+              {barang?.tipe === "Aset" ? (
+                <div>
+                  <label htmlFor="inv-kondisi" className={LABEL}>
+                    Kondisi
+                  </label>
+                  <select
+                    id="inv-kondisi"
+                    value={kondisiTujuan}
+                    onChange={(e) => setKondisiTujuan(e.target.value)}
+                    className={INPUT}
+                  >
+                    {KONDISI_BARANG.map((nilai) => (
+                      <option key={nilai} value={nilai}>
+                        {nilai}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          {jenis === "Masuk" ? (
+            <>
+              {barang?.bisa_expired ? (
+                <div>
+                  <label htmlFor="inv-expired" className={LABEL}>
+                    Tanggal kedaluwarsa
+                  </label>
+                  <input
+                    id="inv-expired"
+                    type="date"
+                    required
+                    value={tanggalExpired}
+                    onChange={(e) => setTanggalExpired(e.target.value)}
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
+              <div>
+                <label htmlFor="inv-sumber-dana" className={LABEL}>
+                  Sumber dana
+                </label>
+                <input
+                  id="inv-sumber-dana"
+                  list="inv-sumber-dana-saran"
+                  value={sumberDana}
+                  onChange={(e) => setSumberDana(e.target.value)}
+                  className={INPUT}
+                />
+                <datalist id="inv-sumber-dana-saran">
+                  {SUMBER_DANA_UMUM.map((nilai) => (
+                    <option key={nilai} value={nilai} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label htmlFor="inv-harga" className={LABEL}>
+                  Harga satuan (Rp
+                  {barang?.desimal ? ` per ${barang.satuan}` : ""})
+                </label>
+                <input
+                  id="inv-harga"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  value={harga}
+                  onChange={(e) => setHarga(e.target.value)}
+                  className={INPUT}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {butuhPenerima ? (
+            <>
+              <div>
+                <label htmlFor="inv-penerima-tipe" className={LABEL}>
+                  Diberikan kepada
+                </label>
                 <select
-                  id="inv-asal-unit"
-                  value={kelompokAsal}
+                  id="inv-penerima-tipe"
+                  required
+                  value={penerimaTipe}
                   onChange={(e) => {
-                    setKelompokAsal(e.target.value);
-                    setUnitDipilih([]);
+                    setPenerimaTipe(e.target.value);
+                    setPenerimaId("");
+                    setPenerimaNama("");
                   }}
                   className={INPUT}
                 >
-                  {kelompokUnit.map((grup, index) => (
-                    <option
-                      key={`${grup.tempat}|${grup.kondisi}`}
-                      value={String(index)}
-                    >
-                      {grup.tempat} · {grup.kondisi} ({grup.unit.length} unit)
-                    </option>
-                  ))}
-                </select>
-                <fieldset className="max-h-60 overflow-y-auto rounded-lg border border-slate-800 divide-y divide-slate-800">
-                  <legend className="sr-only">Unit yang dicatat</legend>
-                  {(grupAsal?.unit ?? []).map((unit) => {
-                    const id = unit.id_batch as string;
-                    return (
-                      <label
-                        key={id}
-                        className="flex min-h-11 items-center gap-2 px-3 py-2 text-sm text-slate-200"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={unitDipilih.includes(id)}
-                          onChange={(e) =>
-                            setUnitDipilih(
-                              e.target.checked
-                                ? [...unitDipilih, id]
-                                : unitDipilih.filter((item) => item !== id),
-                            )
-                          }
-                          className="h-4 w-4"
-                        />
-                        {unit.kode_unit}
-                        {unit.nomor_seri ? (
-                          <span className="text-slate-400">
-                            SN {unit.nomor_seri}
-                          </span>
-                        ) : null}
-                        {servisPerUnit(data).has(id) ? (
-                          <span className="text-amber-300">
-                            {keteranganServis(
-                              servisPerUnit(data).get(id) as ServisInventaris,
-                            )}
-                          </span>
-                        ) : null}
-                      </label>
-                    );
-                  })}
-                </fieldset>
-              </>
-            )}
-          </div>
-        ) : null}
-
-        {jenis !== "Masuk" && barang && !pakaiUnit ? (
-          <div className="sm:col-span-2">
-            <label htmlFor="inv-asal" className={LABEL}>
-              Ambil dari
-            </label>
-            {posisiTersedia.length === 0 ? (
-              <p className="text-sm text-amber-300">
-                Stok barang ini kosong di semua tempat.
-              </p>
-            ) : (
-              <select
-                id="inv-asal"
-                required
-                value={posisiAsal}
-                onChange={(e) => setPosisiAsal(e.target.value)}
-                className={INPUT}
-              >
-                {posisiTersedia.map((posisi, index) => (
-                  <option
-                    key={`${posisi.tempat}|${posisi.kondisi}|${posisi.id_batch ?? ""}`}
-                    value={String(index)}
-                  >
-                    {labelPosisi(posisi, barang.satuan, barang.desimal)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        ) : null}
-
-        {jenis !== "Keluar" ? (
-          <>
-            <div>
-              <label htmlFor="inv-tujuan" className={LABEL}>
-                {jenis === "Masuk" ? "Disimpan di" : "Pindah ke"}
-              </label>
-              <input
-                id="inv-tujuan"
-                required
-                list="inv-tempat-saran-mutasi"
-                value={tempatTujuan}
-                onChange={(e) => setTempatTujuan(e.target.value)}
-                className={INPUT}
-              />
-              <datalist id="inv-tempat-saran-mutasi">
-                {data.tempat.map((nilai) => (
-                  <option key={nilai} value={nilai} />
-                ))}
-              </datalist>
-            </div>
-            {barang?.tipe === "Aset" ? (
-              <div>
-                <label htmlFor="inv-kondisi" className={LABEL}>
-                  Kondisi
-                </label>
-                <select
-                  id="inv-kondisi"
-                  value={kondisiTujuan}
-                  onChange={(e) => setKondisiTujuan(e.target.value)}
-                  className={INPUT}
-                >
-                  {KONDISI_BARANG.map((nilai) => (
+                  <option value="">Pilih tipe penerima</option>
+                  {PENERIMA_TIPE.map((nilai) => (
                     <option key={nilai} value={nilai}>
                       {nilai}
                     </option>
                   ))}
                 </select>
               </div>
-            ) : null}
-          </>
-        ) : null}
-
-        {jenis === "Masuk" ? (
-          <>
-            {barang?.bisa_expired ? (
-              <div>
-                <label htmlFor="inv-expired" className={LABEL}>
-                  Tanggal kedaluwarsa
-                </label>
-                <input
-                  id="inv-expired"
-                  type="date"
-                  required
-                  value={tanggalExpired}
-                  onChange={(e) => setTanggalExpired(e.target.value)}
-                  className={INPUT}
-                />
-              </div>
-            ) : null}
-            <div>
-              <label htmlFor="inv-sumber-dana" className={LABEL}>
-                Sumber dana
-              </label>
-              <input
-                id="inv-sumber-dana"
-                list="inv-sumber-dana-saran"
-                value={sumberDana}
-                onChange={(e) => setSumberDana(e.target.value)}
-                className={INPUT}
-              />
-              <datalist id="inv-sumber-dana-saran">
-                {SUMBER_DANA_UMUM.map((nilai) => (
-                  <option key={nilai} value={nilai} />
-                ))}
-              </datalist>
-            </div>
-            <div>
-              <label htmlFor="inv-harga" className={LABEL}>
-                Harga satuan (Rp{barang?.desimal ? ` per ${barang.satuan}` : ""}
-                )
-              </label>
-              <input
-                id="inv-harga"
-                type="number"
-                min={0}
-                step={1}
-                inputMode="numeric"
-                value={harga}
-                onChange={(e) => setHarga(e.target.value)}
-                className={INPUT}
-              />
-            </div>
-          </>
-        ) : null}
-
-        {butuhPenerima ? (
-          <>
-            <div>
-              <label htmlFor="inv-penerima-tipe" className={LABEL}>
-                Diberikan kepada
-              </label>
-              <select
-                id="inv-penerima-tipe"
-                required
-                value={penerimaTipe}
-                onChange={(e) => {
-                  setPenerimaTipe(e.target.value);
-                  setPenerimaId("");
-                  setPenerimaNama("");
-                }}
-                className={INPUT}
-              >
-                <option value="">Pilih tipe penerima</option>
-                {PENERIMA_TIPE.map((nilai) => (
-                  <option key={nilai} value={nilai}>
-                    {nilai}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {penerimaTipe === "Personil" ? (
-              <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="inv-cari-penerima" className={LABEL}>
-                    Cari nama personil
-                  </label>
-                  <input
-                    id="inv-cari-penerima"
-                    type="search"
-                    value={cariPenerima}
-                    onChange={(e) => setCariPenerima(e.target.value)}
-                    className={INPUT}
-                  />
+              {penerimaTipe === "Personil" ? (
+                <div className="sm:col-span-2">
+                  <div>
+                    <label htmlFor="inv-penerima-personil" className={LABEL}>
+                      Personil
+                    </label>
+                    <PilihCari
+                      id="inv-penerima-personil"
+                      required
+                      value={penerimaId}
+                      onChange={(e) => setPenerimaId(e.target.value)}
+                      className={INPUT}
+                    >
+                      <option value="">
+                        {penerima
+                          ? "Pilih personil"
+                          : "Memuat daftar personil..."}
+                      </option>
+                      {(penerima?.personil ?? []).map((orang) => (
+                        <option key={orang.id} value={orang.id}>
+                          {orang.nama}
+                          {orang.kelas
+                            ? ` · ${orang.kelas}`
+                            : orang.jenis
+                              ? ` · ${orang.jenis}`
+                              : ""}
+                        </option>
+                      ))}
+                    </PilihCari>
+                  </div>
                 </div>
+              ) : null}
+              {penerimaTipe === "Rombel" ? (
                 <div>
-                  <label htmlFor="inv-penerima-personil" className={LABEL}>
-                    Personil
+                  <label htmlFor="inv-penerima-rombel" className={LABEL}>
+                    Rombel
                   </label>
-                  <select
-                    id="inv-penerima-personil"
+                  <PilihCari
+                    id="inv-penerima-rombel"
                     required
                     value={penerimaId}
                     onChange={(e) => setPenerimaId(e.target.value)}
                     className={INPUT}
                   >
                     <option value="">
-                      {penerima
-                        ? "Pilih personil"
-                        : "Memuat daftar personil..."}
+                      {penerima ? "Pilih rombel" : "Memuat daftar rombel..."}
                     </option>
-                    {personilTersaring.map((orang) => (
-                      <option key={orang.id} value={orang.id}>
-                        {orang.nama}
-                        {orang.kelas
-                          ? ` · ${orang.kelas}`
-                          : orang.jenis
-                            ? ` · ${orang.jenis}`
-                            : ""}
+                    {(penerima?.rombel ?? []).map((kelas) => (
+                      <option key={kelas.id} value={kelas.id}>
+                        {kelas.nama}
                       </option>
                     ))}
-                  </select>
+                  </PilihCari>
                 </div>
-              </div>
-            ) : null}
-            {penerimaTipe === "Rombel" ? (
-              <div>
-                <label htmlFor="inv-penerima-rombel" className={LABEL}>
-                  Rombel
-                </label>
-                <select
-                  id="inv-penerima-rombel"
-                  required
-                  value={penerimaId}
-                  onChange={(e) => setPenerimaId(e.target.value)}
-                  className={INPUT}
-                >
-                  <option value="">
-                    {penerima ? "Pilih rombel" : "Memuat daftar rombel..."}
-                  </option>
-                  {(penerima?.rombel ?? []).map((kelas) => (
-                    <option key={kelas.id} value={kelas.id}>
-                      {kelas.nama}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-            {penerimaTipe === "Unit" ? (
-              <div>
-                <label htmlFor="inv-penerima-unit" className={LABEL}>
-                  Nama unit
-                </label>
-                <input
-                  id="inv-penerima-unit"
-                  required
-                  list="inv-tempat-saran-mutasi"
-                  value={penerimaNama}
-                  onChange={(e) => setPenerimaNama(e.target.value)}
-                  className={INPUT}
-                />
-              </div>
-            ) : null}
-            {penerimaGagal ? (
-              <p role="alert" className="sm:col-span-2 text-sm text-rose-200">
-                {penerimaGagal}
+              ) : null}
+              {penerimaTipe === "Unit" ? (
+                <div>
+                  <label htmlFor="inv-penerima-unit" className={LABEL}>
+                    Nama unit
+                  </label>
+                  <input
+                    id="inv-penerima-unit"
+                    required
+                    list="inv-tempat-saran-mutasi"
+                    value={penerimaNama}
+                    onChange={(e) => setPenerimaNama(e.target.value)}
+                    className={INPUT}
+                  />
+                </div>
+              ) : null}
+              {penerimaGagal ? (
+                <p role="alert" className="sm:col-span-2 text-sm text-rose-200">
+                  {penerimaGagal}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+
+          <div className="sm:col-span-2">
+            <label htmlFor="inv-keperluan" className={LABEL}>
+              Keperluan{butuhPenerima ? "" : " (opsional)"}
+            </label>
+            <input
+              id="inv-keperluan"
+              required={butuhPenerima}
+              maxLength={200}
+              value={keperluan}
+              onChange={(e) => setKeperluan(e.target.value)}
+              className={INPUT}
+              aria-describedby="inv-keperluan-bantuan"
+            />
+            <p
+              id="inv-keperluan-bantuan"
+              className="mt-1 text-xs text-slate-400"
+            >
+              Contoh: PTS Ganjil, rapat komite, pertolongan pertama. Jangan
+              tulis keluhan atau diagnosis: catatan ini tersalin ke semua
+              perangkat.
+            </p>
+          </div>
+          <div>
+            <label htmlFor="inv-nomor-dokumen" className={LABEL}>
+              Nomor nota atau dokumen (opsional)
+            </label>
+            <input
+              id="inv-nomor-dokumen"
+              value={nomorDokumen}
+              onChange={(e) => setNomorDokumen(e.target.value)}
+              className={INPUT}
+            />
+          </div>
+          <div>
+            <label htmlFor="inv-catatan-mutasi" className={LABEL}>
+              Catatan (opsional)
+            </label>
+            <input
+              id="inv-catatan-mutasi"
+              value={catatan}
+              onChange={(e) => setCatatan(e.target.value)}
+              className={INPUT}
+            />
+          </div>
+        </div>
+
+        {barang && pratinjau.baris.length > 0 ? (
+          <div
+            aria-live="polite"
+            className="p-3 rounded-lg border border-slate-800 bg-slate-950/40 text-sm space-y-2"
+          >
+            <p className="text-xs font-medium text-slate-300">
+              {pratinjau.baris.some((item) => item.sesudah !== null)
+                ? "Stok sekarang → setelah disimpan"
+                : "Stok sekarang"}
+            </p>
+            <RincianPratinjau baris={pratinjau.baris} barang={barang} />
+            {pratinjau.melebihiStok ? (
+              <p role="alert" className="text-xs text-rose-300">
+                Jumlahnya melebihi stok di tempat asal.
               </p>
             ) : null}
-          </>
+          </div>
         ) : null}
 
-        <div className="sm:col-span-2">
-          <label htmlFor="inv-keperluan" className={LABEL}>
-            Keperluan{butuhPenerima ? "" : " (opsional)"}
-          </label>
-          <input
-            id="inv-keperluan"
-            required={butuhPenerima}
-            maxLength={200}
-            value={keperluan}
-            onChange={(e) => setKeperluan(e.target.value)}
-            className={INPUT}
-            aria-describedby="inv-keperluan-bantuan"
-          />
-          <p id="inv-keperluan-bantuan" className="mt-1 text-xs text-slate-400">
-            Contoh: PTS Ganjil, rapat komite, pertolongan pertama. Jangan tulis
-            keluhan atau diagnosis: catatan ini tersalin ke semua perangkat.
-          </p>
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={
+              menyimpan ||
+              !barang ||
+              (pakaiUnit && unitDipilih.length === 0) ||
+              pratinjau.melebihiStok
+            }
+            className={TOMBOL_UTAMA}
+          >
+            {menyimpan
+              ? "Menyimpan..."
+              : `Simpan barang ${jenis.toLowerCase()}`}
+          </button>
         </div>
-        <div>
-          <label htmlFor="inv-nomor-dokumen" className={LABEL}>
-            Nomor nota atau dokumen (opsional)
-          </label>
-          <input
-            id="inv-nomor-dokumen"
-            value={nomorDokumen}
-            onChange={(e) => setNomorDokumen(e.target.value)}
-            className={INPUT}
-          />
-        </div>
-        <div>
-          <label htmlFor="inv-catatan-mutasi" className={LABEL}>
-            Catatan (opsional)
-          </label>
-          <input
-            id="inv-catatan-mutasi"
-            value={catatan}
-            onChange={(e) => setCatatan(e.target.value)}
-            className={INPUT}
-          />
-        </div>
-      </div>
-
-      <div className="flex justify-end">
-        <button
-          type="submit"
-          disabled={
-            menyimpan || !barang || (pakaiUnit && unitDipilih.length === 0)
-          }
-          className={TOMBOL_UTAMA}
-        >
-          {menyimpan ? "Menyimpan..." : `Simpan barang ${jenis.toLowerCase()}`}
-        </button>
-      </div>
-    </form>
+      </form>
+      {dialogKonfirmasi}
+    </>
   );
 }
 
@@ -2642,6 +2747,14 @@ function keterangan(baris: BarisKartuStok): string {
   if (baris.alasan === "Pembatalan" && baris.catatan)
     bagian.push(`alasan: ${baris.catatan}`);
   return bagian.join(" · ");
+}
+
+const SARING_KARTU = ["Semua", "Berhasil", "Dibatalkan"] as const;
+type SaringKartu = (typeof SARING_KARTU)[number];
+
+/** Mutasi yang dibatalkan beserta baris Pembatalan pembaliknya. */
+function kartuDibatalkan(baris: BarisKartuStok): boolean {
+  return baris.dibatalkan || baris.alasan === "Pembatalan";
 }
 
 function PanelKartuStok({
@@ -2673,9 +2786,19 @@ function PanelKartuStok({
   const [target, setTarget] = useState<BarisKartuStok | null>(null);
   const [alasanBatal, setAlasanBatal] = useState("");
   const [membatalkan, setMembatalkan] = useState(false);
+  const [saring, setSaring] = useState<SaringKartu>("Semua");
 
   const barang =
     data.barang.find((item) => item.id_barang === idBarang) ?? null;
+  const semuaBaris = kartu?.baris ?? [];
+  const barisBatal = semuaBaris.filter(kartuDibatalkan);
+  const barisBerhasil = semuaBaris.filter((baris) => !kartuDibatalkan(baris));
+  const barisPerSaring: Record<SaringKartu, BarisKartuStok[]> = {
+    Semua: semuaBaris,
+    Berhasil: barisBerhasil,
+    Dibatalkan: barisBatal,
+  };
+  const barisTampil = barisPerSaring[saring];
 
   const muatKartu = useCallback(async () => {
     if (!idBarang) {
@@ -2726,7 +2849,7 @@ function PanelKartuStok({
           <label htmlFor="inv-kartu-barang" className={LABEL}>
             Barang
           </label>
-          <select
+          <PilihCari
             id="inv-kartu-barang"
             value={idBarang}
             onChange={(e) => setIdBarang(e.target.value)}
@@ -2738,13 +2861,13 @@ function PanelKartuStok({
                 {item.nama_barang} ({item.kode_barang})
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label htmlFor="inv-kartu-tempat" className={LABEL}>
             Tempat
           </label>
-          <select
+          <PilihCari
             id="inv-kartu-tempat"
             value={tempat}
             onChange={(e) => setTempat(e.target.value)}
@@ -2756,7 +2879,7 @@ function PanelKartuStok({
                 {nama}
               </option>
             ))}
-          </select>
+          </PilihCari>
         </div>
         <div>
           <label htmlFor="inv-kartu-dari" className={LABEL}>
@@ -2837,13 +2960,42 @@ function PanelKartuStok({
               </button>
             </span>
           </div>
-          {kartu.baris.length === 0 ? (
+          {kartu.baris.length > 0 ? (
+            <fieldset className="px-4 py-3 border-b border-slate-800">
+              <legend className="sr-only">Tampilkan mutasi</legend>
+              <div className="flex gap-1 p-1 rounded-lg border border-slate-700 bg-slate-950/40 sm:max-w-md">
+                {SARING_KARTU.map((nilai) => (
+                  <label
+                    key={nilai}
+                    className={`min-h-11 flex-1 flex items-center justify-center rounded-md px-2 text-sm font-medium cursor-pointer focus-within:ring-2 focus-within:ring-sky-500 ${
+                      saring === nilai
+                        ? "bg-sky-700 text-white"
+                        : "text-slate-300 hover:bg-slate-800"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="inv-kartu-saring"
+                      value={nilai}
+                      checked={saring === nilai}
+                      onChange={() => setSaring(nilai)}
+                      className="sr-only"
+                    />
+                    {nilai} ({barisPerSaring[nilai].length})
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
+          {barisTampil.length === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-slate-400">
-              Tidak ada mutasi pada rentang tanggal ini.
+              {kartu.baris.length === 0
+                ? "Tidak ada mutasi pada rentang tanggal ini."
+                : `Tidak ada mutasi ${saring.toLowerCase()} pada rentang tanggal ini.`}
             </p>
           ) : (
             <ul className="divide-y divide-slate-800">
-              {kartu.baris.map((baris) => (
+              {barisTampil.map((baris) => (
                 <li
                   key={baris.id_mutasi}
                   className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
@@ -2920,7 +3072,7 @@ function PanelKartuStok({
           title="Batalkan mutasi"
           titleId="inv-batal-judul"
         >
-          <form onSubmit={batalkan} className="space-y-4">
+          <form data-tanpa-konfirmasi onSubmit={batalkan} className="space-y-4">
             <p className="text-sm text-slate-300">
               {keterangan(target)}. Mutasi ini tidak dihapus: aplikasi mencatat
               baris Pembatalan yang membalik jumlahnya, jadi jejaknya tetap

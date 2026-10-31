@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { optimizeImageFile } from "@/lib/client/image-optimizer";
 import { useAuth } from "@/lib/context/AuthContext";
 import { type AkunItem, daftarAkun } from "@/lib/gateways/accounting";
@@ -1117,7 +1118,7 @@ function DialogPengajuan({
                     >
                       Barang {indeks + 1}
                     </label>
-                    <select
+                    <PilihCari
                       id={`inv-pgj-barang-${b.kunci}`}
                       value={b.idBarang}
                       onChange={(e) =>
@@ -1131,7 +1132,7 @@ function DialogPengajuan({
                           {item.nama_barang} ({item.kode_barang})
                         </option>
                       ))}
-                    </select>
+                    </PilihCari>
                   </div>
                   {baris.length > 1 ? (
                     <button
@@ -1846,7 +1847,7 @@ function DialogKeputusan({
                   <label htmlFor={`keu-pgj-akun-${kunci}`} className={LABEL}>
                     {label}
                   </label>
-                  <select
+                  <PilihCari
                     id={`keu-pgj-akun-${kunci}`}
                     value={akunKontrak[kunci]}
                     disabled={akun === null}
@@ -1872,7 +1873,7 @@ function DialogKeputusan({
                     {akun === null || akun.length === 0 ? (
                       <option value={akunKontrak[kunci]}>Akun bawaan</option>
                     ) : null}
-                  </select>
+                  </PilihCari>
                 </div>
               ))}
             </div>

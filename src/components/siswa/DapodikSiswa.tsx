@@ -10,6 +10,7 @@ import {
   TOMBOL_UTAMA,
 } from "@/components/inventory/gaya";
 import { Modal } from "@/components/ui/Modal";
+import { PilihCari } from "@/components/ui/PilihCari";
 import { saveFileWithPicker } from "@/lib/client/download";
 import { createXlsxBuffer, readWorkbookRows } from "@/lib/client/xlsx";
 import {
@@ -412,6 +413,7 @@ export function ModalDapodikSiswa({
             <button
               className={TOMBOL_UTAMA}
               disabled={proses}
+              data-konfirmasi
               onClick={() => void simpan()}
               type="button"
             >
@@ -461,7 +463,7 @@ export function ModalDapodikSiswa({
                       </label>
                       {isian.jenis === "pilihan" ||
                       isian.jenis === "yaTidak" ? (
-                        <select
+                        <PilihCari
                           className={INPUT}
                           id={id}
                           onChange={(e) => ubah(isian.kunci, e.target.value)}
@@ -482,7 +484,7 @@ export function ModalDapodikSiswa({
                           !isian.pilihan?.includes(nilai) ? (
                             <option value={nilai}>{nilai}</option>
                           ) : null}
-                        </select>
+                        </PilihCari>
                       ) : (
                         <input
                           autoComplete="off"
@@ -884,6 +886,7 @@ function ModalImporDapodik({
             <button
               className={TOMBOL_UTAMA}
               disabled={kemajuan !== null || siapSimpan.length === 0}
+              data-konfirmasi
               onClick={() => void simpan()}
               type="button"
             >
