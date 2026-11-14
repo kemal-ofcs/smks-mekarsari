@@ -350,8 +350,40 @@ export const CATATAN_MAKS = 500;
 /** Angka hukum kontrak sebagai pengaturan sekolah (Q-28); kosong = bawaan. */
 export const KUNCI_PERCOBAAN_MAKS = "hr_percobaan_maks_bulan";
 export const KUNCI_PKWT_MAKS = "hr_pkwt_maks_bulan";
-export const ATURAN_PERCOBAAN = { bawaan: 3, min: 1, maks: 12 } as const;
-export const ATURAN_PKWT = { bawaan: 60, min: 12, maks: 120 } as const;
+/** Batas beban mengajar per minggu (HRIS Fase 3a, §21.2.1); kosong = bawaan. */
+export const KUNCI_BEBAN_MIN_JP = "hr_beban_min_jp";
+export const KUNCI_BEBAN_MAKS_JP = "hr_beban_maks_jp";
+
+export interface Aturan {
+  bawaan: number;
+  min: number;
+  maks: number;
+  satuan: string;
+}
+export const ATURAN_PERCOBAAN = {
+  bawaan: 3,
+  min: 1,
+  maks: 12,
+  satuan: "bulan",
+} as const satisfies Aturan;
+export const ATURAN_PKWT = {
+  bawaan: 60,
+  min: 12,
+  maks: 120,
+  satuan: "bulan",
+} as const satisfies Aturan;
+export const ATURAN_BEBAN_MIN = {
+  bawaan: 24,
+  min: 0,
+  maks: 60,
+  satuan: "JP",
+} as const satisfies Aturan;
+export const ATURAN_BEBAN_MAKS = {
+  bawaan: 40,
+  min: 1,
+  maks: 60,
+  satuan: "JP",
+} as const satisfies Aturan;
 
 type Hasil<T> = { ok: true; nilai: T } | { ok: false; galat: string };
 
@@ -600,10 +632,7 @@ export function susunKontrak(
 }
 
 /** Nilai kunci angka kontrak; kosong, rusak, atau di luar rentang = bawaan. */
-export function angkaPengaturan(
-  nilai: string | null,
-  aturan: { bawaan: number; min: number; maks: number },
-): number {
+export function angkaPengaturan(nilai: string | null, aturan: Aturan): number {
   const teks = (nilai ?? "").trim();
   if (!/^\d{1,4}$/.test(teks)) return aturan.bawaan;
   const n = Number(teks);
@@ -613,7 +642,7 @@ export function angkaPengaturan(
 /** Isian pengaturan dari layar; `""` = kembali ke bawaan. */
 export function validasiAngkaPengaturan(
   teks: string,
-  aturan: { bawaan: number; min: number; maks: number },
+  aturan: Aturan,
   label: string,
 ): Hasil<string> {
   const isi = teks.trim();
@@ -622,9 +651,47 @@ export function validasiAngkaPengaturan(
   if (!(n >= aturan.min && n <= aturan.maks))
     return {
       ok: false,
-      galat: `${label} harus ${aturan.min} sampai ${aturan.maks} bulan, atau kosong untuk bawaan ${aturan.bawaan}.`,
+      galat: `${label} harus ${aturan.min} sampai ${aturan.maks} ${aturan.satuan}, atau kosong untuk bawaan ${aturan.bawaan}.`,
     };
   return { ok: true, nilai: String(n) };
+}
+
+/**
+ * Batas JP berlaku [min, maks]; maks yang kurang dari min (dua perangkat
+ * menyimpan berbeda) dinaikkan ke min. Cermin `batas_beban`.
+ */
+export function batasBeban(
+  min: string | null,
+  maks: string | null,
+): [number, number] {
+  const bawah = angkaPengaturan(min, ATURAN_BEBAN_MIN);
+  return [bawah, Math.max(angkaPengaturan(maks, ATURAN_BEBAN_MAKS), bawah)];
+}
+
+/** Isian batas JP dari layar; cermin `validasi_batas_beban`. */
+export function validasiBatasBeban(
+  min: string,
+  maks: string,
+): Hasil<[string, string]> {
+  const bawah = validasiAngkaPengaturan(
+    min,
+    ATURAN_BEBAN_MIN,
+    "Batas minimal beban mengajar",
+  );
+  if (!bawah.ok) return bawah;
+  const atas = validasiAngkaPengaturan(
+    maks,
+    ATURAN_BEBAN_MAKS,
+    "Batas maksimal beban mengajar",
+  );
+  if (!atas.ok) return atas;
+  const berlakuMin = angkaPengaturan(bawah.nilai, ATURAN_BEBAN_MIN);
+  if (angkaPengaturan(atas.nilai, ATURAN_BEBAN_MAKS) < berlakuMin)
+    return {
+      ok: false,
+      galat: `Batas maksimal beban mengajar tidak boleh kurang dari batas minimal (${berlakuMin} JP).`,
+    };
+  return { ok: true, nilai: [bawah.nilai, atas.nilai] };
 }
 
 // Fase 1b: tugas tambahan (§19.2.2)
@@ -782,6 +849,8 @@ export const pengaturanKontrakSchema = z
   .object({
     percobaan_maks_bulan: z.string().max(10),
     pkwt_maks_bulan: z.string().max(10),
+    beban_min_jp: z.string().max(10),
+    beban_maks_jp: z.string().max(10),
   })
   .strict();
 export type PengaturanKontrakDraft = z.infer<typeof pengaturanKontrakSchema>;
@@ -799,7 +868,9 @@ export interface PengaturanKontrak {
   /** Isi kunci apa adanya; `""` = bawaan. */
   percobaan_maks_bulan: string;
   pkwt_maks_bulan: string;
-  berlaku: AturanKontrak;
+  beban_min_jp: string;
+  beban_maks_jp: string;
+  berlaku: AturanKontrak & { beban_min_jp: number; beban_maks_jp: number };
 }
 
 export interface DaftarKontrak extends SusunanKontrak {
@@ -872,7 +943,7 @@ export const KONTRAK_SQL =
   "SELECT id_kontrak, id_karyawan, status, COALESCE(id_ref, '') AS id_ref, COALESCE(nomor, '') AS nomor, tanggal_mulai, COALESCE(tanggal_selesai, '') AS tanggal_selesai, COALESCE(percobaan_selesai, '') AS percobaan_selesai, COALESCE(catatan, '') AS catatan, COALESCE(dicatat_oleh, '') AS dicatat_oleh, created_at FROM hr_kontrak ORDER BY id_karyawan, tanggal_mulai, id_kontrak\n-- batas: kontrak pegawai sekolah, beberapa baris per orang sepanjang masa kerja\n;";
 
 export const PENGATURAN_KONTRAK_SQL =
-  "SELECT key, value FROM setting_gex_system WHERE key IN ('hr_percobaan_maks_bulan', 'hr_pkwt_maks_bulan')\n-- batas: dua kunci pengaturan\n;";
+  "SELECT key, value FROM setting_gex_system WHERE key IN ('hr_percobaan_maks_bulan', 'hr_pkwt_maks_bulan', 'hr_beban_min_jp', 'hr_beban_maks_jp')\n-- batas: empat kunci pengaturan\n;";
 
 export const HARI_INI_SQL = "SELECT date('now', '+7 hours') AS hari_ini;";
 

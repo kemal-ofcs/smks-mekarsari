@@ -11,7 +11,7 @@ use super::{
         CommandError, DesktopLoginResult, DesktopRuntimeStatus, DesktopSession, DesktopSyncStatus,
         OperatorUser, SessionMode,
     },
-    hr_pengajuan, hris, hris_cloud, operational, portability, rapel,
+    hr_beban, hr_pengajuan, hris, hris_cloud, operational, portability, rapel,
     scanner, secrets, storage, sync, teaching_journal, turso, uks, wa_notification,
 };
 
@@ -3367,6 +3367,17 @@ pub async fn desktop_hr_document_types_save(
 pub async fn desktop_hr_ptk_report(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
     require_permission(&state, "teachers.view")?;
     hris_cloud::laporan_ptk(&klien_cloud(&state)?).await.map_err(hris_cloud::luring)
+}
+
+/// Data mentah rekap beban mengajar satu semester (kosong = semester aktif),
+/// dari SQLite lokal; disusun di layar (`susunBebanMengajar`).
+#[tauri::command]
+pub fn desktop_hr_teaching_load(
+    state: State<'_, DesktopState>,
+    id_tahun_ajaran: Option<String>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "teachers.view")?;
+    hr_beban::teaching_load(&state, id_tahun_ajaran.as_deref().unwrap_or(""))
 }
 
 /// Pengajuan cuti/izin dalam rentang (+ yang belum diputus siapa pun),

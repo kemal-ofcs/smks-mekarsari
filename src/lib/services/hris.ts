@@ -26,6 +26,7 @@ import {
   BENTROK_JENIS_TUGAS_SQL,
   BERKAS_DOKUMEN_SQL,
   type BerkasDokumenBaris,
+  batasBeban,
   type berkasDokumenSchema,
   CATAT_NAMA_BAGIAN_SQL,
   CERMIN_STATUS_SQL,
@@ -53,6 +54,8 @@ import {
   KONTRAK_SQL,
   type KontrakBaris,
   type KontrakDraft,
+  KUNCI_BEBAN_MAKS_JP,
+  KUNCI_BEBAN_MIN_JP,
   KUNCI_PERCOBAAN_MAKS,
   KUNCI_PKWT_MAKS,
   type keuanganDraftSchema,
@@ -119,6 +122,7 @@ import {
   uraiBerkasDokumen,
   validasiAlasan,
   validasiAngkaPengaturan,
+  validasiBatasBeban,
   validasiDokumen,
   validasiJenisTugas,
   validasiKeuangan,
@@ -245,7 +249,8 @@ async function jenisTugas(db: Db): Promise<JenisTugas[]> {
   }));
 }
 
-async function pengaturanKontrak(db: Db): Promise<PengaturanKontrak> {
+/** Angka kontrak dan batas JP; cermin `pengaturan_kontrak`. */
+export async function pengaturanKontrak(db: Db): Promise<PengaturanKontrak> {
   const nilai = new Map(
     (await db.execute(PENGATURAN_KONTRAK_SQL)).rows.map((r) => [
       teks(r, "key"),
@@ -254,12 +259,19 @@ async function pengaturanKontrak(db: Db): Promise<PengaturanKontrak> {
   );
   const percobaan = nilai.get(KUNCI_PERCOBAAN_MAKS) ?? "";
   const pkwt = nilai.get(KUNCI_PKWT_MAKS) ?? "";
+  const bebanMin = nilai.get(KUNCI_BEBAN_MIN_JP) ?? "";
+  const bebanMaks = nilai.get(KUNCI_BEBAN_MAKS_JP) ?? "";
+  const [min, maks] = batasBeban(bebanMin, bebanMaks);
   return {
     percobaan_maks_bulan: percobaan,
     pkwt_maks_bulan: pkwt,
+    beban_min_jp: bebanMin,
+    beban_maks_jp: bebanMaks,
     berlaku: {
       percobaan_maks_bulan: angkaPengaturan(percobaan, ATURAN_PERCOBAAN),
       pkwt_maks_bulan: angkaPengaturan(pkwt, ATURAN_PKWT),
+      beban_min_jp: min,
+      beban_maks_jp: maks,
     },
   };
 }
@@ -425,6 +437,8 @@ export async function simpanPengaturan(
     "Batas GTT/PTT",
   );
   if (!pkwt.ok) galat(pkwt.galat);
+  const beban = validasiBatasBeban(draft.beban_min_jp, draft.beban_maks_jp);
+  if (!beban.ok) galat(beban.galat);
   await client.batch(
     [
       {
@@ -432,6 +446,8 @@ export async function simpanPengaturan(
         args: [KUNCI_PERCOBAAN_MAKS, percobaan.nilai],
       },
       { sql: UPSERT_SETTING_SQL, args: [KUNCI_PKWT_MAKS, pkwt.nilai] },
+      { sql: UPSERT_SETTING_SQL, args: [KUNCI_BEBAN_MIN_JP, beban.nilai[0]] },
+      { sql: UPSERT_SETTING_SQL, args: [KUNCI_BEBAN_MAKS_JP, beban.nilai[1]] },
     ],
     "write",
   );

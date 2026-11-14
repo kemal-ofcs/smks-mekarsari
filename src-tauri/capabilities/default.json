@@ -256,6 +256,7 @@
     "allow-desktop-hr-document-file-delete",
     "allow-desktop-hr-document-types-save",
     "allow-desktop-hr-ptk-report",
+    "allow-desktop-hr-teaching-load",
     "allow-desktop-hr-requests",
     "allow-desktop-hr-request-save",
     "allow-desktop-hr-request-decide",

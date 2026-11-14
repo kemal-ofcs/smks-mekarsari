@@ -79,6 +79,8 @@ describe("hris: aturan kembar", () => {
       H.TAHUN_AJARAN_SQL,
       H.KUNCI_PERCOBAAN_MAKS,
       H.KUNCI_PKWT_MAKS,
+      H.KUNCI_BEBAN_MIN_JP,
+      H.KUNCI_BEBAN_MAKS_JP,
       H.ID_WALI_KELAS,
     ];
     let diperiksa = 0;
@@ -103,9 +105,11 @@ describe("hris: aturan kembar", () => {
       for (const [nama, aturan] of [
         ["PERCOBAAN", H.ATURAN_PERCOBAAN],
         ["PKWT", H.ATURAN_PKWT],
+        ["BEBAN_MIN", H.ATURAN_BEBAN_MIN],
+        ["BEBAN_MAKS", H.ATURAN_BEBAN_MAKS],
       ] as const) {
         expect(rust).toContain(
-          `ATURAN_${nama}:Aturan=Aturan{bawaan:${aturan.bawaan},min:${aturan.min},maks:${aturan.maks}};`,
+          `ATURAN_${nama}:Aturan=Aturan{bawaan:${aturan.bawaan},min:${aturan.min},maks:${aturan.maks},satuan:"${aturan.satuan}"};`,
         );
       }
     }
@@ -129,8 +133,12 @@ const kontrak = (baris: string[][]): H.KontrakBaris[] =>
     created_at: "",
   }));
 
-const aturanDari = (nama: string) =>
-  nama === "percobaan" ? H.ATURAN_PERCOBAAN : H.ATURAN_PKWT;
+const ATURAN_UJI: Record<string, H.Aturan> = {
+  percobaan: H.ATURAN_PERCOBAAN,
+  beban_min: H.ATURAN_BEBAN_MIN,
+  beban_maks: H.ATURAN_BEBAN_MAKS,
+};
+const aturanDari = (nama: string) => ATURAN_UJI[nama] ?? H.ATURAN_PKWT;
 
 describe("hris: kontrak dan tugas (kembar hris.rs)", () => {
   test("validasi kontrak dan alasan", () => {
@@ -183,6 +191,17 @@ describe("hris: kontrak dan tugas (kembar hris.rs)", () => {
         label as string,
       );
       expect(hasil.ok ? hasil.nilai : null).toBe(nilai);
+      expect(hasil.ok ? null : hasil.galat).toBe(galat);
+    }
+    for (const [min, maks, bawah, atas] of vektor.batas_beban) {
+      expect(H.batasBeban(min as string | null, maks as string | null)).toEqual(
+        [bawah as number, atas as number],
+      );
+    }
+    for (const [min, maks, bawah, atas, galat] of vektor.validasi_batas_beban) {
+      const hasil = H.validasiBatasBeban(min as string, maks as string);
+      const nilai: (string | null)[] = hasil.ok ? hasil.nilai : [null, null];
+      expect(nilai).toEqual([bawah, atas]);
       expect(hasil.ok ? null : hasil.galat).toBe(galat);
     }
   });

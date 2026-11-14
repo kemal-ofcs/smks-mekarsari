@@ -3,6 +3,7 @@
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
+import type { DataBeban } from "@/lib/validations/hr-beban";
 import type {
   BerkasDokumenDraft,
   DaftarDokumen,
@@ -376,4 +377,15 @@ export function simpanJenisDokumen(draft: JenisDokumenDraft) {
 
 export function muatLaporanPtk(): Promise<LaporanPtk> {
   return cloud("desktop_hr_ptk_report", {}, "/api/kepegawaian/ptk/query", {});
+}
+
+/** Data mentah rekap beban mengajar; Desktop membaca SQLite lokal (luring). */
+export async function muatBebanMengajar(
+  idTahunAjaran: string,
+): Promise<DataBeban> {
+  if (isDesktopRuntime())
+    return invokeDesktop("desktop_hr_teaching_load", { idTahunAjaran });
+  return requestWebApi("/api/kepegawaian/teaching-load/query", "POST", {
+    id_tahun_ajaran: idTahunAjaran,
+  });
 }

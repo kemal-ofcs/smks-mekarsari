@@ -289,16 +289,22 @@ pub const CATATAN_MAKS: usize = 500;
 /// Angka hukum kontrak sebagai pengaturan sekolah (Q-28); kosong = bawaan.
 pub const KUNCI_PERCOBAAN_MAKS: &str = "hr_percobaan_maks_bulan";
 pub const KUNCI_PKWT_MAKS: &str = "hr_pkwt_maks_bulan";
+/// Batas beban mengajar per minggu (HRIS Fase 3a, §21.2.1); kosong = bawaan.
+pub const KUNCI_BEBAN_MIN_JP: &str = "hr_beban_min_jp";
+pub const KUNCI_BEBAN_MAKS_JP: &str = "hr_beban_maks_jp";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Aturan {
     pub bawaan: i64,
     pub min: i64,
     pub maks: i64,
+    pub satuan: &'static str,
 }
 
-pub const ATURAN_PERCOBAAN: Aturan = Aturan { bawaan: 3, min: 1, maks: 12 };
-pub const ATURAN_PKWT: Aturan = Aturan { bawaan: 60, min: 12, maks: 120 };
+pub const ATURAN_PERCOBAAN: Aturan = Aturan { bawaan: 3, min: 1, maks: 12, satuan: "bulan" };
+pub const ATURAN_PKWT: Aturan = Aturan { bawaan: 60, min: 12, maks: 120, satuan: "bulan" };
+pub const ATURAN_BEBAN_MIN: Aturan = Aturan { bawaan: 24, min: 0, maks: 60, satuan: "JP" };
+pub const ATURAN_BEBAN_MAKS: Aturan = Aturan { bawaan: 40, min: 1, maks: 60, satuan: "JP" };
 
 /// Status kepegawaian per pegawai pada ?1 (Q-25): kontrak tidak dibatalkan
 /// terakhir yang sudah mulai, lalu `guru_data`, lalu kosong.
@@ -312,7 +318,7 @@ pub const BERKONTRAK_SQL: &str = "EXISTS (SELECT 1 FROM hr_kontrak k WHERE k.id_
 /// ?8 percobaan, ?9 catatan, ?10 pencatat.
 pub const SIMPAN_KONTRAK_SQL: &str = "INSERT OR IGNORE INTO hr_kontrak (id_kontrak, id_karyawan, status, id_ref, nomor, tanggal_mulai, tanggal_selesai, percobaan_selesai, catatan, dicatat_oleh, created_at) VALUES (?1, ?2, ?3, NULLIF(?4, ''), NULLIF(?5, ''), ?6, NULLIF(?7, ''), NULLIF(?8, ''), NULLIF(?9, ''), NULLIF(?10, ''), datetime('now'));";
 pub const KONTRAK_SQL: &str = "SELECT id_kontrak, id_karyawan, status, COALESCE(id_ref, '') AS id_ref, COALESCE(nomor, '') AS nomor, tanggal_mulai, COALESCE(tanggal_selesai, '') AS tanggal_selesai, COALESCE(percobaan_selesai, '') AS percobaan_selesai, COALESCE(catatan, '') AS catatan, COALESCE(dicatat_oleh, '') AS dicatat_oleh, created_at FROM hr_kontrak ORDER BY id_karyawan, tanggal_mulai, id_kontrak\n-- batas: kontrak pegawai sekolah, beberapa baris per orang sepanjang masa kerja\n;";
-pub const PENGATURAN_KONTRAK_SQL: &str = "SELECT key, value FROM setting_gex_system WHERE key IN ('hr_percobaan_maks_bulan', 'hr_pkwt_maks_bulan')\n-- batas: dua kunci pengaturan\n;";
+pub const PENGATURAN_KONTRAK_SQL: &str = "SELECT key, value FROM setting_gex_system WHERE key IN ('hr_percobaan_maks_bulan', 'hr_pkwt_maks_bulan', 'hr_beban_min_jp', 'hr_beban_maks_jp')\n-- batas: empat kunci pengaturan\n;";
 pub const HARI_INI_SQL: &str = "SELECT date('now', '+7 hours') AS hari_ini;";
 
 // Fase 1b: tugas tambahan (§19.2.2)
@@ -606,10 +612,30 @@ pub fn validasi_angka_pengaturan(teks: &str, aturan: Aturan, label: &str) -> Res
     match angka_pendek(isi).filter(|n| (aturan.min..=aturan.maks).contains(n)) {
         Some(n) => Ok(n.to_string()),
         None => Err(format!(
-            "{label} harus {} sampai {} bulan, atau kosong untuk bawaan {}.",
-            aturan.min, aturan.maks, aturan.bawaan
+            "{label} harus {} sampai {} {}, atau kosong untuk bawaan {}.",
+            aturan.min, aturan.maks, aturan.satuan, aturan.bawaan
         )),
     }
+}
+
+/// Batas JP berlaku (min, maks); maks yang kurang dari min (dua perangkat
+/// menyimpan berbeda) dinaikkan ke min. Cermin `batasBeban`.
+pub fn batas_beban(min: Option<&str>, maks: Option<&str>) -> (i64, i64) {
+    let min = angka_pengaturan(min, ATURAN_BEBAN_MIN);
+    (min, angka_pengaturan(maks, ATURAN_BEBAN_MAKS).max(min))
+}
+
+/// Isian batas JP dari layar; cermin `validasiBatasBeban`.
+pub fn validasi_batas_beban(min: &str, maks: &str) -> Result<(String, String), String> {
+    let min = validasi_angka_pengaturan(min, ATURAN_BEBAN_MIN, "Batas minimal beban mengajar")?;
+    let maks = validasi_angka_pengaturan(maks, ATURAN_BEBAN_MAKS, "Batas maksimal beban mengajar")?;
+    let berlaku_min = angka_pengaturan(Some(&min), ATURAN_BEBAN_MIN);
+    if angka_pengaturan(Some(&maks), ATURAN_BEBAN_MAKS) < berlaku_min {
+        return Err(format!(
+            "Batas maksimal beban mengajar tidak boleh kurang dari batas minimal ({berlaku_min} JP)."
+        ));
+    }
+    Ok((min, maks))
 }
 
 /// Isian tugas tambahan; kosong = tidak diisi.
@@ -1058,19 +1084,28 @@ pub fn tugas_berlaku(
     Ok(hasil)
 }
 
-fn pengaturan_kontrak(connection: &rusqlite::Connection) -> Result<Value, CommandError> {
+/// Angka kontrak dan batas JP (`PENGATURAN_KONTRAK_SQL`): isi kunci apa adanya
+/// dan `berlaku` sesudah bawaan.
+pub(crate) fn pengaturan_kontrak(connection: &rusqlite::Connection) -> Result<Value, CommandError> {
     let nilai: HashMap<String, String> = rows_json_with(connection, PENGATURAN_KONTRAK_SQL, [])?
         .iter()
         .map(|r| (teks(r, "key"), r.get("value").and_then(Value::as_str).unwrap_or("").to_owned()))
         .collect();
     let percobaan = nilai.get(KUNCI_PERCOBAAN_MAKS).cloned().unwrap_or_default();
     let pkwt = nilai.get(KUNCI_PKWT_MAKS).cloned().unwrap_or_default();
+    let beban_min = nilai.get(KUNCI_BEBAN_MIN_JP).cloned().unwrap_or_default();
+    let beban_maks = nilai.get(KUNCI_BEBAN_MAKS_JP).cloned().unwrap_or_default();
+    let (min, maks) = batas_beban(Some(&beban_min), Some(&beban_maks));
     Ok(json!({
         "percobaan_maks_bulan": percobaan,
         "pkwt_maks_bulan": pkwt,
+        "beban_min_jp": beban_min,
+        "beban_maks_jp": beban_maks,
         "berlaku": {
             "percobaan_maks_bulan": angka_pengaturan(Some(&percobaan), ATURAN_PERCOBAAN),
             "pkwt_maks_bulan": angka_pengaturan(Some(&pkwt), ATURAN_PKWT),
+            "beban_min_jp": min,
+            "beban_maks_jp": maks,
         },
     }))
 }
@@ -1238,17 +1273,22 @@ pub fn batal_kontrak(state: &DesktopState, oleh: &str, id_kontrak: &str, alasan:
     Ok(payload)
 }
 
-/// `desktop_hr_settings_save`: angka kontrak (Q-28); `""` = bawaan.
+/// `desktop_hr_settings_save`: angka kontrak (Q-28) dan batas JP (§21.2.1);
+/// `""` = bawaan. Keempat isian wajib dibawa.
 pub fn simpan_pengaturan(state: &DesktopState, draft: Value) -> Result<Value, CommandError> {
     let percobaan = validasi_angka_pengaturan(&teks(&draft, "percobaan_maks_bulan"), ATURAN_PERCOBAAN, "Masa percobaan")
         .map_err(invalid)?;
     let pkwt = validasi_angka_pengaturan(&teks(&draft, "pkwt_maks_bulan"), ATURAN_PKWT, "Batas GTT/PTT")
         .map_err(invalid)?;
+    let (beban_min, beban_maks) =
+        validasi_batas_beban(&teks(&draft, "beban_min_jp"), &teks(&draft, "beban_maks_jp")).map_err(invalid)?;
     let client_id = sync::ensure_client_id(state)?;
     let mut connection = storage::database(&state.data_dir)?;
     let transaction = connection.transaction().map_err(db_error)?;
     tulis_setting(&transaction, &client_id, KUNCI_PERCOBAAN_MAKS, &percobaan)?;
     tulis_setting(&transaction, &client_id, KUNCI_PKWT_MAKS, &pkwt)?;
+    tulis_setting(&transaction, &client_id, KUNCI_BEBAN_MIN_JP, &beban_min)?;
+    tulis_setting(&transaction, &client_id, KUNCI_BEBAN_MAKS_JP, &beban_maks)?;
     let hasil = pengaturan_kontrak(&transaction)?;
     transaction.commit().map_err(db_error)?;
     Ok(hasil)
@@ -1956,10 +1996,11 @@ mod tests {
     }
 
     fn aturan_dari(nama: &str) -> Aturan {
-        if nama == "percobaan" {
-            ATURAN_PERCOBAAN
-        } else {
-            ATURAN_PKWT
+        match nama {
+            "percobaan" => ATURAN_PERCOBAAN,
+            "beban_min" => ATURAN_BEBAN_MIN,
+            "beban_maks" => ATURAN_BEBAN_MAKS,
+            _ => ATURAN_PKWT,
         }
     }
 
@@ -2006,6 +2047,17 @@ mod tests {
                 k[2].as_str().unwrap(),
             );
             assert_eq!(hasil.as_ref().ok().map(String::as_str), k[3].as_str(), "{k}");
+            assert_eq!(hasil.err().as_deref(), k[4].as_str(), "{k}");
+        }
+        for k in v["batas_beban"].as_array().expect("batas beban") {
+            let hasil = batas_beban(k[0].as_str(), k[1].as_str());
+            assert_eq!(json!([hasil.0, hasil.1]), json!([k[2], k[3]]), "{k}");
+        }
+        for k in v["validasi_batas_beban"].as_array().expect("validasi batas beban") {
+            let hasil = validasi_batas_beban(k[0].as_str().unwrap(), k[1].as_str().unwrap());
+            let (min, maks) = hasil.clone().map_or((None, None), |(a, b)| (Some(a), Some(b)));
+            assert_eq!(min.as_deref(), k[2].as_str(), "{k}");
+            assert_eq!(maks.as_deref(), k[3].as_str(), "{k}");
             assert_eq!(hasil.err().as_deref(), k[4].as_str(), "{k}");
         }
     }

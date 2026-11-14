@@ -458,7 +458,52 @@
     ["13", "percobaan", 3],
     ["abc", "pkwt", 60],
     ["120", "pkwt", 120],
-    ["011", "pkwt", 60]
+    ["011", "pkwt", 60],
+    ["0", "beban_min", 0],
+    ["61", "beban_min", 24],
+    ["0", "beban_maks", 40],
+    ["60", "beban_maks", 60]
+  ],
+  "batas_beban": [
+    [null, null, 24, 40],
+    ["18", "", 18, 40],
+    ["30", "20", 30, 30],
+    ["0", "1", 0, 1],
+    ["x", "99", 24, 40]
+  ],
+  "validasi_batas_beban": [
+    ["", "", "", "", null],
+    [" 018 ", "36", "18", "36", null],
+    ["24", "24", "24", "24", null],
+    ["0", "", "0", "", null],
+    [
+      "30",
+      "20",
+      null,
+      null,
+      "Batas maksimal beban mengajar tidak boleh kurang dari batas minimal (30 JP)."
+    ],
+    [
+      "41",
+      "",
+      null,
+      null,
+      "Batas maksimal beban mengajar tidak boleh kurang dari batas minimal (41 JP)."
+    ],
+    [
+      "",
+      "0",
+      null,
+      null,
+      "Batas maksimal beban mengajar harus 1 sampai 60 JP, atau kosong untuk bawaan 40."
+    ],
+    [
+      "61",
+      "",
+      null,
+      null,
+      "Batas minimal beban mengajar harus 0 sampai 60 JP, atau kosong untuk bawaan 24."
+    ]
   ],
   "validasi_angka": [
     ["", "percobaan", "Masa percobaan", "", null],

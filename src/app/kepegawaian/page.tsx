@@ -15,6 +15,7 @@ import { JenisDokumenOrganisasi } from "@/components/kepegawaian/JenisDokumenOrg
 import { JenisPengajuanOrganisasi } from "@/components/kepegawaian/JenisPengajuanOrganisasi";
 import { OrganisasiTugasKontrak } from "@/components/kepegawaian/OrganisasiTugasKontrak";
 import { RincianPegawai } from "@/components/kepegawaian/RincianPegawai";
+import { TabBebanMengajar } from "@/components/kepegawaian/TabBebanMengajar";
 import { TabKontrak } from "@/components/kepegawaian/TabKontrak";
 import { TabLaporanPtk } from "@/components/kepegawaian/TabLaporanPtk";
 import { TabTugas } from "@/components/kepegawaian/TabTugas";
@@ -37,7 +38,14 @@ import {
   simpanJabatan,
 } from "@/lib/gateways/hris";
 
-type Tab = "daftar" | "struktur" | "kontrak" | "tugas" | "organisasi" | "ptk";
+type Tab =
+  | "daftar"
+  | "struktur"
+  | "kontrak"
+  | "tugas"
+  | "organisasi"
+  | "ptk"
+  | "beban";
 
 const TAB: { kunci: Tab; label: string }[] = [
   { kunci: "daftar", label: "Daftar" },
@@ -46,7 +54,11 @@ const TAB: { kunci: Tab; label: string }[] = [
   { kunci: "tugas", label: "Tugas Tambahan" },
   { kunci: "organisasi", label: "Organisasi" },
   { kunci: "ptk", label: "Laporan PTK" },
+  { kunci: "beban", label: "Beban Mengajar" },
 ];
+
+/** Tab yang hanya untuk pemegang `teachers.view` (area juga lolos lewat `employees.view`). */
+const TAB_GURU: readonly Tab[] = ["ptk", "beban"];
 
 const INPUT =
   "min-h-10 w-full rounded-xl border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-500";
@@ -109,7 +121,7 @@ export default function KepegawaianPage() {
       >
         {TAB.filter(
           ({ kunci }) =>
-            kunci !== "ptk" || hasPermission(user, "teachers.view"),
+            !TAB_GURU.includes(kunci) || hasPermission(user, "teachers.view"),
         ).map(({ kunci, label }) => (
           <button
             key={kunci}
@@ -156,6 +168,8 @@ export default function KepegawaianPage() {
           />
         ) : tab === "ptk" ? (
           <TabLaporanPtk onPesan={setPesan} onGalat={setGalat} />
+        ) : tab === "beban" ? (
+          <TabBebanMengajar onPesan={setPesan} onGalat={setGalat} />
         ) : (
           <TabOrganisasi
             org={org}
