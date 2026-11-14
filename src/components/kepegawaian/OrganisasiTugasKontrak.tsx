@@ -13,6 +13,7 @@ import {
   ATURAN_BEBAN_MIN,
   ATURAN_PERCOBAAN,
   ATURAN_PKWT,
+  ATURAN_SP_MASA,
 } from "@/lib/validations/hris";
 import { INPUT, LABEL, pesanGalat, TOMBOL, TOMBOL_UTAMA } from "./gaya";
 
@@ -35,6 +36,7 @@ export function OrganisasiTugasKontrak({
   const [pkwt, setPkwt] = useState(org.pengaturan.pkwt_maks_bulan);
   const [bebanMin, setBebanMin] = useState(org.pengaturan.beban_min_jp);
   const [bebanMaks, setBebanMaks] = useState(org.pengaturan.beban_maks_jp);
+  const [spMasa, setSpMasa] = useState(org.pengaturan.sp_masa_bulan);
   const isSubmittingRef = useRef(false);
   const [menyimpan, setMenyimpan] = useState(false);
 
@@ -63,8 +65,9 @@ export function OrganisasiTugasKontrak({
           pkwt_maks_bulan: pkwt,
           beban_min_jp: bebanMin,
           beban_maks_jp: bebanMaks,
+          sp_masa_bulan: spMasa,
         }),
-      "Angka kontrak dan batas JP disimpan.",
+      "Angka kepegawaian disimpan.",
     );
   };
 
@@ -155,16 +158,16 @@ export function OrganisasiTugasKontrak({
           id="judul-angka-kontrak"
           className="text-base font-semibold text-white"
         >
-          Angka kontrak dan beban mengajar
+          Angka kontrak, beban mengajar, dan SP
         </h2>
         <p className="text-sm text-slate-400">
           Dipakai untuk menandai kontrak di tab Kontrak dan guru di tab Beban
           Mengajar, tidak untuk menolak. Kosongkan untuk memakai angka bawaan.
           Batas JP per minggu mengikuti Permendikbud 15/2018; periksa ulang
-          angkanya.
+          angkanya. Masa SP berlaku untuk SP yang dibuat sesudah disimpan.
         </p>
         <form
-          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto] lg:items-end"
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] lg:items-end"
           onSubmit={simpanAngka}
         >
           <div>
@@ -220,6 +223,20 @@ export function OrganisasiTugasKontrak({
               value={bebanMaks}
               placeholder={`Bawaan ${ATURAN_BEBAN_MAKS.bawaan}`}
               onChange={(e) => setBebanMaks(e.target.value)}
+              className={INPUT}
+            />
+          </div>
+          <div>
+            <label htmlFor="angka-sp-masa" className={LABEL}>
+              Masa berlaku SP (bulan)
+            </label>
+            <input
+              id="angka-sp-masa"
+              inputMode="numeric"
+              disabled={!bolehUbah}
+              value={spMasa}
+              placeholder={`Bawaan ${ATURAN_SP_MASA.bawaan}`}
+              onChange={(e) => setSpMasa(e.target.value)}
               className={INPUT}
             />
           </div>

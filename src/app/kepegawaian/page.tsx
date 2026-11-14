@@ -373,6 +373,10 @@ function TabDaftar({
           org={org}
           hariIni={hariIni}
           onClose={() => setRincian(null)}
+          onCetak={(permintaan) => {
+            setRincian(null);
+            setCetak(permintaan);
+          }}
           onCetakKeterangan={
             hasPermission(user, "hr.duty.manage")
               ? async () => {

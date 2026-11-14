@@ -2,8 +2,8 @@ import type { Client } from "@libsql/client";
 import { BRANDING } from "@/lib/constants/branding";
 import { runDatabaseMigrations } from "./db-migrations";
 
-export const CURRENT_SCHEMA_VERSION = 69;
-export const REQUIRED_TABLE_COUNT = 122;
+export const CURRENT_SCHEMA_VERSION = 70;
+export const REQUIRED_TABLE_COUNT = 126;
 
 export async function isDatabaseSchemaReady(client: Client) {
   try {
@@ -50,7 +50,8 @@ export async function isDatabaseSchemaReady(client: Client) {
             'app_telegram_setting', 'notifikasi_telegram',
             'hr_bagian', 'hr_bagian_nama', 'hr_jabatan', 'hr_tugas_jenis', 'hr_tugas_tambahan', 'hr_kontrak',
             'hr_profil', 'hr_pendidikan', 'hr_sertifikasi', 'hr_dokumen_jenis', 'hr_dokumen', 'hr_dokumen_berkas',
-            'hr_jenis_pengajuan', 'hr_pengajuan', 'hr_pengajuan_keputusan', 'hr_cuti_penyesuaian', 'hr_jp_penanganan', 'hr_pengajuan_berkas'
+            'hr_jenis_pengajuan', 'hr_pengajuan', 'hr_pengajuan_keputusan', 'hr_cuti_penyesuaian', 'hr_jp_penanganan', 'hr_pengajuan_berkas',
+            'hr_sp', 'hr_keluar_alasan', 'hr_keluar', 'hr_keluar_rincian'
           )
         ) AS table_count;
     `);
@@ -100,7 +101,10 @@ export async function initDatabaseSchema(client: Client) {
         -- Teks divisi/jabatan_status tetap diisi nama sekarang. Kosong untuk siswa.
         id_bagian TEXT,
         id_jabatan TEXT,
-        id_atasan TEXT
+        id_atasan TEXT,
+        -- Pegawai keluar (v70): id proses keluar yang berlaku. Hanya ditulis
+        -- Berlakukan/Batalkan di cloud.
+        id_keluar TEXT
       );
     `);
 

@@ -353,6 +353,8 @@ export const KUNCI_PKWT_MAKS = "hr_pkwt_maks_bulan";
 /** Batas beban mengajar per minggu (HRIS Fase 3a, §21.2.1); kosong = bawaan. */
 export const KUNCI_BEBAN_MIN_JP = "hr_beban_min_jp";
 export const KUNCI_BEBAN_MAKS_JP = "hr_beban_maks_jp";
+/** Masa berlaku SP dalam bulan (HRIS Fase 4, §22.2.1); dibekukan per SP. */
+export const KUNCI_SP_MASA_BULAN = "hr_sp_masa_bulan";
 
 export interface Aturan {
   bawaan: number;
@@ -383,6 +385,12 @@ export const ATURAN_BEBAN_MAKS = {
   min: 1,
   maks: 60,
   satuan: "JP",
+} as const satisfies Aturan;
+export const ATURAN_SP_MASA = {
+  bawaan: 6,
+  min: 1,
+  maks: 12,
+  satuan: "bulan",
 } as const satisfies Aturan;
 
 type Hasil<T> = { ok: true; nilai: T } | { ok: false; galat: string };
@@ -851,6 +859,7 @@ export const pengaturanKontrakSchema = z
     pkwt_maks_bulan: z.string().max(10),
     beban_min_jp: z.string().max(10),
     beban_maks_jp: z.string().max(10),
+    sp_masa_bulan: z.string().max(10),
   })
   .strict();
 export type PengaturanKontrakDraft = z.infer<typeof pengaturanKontrakSchema>;
@@ -870,7 +879,12 @@ export interface PengaturanKontrak {
   pkwt_maks_bulan: string;
   beban_min_jp: string;
   beban_maks_jp: string;
-  berlaku: AturanKontrak & { beban_min_jp: number; beban_maks_jp: number };
+  sp_masa_bulan: string;
+  berlaku: AturanKontrak & {
+    beban_min_jp: number;
+    beban_maks_jp: number;
+    sp_masa_bulan: number;
+  };
 }
 
 export interface DaftarKontrak extends SusunanKontrak {
@@ -943,7 +957,7 @@ export const KONTRAK_SQL =
   "SELECT id_kontrak, id_karyawan, status, COALESCE(id_ref, '') AS id_ref, COALESCE(nomor, '') AS nomor, tanggal_mulai, COALESCE(tanggal_selesai, '') AS tanggal_selesai, COALESCE(percobaan_selesai, '') AS percobaan_selesai, COALESCE(catatan, '') AS catatan, COALESCE(dicatat_oleh, '') AS dicatat_oleh, created_at FROM hr_kontrak ORDER BY id_karyawan, tanggal_mulai, id_kontrak\n-- batas: kontrak pegawai sekolah, beberapa baris per orang sepanjang masa kerja\n;";
 
 export const PENGATURAN_KONTRAK_SQL =
-  "SELECT key, value FROM setting_gex_system WHERE key IN ('hr_percobaan_maks_bulan', 'hr_pkwt_maks_bulan', 'hr_beban_min_jp', 'hr_beban_maks_jp')\n-- batas: empat kunci pengaturan\n;";
+  "SELECT key, value FROM setting_gex_system WHERE key IN ('hr_percobaan_maks_bulan', 'hr_pkwt_maks_bulan', 'hr_beban_min_jp', 'hr_beban_maks_jp', 'hr_sp_masa_bulan')\n-- batas: lima kunci pengaturan\n;";
 
 export const HARI_INI_SQL = "SELECT date('now', '+7 hours') AS hari_ini;";
 

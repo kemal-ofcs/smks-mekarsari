@@ -16,6 +16,7 @@ import {
   AMBIL_LAMPIRAN_SQL,
   ATURAN_PERCOBAAN,
   ATURAN_PKWT,
+  ATURAN_SP_MASA,
   angkaPengaturan,
   BATAL_TUGAS_SQL,
   type BarisLampiran,
@@ -58,6 +59,7 @@ import {
   KUNCI_BEBAN_MIN_JP,
   KUNCI_PERCOBAAN_MAKS,
   KUNCI_PKWT_MAKS,
+  KUNCI_SP_MASA_BULAN,
   type keuanganDraftSchema,
   LAMPIRAN_SQL,
   type LaporanPtk,
@@ -261,17 +263,20 @@ export async function pengaturanKontrak(db: Db): Promise<PengaturanKontrak> {
   const pkwt = nilai.get(KUNCI_PKWT_MAKS) ?? "";
   const bebanMin = nilai.get(KUNCI_BEBAN_MIN_JP) ?? "";
   const bebanMaks = nilai.get(KUNCI_BEBAN_MAKS_JP) ?? "";
+  const spMasa = nilai.get(KUNCI_SP_MASA_BULAN) ?? "";
   const [min, maks] = batasBeban(bebanMin, bebanMaks);
   return {
     percobaan_maks_bulan: percobaan,
     pkwt_maks_bulan: pkwt,
     beban_min_jp: bebanMin,
     beban_maks_jp: bebanMaks,
+    sp_masa_bulan: spMasa,
     berlaku: {
       percobaan_maks_bulan: angkaPengaturan(percobaan, ATURAN_PERCOBAAN),
       pkwt_maks_bulan: angkaPengaturan(pkwt, ATURAN_PKWT),
       beban_min_jp: min,
       beban_maks_jp: maks,
+      sp_masa_bulan: angkaPengaturan(spMasa, ATURAN_SP_MASA),
     },
   };
 }
@@ -439,6 +444,12 @@ export async function simpanPengaturan(
   if (!pkwt.ok) galat(pkwt.galat);
   const beban = validasiBatasBeban(draft.beban_min_jp, draft.beban_maks_jp);
   if (!beban.ok) galat(beban.galat);
+  const spMasa = validasiAngkaPengaturan(
+    draft.sp_masa_bulan,
+    ATURAN_SP_MASA,
+    "Masa berlaku SP",
+  );
+  if (!spMasa.ok) galat(spMasa.galat);
   await client.batch(
     [
       {
@@ -448,6 +459,7 @@ export async function simpanPengaturan(
       { sql: UPSERT_SETTING_SQL, args: [KUNCI_PKWT_MAKS, pkwt.nilai] },
       { sql: UPSERT_SETTING_SQL, args: [KUNCI_BEBAN_MIN_JP, beban.nilai[0]] },
       { sql: UPSERT_SETTING_SQL, args: [KUNCI_BEBAN_MAKS_JP, beban.nilai[1]] },
+      { sql: UPSERT_SETTING_SQL, args: [KUNCI_SP_MASA_BULAN, spMasa.nilai] },
     ],
     "write",
   );

@@ -7,6 +7,7 @@ import {
   type KontrakBaris,
   muatBebanMengajar,
   muatSetupSurat,
+  simpanSuratPeringatan,
   simpanTugas,
   type TugasBaris,
 } from "@/lib/gateways/hris";
@@ -17,6 +18,7 @@ import {
   type SetupSurat,
   susunBebanMengajar,
 } from "@/lib/validations/hr-beban";
+import type { SpBaris } from "@/lib/validations/hr-keluar";
 import type { PengajuanTersusun } from "@/lib/validations/hr-pengajuan";
 import { INPUT, LABEL, pesanGalat, TOMBOL, TOMBOL_UTAMA } from "./gaya";
 import {
@@ -30,6 +32,7 @@ import {
   suratKeteranganAktif,
   suratPembagianTugas,
   suratPengangkatan,
+  suratPeringatan,
   suratTugasLuar,
   suratTugasTambahan,
   type TugasSk,
@@ -37,7 +40,7 @@ import {
 } from "./suratKepegawaian";
 
 /**
- * Satu dialog cetak untuk kelima surat HRIS Fase 3b (§21.5): tanggal (bawaan
+ * Satu dialog cetak untuk surat HRIS Fase 3b (§21.5) dan SP (Fase 4a): tanggal (bawaan
  * hari ini WIB), nomor dari pola + nomor urut buku agenda (Q-59), isian
  * tujuan/penyelenggara untuk Surat Tugas. Bahan dimuat ulang tiap tanggal
  * berubah karena kepala unit bergantung pada tanggal surat.
@@ -54,8 +57,11 @@ export interface PermintaanSurat {
     d: DasarCetak,
     isian: { tujuan: string; penyelenggara: string },
   ) => string;
-  /** Hanya SK tugas tambahan: nomor dan tanggal SK disimpan ke barisnya. */
-  simpanNomor?: (nomor: string, tanggal: string) => Promise<void>;
+  /**
+   * SK tugas tambahan (nomor dan tanggal) dan SP (nomor) disimpan ke barisnya.
+   * Teks kembalian = peringatan yang ditampilkan sesudah cetak (nomor kembar).
+   */
+  simpanNomor?: (nomor: string, tanggal: string) => Promise<string | undefined>;
 }
 
 const TANGGAL = /^\d{4}-\d{2}-\d{2}$/;
@@ -76,6 +82,7 @@ export function DialogCetakSurat({
   const [tanggal, setTanggal] = useState(permintaan.tanggalAwal ?? "");
   const [setup, setSetup] = useState<SetupSurat | null>(null);
   const [galat, setGalat] = useState<string | null>(null);
+  const [peringatan, setPeringatan] = useState<string | null>(null);
   const [urut, setUrut] = useState("");
   const [nomor, setNomor] = useState(permintaan.nomorAwal ?? "");
   const [tujuan, setTujuan] = useState("");
@@ -128,19 +135,21 @@ export function DialogCetakSurat({
     setMenyimpan(true);
     try {
       const p = permintaanRef.current;
-      if (
+      const kabar =
         p.simpanNomor &&
         (nomorAkhir !== (p.nomorAwal ?? "") ||
           tanggal !== (p.tanggalAwal ?? ""))
-      )
-        await p.simpanNomor(nomorAkhir, tanggal);
+          ? await p.simpanNomor(nomorAkhir, tanggal)
+          : undefined;
       cetakSurat(
         p.rakit(
           { setup, nomor: nomorAkhir, tanggal },
           { tujuan, penyelenggara },
         ),
       );
-      onCloseRef.current();
+      // Nomor kembar hanya ditandai (Q-74): dialog tetap terbuka supaya terbaca.
+      if (kabar) setPeringatan(kabar);
+      else onCloseRef.current();
     } catch (error) {
       setGalat(pesanGalat(error));
     } finally {
@@ -205,9 +214,11 @@ export function DialogCetakSurat({
           />
           <p id="surat-nomor-catatan" className="mt-1 text-xs text-slate-400">
             Terisi dari pola di Pengaturan surat dan boleh diubah.{" "}
-            {permintaan.simpanNomor
-              ? "Nomor dan tanggal ini disimpan ke tugas tambahannya."
-              : "Nomor ini tidak disimpan aplikasi; catat di buku agenda."}
+            {!permintaan.simpanNomor
+              ? "Nomor ini tidak disimpan aplikasi; catat di buku agenda."
+              : jenis === "sp"
+                ? "Nomor ini disimpan ke SP-nya."
+                : "Nomor dan tanggal ini disimpan ke tugas tambahannya."}
           </p>
         </div>
         {jenis === "tugas_luar" ? (
@@ -242,6 +253,9 @@ export function DialogCetakSurat({
           <p className="text-sm text-rose-300" role="alert">
             {galat}
           </p>
+        ) : null}
+        {peringatan ? (
+          <output className="block text-sm text-amber-200">{peringatan}</output>
         ) : null}
         <div className="flex flex-wrap justify-end gap-2">
           <button type="button" className={TOMBOL} onClick={onClose}>
@@ -334,7 +348,63 @@ export function permintaanTugasTambahan(
           tanggal_selesai: t.tanggal_selesai,
         });
       }
+      return undefined;
     },
+  };
+}
+
+/**
+ * Surat Peringatan (HRIS Fase 4a). Nomor disimpan ke SP hanya bila sesi boleh
+ * mengubah SP itu dan belum dicabut; tanggal SP terkunci, jadi tanggal surat
+ * yang diubah di dialog tidak disimpan.
+ */
+export function permintaanSp(
+  sp: SpBaris,
+  nama: string,
+  bolehSimpanNomor: boolean,
+): PermintaanSurat {
+  return {
+    jenis: "sp",
+    keterangan: `${nama} · ${sp.tingkat}${sp.status === "Dicabut" ? " (dicabut)" : ""}`,
+    unit: (s) => sp.unit || identitas(s, sp.id_karyawan).unit,
+    nomorAwal: sp.nomor,
+    tanggalAwal: sp.tanggal,
+    rakit: (d) =>
+      suratPeringatan(d, {
+        id_karyawan: sp.id_karyawan,
+        tingkat: sp.tingkat,
+        tanggal: sp.tanggal,
+        berlaku_sampai: sp.berlaku_sampai,
+        pelanggaran: sp.pelanggaran,
+        harapan: sp.harapan,
+        penanda: {
+          nama: sp.penanda_nama,
+          jabatan: sp.penanda_jabatan,
+          nip: sp.penanda_nip,
+        },
+        alasan_cabut: sp.status === "Dicabut" ? sp.alasan_cabut : null,
+      }),
+    simpanNomor:
+      bolehSimpanNomor && sp.status !== "Dicabut"
+        ? async (nomor) => {
+            if (nomor === sp.nomor) return undefined;
+            const hasil = await simpanSuratPeringatan({
+              id_sp: sp.id_sp,
+              id_karyawan: sp.id_karyawan,
+              tingkat: sp.tingkat,
+              tanggal: sp.tanggal,
+              nomor,
+              pelanggaran: sp.pelanggaran,
+              harapan: sp.harapan,
+              penanda_nama: sp.penanda_nama,
+              penanda_jabatan: sp.penanda_jabatan,
+              penanda_nip: sp.penanda_nip,
+            });
+            return hasil.nomor_kembar
+              ? "Surat sudah dicetak. Nomor ini juga dipakai SP lain; periksa buku agenda."
+              : undefined;
+          }
+        : undefined,
   };
 }
 

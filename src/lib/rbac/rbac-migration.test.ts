@@ -197,6 +197,8 @@ describe("dynamic RBAC migration", () => {
       68,
       // v69 — pengajuan cuti/izin dan keputusannya (HRIS Fase 2, `hr_pengajuan*`).
       69,
+      // v70 — surat peringatan dan pegawai keluar (HRIS Fase 4, `hr_sp`, `hr_keluar*`).
+      70,
     ]);
 
     const sessionColumns = await client.execute(

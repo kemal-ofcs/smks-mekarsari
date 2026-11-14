@@ -11,7 +11,7 @@ use super::{
         CommandError, DesktopLoginResult, DesktopRuntimeStatus, DesktopSession, DesktopSyncStatus,
         OperatorUser, SessionMode,
     },
-    hr_beban, hr_pengajuan, hris, hris_cloud, operational, portability, rapel,
+    hr_beban, hr_keluar, hr_pengajuan, hris, hris_cloud, operational, portability, rapel,
     scanner, secrets, storage, sync, teaching_journal, turso, uks, wa_notification,
 };
 
@@ -3382,12 +3382,13 @@ pub fn desktop_hr_teaching_load(
 
 /// Bahan cetak SK dan surat pada `tanggal` (kosong = hari ini WIB): kop,
 /// pengaturan surat, kepala per unit, identitas guru; dari SQLite lokal.
+/// Juga untuk pembaca SP (`hr.warning.view`): penanda tangan bawaan dan cetak SP.
 #[tauri::command]
 pub fn desktop_hr_letter_setup(
     state: State<'_, DesktopState>,
     tanggal: Option<String>,
 ) -> Result<Value, CommandError> {
-    require_permission(&state, "hr.duty.manage")?;
+    require_any_permission(&state, &["hr.duty.manage", "hr.warning.view"])?;
     hr_beban::letter_setup(&state, tanggal.as_deref().unwrap_or(""))
 }
 
@@ -3400,6 +3401,45 @@ pub fn desktop_hr_letter_settings_save(
 ) -> Result<Value, CommandError> {
     require_permission(&state, "hr.org.manage")?;
     hr_beban::letter_settings_save(&state, draft)
+}
+
+/// Riwayat SP seorang pegawai (cloud-only, HRIS Fase 4a): status turunan,
+/// usulan tingkat hari ini, dan masa SP yang berlaku.
+#[tauri::command]
+pub async fn desktop_hr_warnings(
+    state: State<'_, DesktopState>,
+    id_karyawan: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "hr.warning.view")?;
+    hr_keluar::daftar_sp(&klien_cloud(&state)?, &id_karyawan)
+        .await
+        .map_err(hris_cloud::luring)
+}
+
+/// Buat SP atau ubah teksnya. SP3 juga butuh `hr.warning.sp3`; cakupan unit
+/// dan "bukan diri sendiri" dinilai dari sesi.
+#[tauri::command]
+pub async fn desktop_hr_warning_save(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "hr.warning.manage")?;
+    hr_keluar::simpan_sp(&klien_cloud(&state)?, &operator, &draft)
+        .await
+        .map_err(hris_cloud::luring)
+}
+
+/// Cabut SP dengan alasan, sekali.
+#[tauri::command]
+pub async fn desktop_hr_warning_revoke(
+    state: State<'_, DesktopState>,
+    id_sp: String,
+    alasan: String,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "hr.warning.cancel")?;
+    hr_keluar::cabut_sp(&klien_cloud(&state)?, &operator, &id_sp, &alasan)
+        .await
+        .map_err(hris_cloud::luring)
 }
 
 /// Pengajuan cuti/izin dalam rentang (+ yang belum diputus siapa pun),

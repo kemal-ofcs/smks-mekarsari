@@ -23,6 +23,7 @@ pub mod face_match;
 pub mod grades;
 pub mod hari_kerja;
 pub mod hr_beban;
+pub mod hr_keluar;
 pub mod hr_pengajuan;
 pub mod hris;
 pub mod hris_cloud;

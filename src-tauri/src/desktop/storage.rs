@@ -634,7 +634,10 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         -- tetap diisi nama sekarang. Kosong untuk siswa.
         id_bagian TEXT,
         id_jabatan TEXT,
-        id_atasan TEXT
+        id_atasan TEXT,
+        -- Pegawai keluar (v70): id proses keluar yang berlaku, ditarik dari
+        -- cloud. Perangkat tidak pernah menulisnya.
+        id_keluar TEXT
       );
       CREATE TABLE IF NOT EXISTS id_card (
         id_card_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2248,6 +2251,8 @@ pub fn initialize(path: &Path) -> Result<(), String> {
         ("id_bagian", "ALTER TABLE master_data ADD COLUMN id_bagian TEXT;"),
         ("id_jabatan", "ALTER TABLE master_data ADD COLUMN id_jabatan TEXT;"),
         ("id_atasan", "ALTER TABLE master_data ADD COLUMN id_atasan TEXT;"),
+        // Pegawai keluar (v70).
+        ("id_keluar", "ALTER TABLE master_data ADD COLUMN id_keluar TEXT;"),
     ] {
         ensure_column(&connection, "master_data", column, sql)?;
     }

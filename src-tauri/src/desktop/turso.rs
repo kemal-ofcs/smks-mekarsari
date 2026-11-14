@@ -694,12 +694,20 @@ pub const ADMIN_DEFAULT_EXCLUDED_PERMISSIONS: &[&str] = &[
     "hr.request.decide_major",
     "hr.scope.all",
     "hr.leave.adjust",
-    // CONFIDENTIAL_PERMISSIONS (data rahasia pegawai, Q-33)
+    // SENSITIVE_MUTATION_PERMISSIONS HRIS Fase 4 (§22.4)
+    "hr.warning.sp3",
+    "hr.warning.cancel",
+    "hr.offboard.decide",
+    // CONFIDENTIAL_PERMISSIONS (data rahasia pegawai, Q-33; SP dan keluar §22.4)
     "hr.personal.view",
     "hr.personal.manage",
     "hr.finance.view",
     "hr.document.view",
     "hr.document.manage",
+    "hr.warning.view",
+    "hr.warning.manage",
+    "hr.offboard.view",
+    "hr.offboard.manage",
 ];
 
 /// Paket role bawaan HRIS (Q-34). WAJIB sama dengan
@@ -720,6 +728,13 @@ pub const ROLE_HRIS_BAWAAN: &[(&str, &[&str])] = &[
             "hr.request.decide",
             "hr.request.decide_major",
             "hr.scope.all",
+            "hr.warning.view",
+            "hr.warning.manage",
+            "hr.warning.sp3",
+            "hr.warning.cancel",
+            "hr.offboard.view",
+            "hr.offboard.manage",
+            "hr.offboard.decide",
         ],
     ),
     (
@@ -734,6 +749,8 @@ pub const ROLE_HRIS_BAWAAN: &[(&str, &[&str])] = &[
             "hr.request.urgent",
             "hr.request.decide",
             "hr.substitute.manage",
+            "hr.warning.view",
+            "hr.warning.manage",
         ],
     ),
     (
@@ -757,6 +774,9 @@ pub const ROLE_HRIS_BAWAAN: &[(&str, &[&str])] = &[
             "hr.request.submit",
             "hr.substitute.manage",
             "hr.leave.adjust",
+            "hr.warning.view",
+            "hr.offboard.view",
+            "hr.offboard.manage",
         ],
     ),
     (
@@ -3466,7 +3486,14 @@ impl TursoClient {
                 ('hr.request.decide_major', 'Putuskan Cuti Panjang', 'Kepegawaian', 'Memutus pengajuan berpemutus Yayasan, seperti cuti melahirkan dan cuti di luar tanggungan.', 1, 1413),
                 ('hr.scope.all', 'Semua Unit Kepegawaian', 'Kepegawaian', 'Memutus pengajuan dan menangani jam kosong di semua unit, tidak hanya unit sendiri.', 1, 1414),
                 ('hr.substitute.manage', 'Tangani Jam Kosong', 'Kepegawaian', 'Menunjuk guru pengganti, tugas mandiri, atau kelas digabung untuk jam pelajaran guru yang izin.', 1, 1415),
-                ('hr.leave.adjust', 'Sesuaikan Jatah Cuti', 'Kepegawaian', 'Mencatat saldo awal dan koreksi jatah cuti pegawai.', 1, 1416);"#,
+                ('hr.leave.adjust', 'Sesuaikan Jatah Cuti', 'Kepegawaian', 'Mencatat saldo awal dan koreksi jatah cuti pegawai.', 1, 1416),
+                ('hr.warning.view', 'Lihat Surat Peringatan', 'Kepegawaian', 'Melihat riwayat surat peringatan pegawai beserta pelanggarannya.', 1, 1417),
+                ('hr.warning.manage', 'Buat Surat Peringatan', 'Kepegawaian', 'Membuat SP1 dan SP2 serta mengubah teks surat peringatan pegawai di unitnya.', 1, 1418),
+                ('hr.warning.sp3', 'Terbitkan SP3', 'Kepegawaian', 'Menerbitkan surat peringatan ketiga, yang terakhir sebelum proses keluar.', 1, 1419),
+                ('hr.warning.cancel', 'Cabut Surat Peringatan', 'Kepegawaian', 'Mencabut surat peringatan dengan alasan.', 1, 1420),
+                ('hr.offboard.view', 'Lihat Pegawai Keluar', 'Kepegawaian', 'Melihat proses keluar pegawai, checklist, dan rincian pesangonnya.', 1, 1421),
+                ('hr.offboard.manage', 'Siapkan Pegawai Keluar', 'Kepegawaian', 'Mencatat dan mengubah proses keluar pegawai, checklist, dan rincian pesangon.', 1, 1422),
+                ('hr.offboard.decide', 'Berlakukan Pegawai Keluar', 'Kepegawaian', 'Memberlakukan dan membatalkan keluarnya pegawai, serta mengatur alasan dan pengali pesangon.', 1, 1423);"#,
                 vec![],
             ),
             // Seed Default Role Permissions untuk Role Superadmin (Role 1)
@@ -4680,6 +4707,102 @@ impl TursoClient {
                 );"#,
                 vec![],
             ),
+            // ── v70: surat peringatan dan pegawai keluar (HRIS Fase 4,
+            // `prd-hris.md` §22.3). Keempatnya cloud-only, tanpa UNIQUE selain
+            // PK. Kembar blok v70 `db-migrations.ts`.
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS hr_sp (
+                  id_sp TEXT PRIMARY KEY,
+                  id_karyawan TEXT NOT NULL,
+                  tingkat TEXT NOT NULL CHECK (tingkat IN ('SP1', 'SP2', 'SP3')),
+                  usulan_tingkat TEXT NOT NULL CHECK (usulan_tingkat IN ('SP1', 'SP2', 'SP3')),
+                  alasan_tingkat TEXT,
+                  tanggal TEXT NOT NULL,
+                  masa_bulan INTEGER NOT NULL CHECK (masa_bulan BETWEEN 1 AND 12),
+                  berlaku_sampai TEXT NOT NULL,
+                  nomor TEXT,
+                  pelanggaran TEXT NOT NULL,
+                  harapan TEXT,
+                  penanda_nama TEXT NOT NULL,
+                  penanda_jabatan TEXT NOT NULL,
+                  penanda_nip TEXT,
+                  unit TEXT,
+                  dicatat_oleh TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                  diubah_oleh TEXT,
+                  diubah_pada TEXT,
+                  dicabut_oleh TEXT,
+                  dicabut_pada TEXT,
+                  alasan_cabut TEXT
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS hr_keluar_alasan (
+                  id_alasan TEXT PRIMARY KEY,
+                  nama TEXT NOT NULL,
+                  pengali_up INTEGER NOT NULL DEFAULT 0 CHECK (pengali_up BETWEEN 0 AND 1000),
+                  pengali_upmk INTEGER NOT NULL DEFAULT 0 CHECK (pengali_upmk BETWEEN 0 AND 1000),
+                  uph INTEGER NOT NULL DEFAULT 0 CHECK (uph IN (0, 1)),
+                  kompensasi_pkwt INTEGER NOT NULL DEFAULT 0 CHECK (kompensasi_pkwt IN (0, 1)),
+                  uang_pisah INTEGER NOT NULL DEFAULT 0 CHECK (uang_pisah IN (0, 1)),
+                  is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+                  dasar_hukum TEXT,
+                  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS hr_keluar (
+                  id_keluar TEXT PRIMARY KEY,
+                  id_karyawan TEXT NOT NULL,
+                  id_alasan TEXT NOT NULL,
+                  alasan_nama TEXT,
+                  id_sp TEXT,
+                  status_kepegawaian TEXT,
+                  tanggal_pemberitahuan TEXT,
+                  tanggal_terakhir TEXT NOT NULL,
+                  keterangan TEXT,
+                  masa_kerja_mulai TEXT,
+                  upah_pokok INTEGER NOT NULL DEFAULT 0 CHECK (upah_pokok >= 0),
+                  usulan_upah_pokok INTEGER NOT NULL DEFAULT 0 CHECK (usulan_upah_pokok >= 0),
+                  tunjangan_tetap INTEGER NOT NULL DEFAULT 0 CHECK (tunjangan_tetap >= 0),
+                  alasan_upah TEXT,
+                  kartu_ditarik INTEGER NOT NULL DEFAULT 0 CHECK (kartu_ditarik IN (0, 1)),
+                  catatan_checklist TEXT,
+                  checklist_saat_berlaku TEXT,
+                  nomor_sk TEXT,
+                  nomor_keterangan TEXT,
+                  dicatat_oleh TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                  diubah_oleh TEXT,
+                  diubah_pada TEXT,
+                  berlaku_oleh TEXT,
+                  berlaku_pada TEXT,
+                  dibatalkan_oleh TEXT,
+                  dibatalkan_pada TEXT,
+                  alasan_batal TEXT
+                );"#,
+                vec![],
+            ),
+            Statement::new(
+                r#"CREATE TABLE IF NOT EXISTS hr_keluar_rincian (
+                  id_rincian TEXT PRIMARY KEY,
+                  id_keluar TEXT NOT NULL,
+                  komponen TEXT NOT NULL CHECK (komponen IN ('UP', 'UPMK', 'UPH Cuti', 'UPH Lainnya', 'Kompensasi PKWT', 'Uang Pisah', 'Lainnya')),
+                  dasar TEXT,
+                  usulan INTEGER NOT NULL DEFAULT 0 CHECK (usulan >= 0),
+                  nominal INTEGER NOT NULL DEFAULT 0 CHECK (nominal >= 0),
+                  alasan_ubah TEXT,
+                  urutan INTEGER NOT NULL DEFAULT 0
+                );"#,
+                vec![],
+            ),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_hr_sp_karyawan ON hr_sp(id_karyawan, tanggal);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_hr_keluar_karyawan ON hr_keluar(id_karyawan);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_hr_keluar_tanggal ON hr_keluar(tanggal_terakhir);", vec![]),
+            Statement::new("CREATE INDEX IF NOT EXISTS idx_hr_keluar_rincian_keluar ON hr_keluar_rincian(id_keluar);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_hr_pengajuan_karyawan ON hr_pengajuan(id_karyawan, tanggal_mulai);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_hr_pengajuan_tanggal ON hr_pengajuan(tanggal_mulai, tanggal_selesai);", vec![]),
             Statement::new("CREATE INDEX IF NOT EXISTS idx_hr_pengajuan_keputusan_pengajuan ON hr_pengajuan_keputusan(id_pengajuan);", vec![]),
@@ -4959,6 +5082,9 @@ impl TursoClient {
             ("master_data", "id_bagian", "ALTER TABLE master_data ADD COLUMN id_bagian TEXT;"),
             ("master_data", "id_jabatan", "ALTER TABLE master_data ADD COLUMN id_jabatan TEXT;"),
             ("master_data", "id_atasan", "ALTER TABLE master_data ADD COLUMN id_atasan TEXT;"),
+            // Penanda pegawai keluar (v70, HRIS Fase 4). Hanya ditulis
+            // transaksi cloud Berlakukan/Batalkan; handler `employee/*` tidak.
+            ("master_data", "id_keluar", "ALTER TABLE master_data ADD COLUMN id_keluar TEXT;"),
             // Tautan akun ke personil (v68, cloud-only). Satu personil satu
             // akun aktif, ditegakkan di simpan akun Rust dan Web.
             ("master_operator", "id_karyawan", "ALTER TABLE master_operator ADD COLUMN id_karyawan TEXT;"),
@@ -5163,6 +5289,7 @@ impl TursoClient {
         self.ensure_pajak_masa_v67().await?;
         self.ensure_hris_organisasi_v68().await?;
         self.ensure_hris_pengajuan_v69().await?;
+        self.ensure_hris_keluar_v70().await?;
         self.repair_web_owned_tables().await?;
 
         // v21 — aturan jam scan baru. Data migration sekali jalan yang dijaga
@@ -5428,6 +5555,12 @@ impl TursoClient {
             vec![],
         )
         .await?;
+        // Surat peringatan dan pegawai keluar (v70, `ensure_hris_keluar_v70`).
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (-2046, 'hris-keluar-v1', datetime('now'));",
+            vec![],
+        )
+        .await?;
 
         Ok(())
     }
@@ -5590,6 +5723,31 @@ impl TursoClient {
         .await?;
         self.query_one(
             "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (69, 'hris-pengajuan', datetime('now'));",
+            vec![],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// v70 (HRIS Fase 4, `prd-hris.md` §22.3): alasan keluar bawaan dari
+    /// `hr-keluar-alasan-bawaan.json`, berkas yang sama dengan seed Web.
+    /// `INSERT OR IGNORE` berid tetap: alasan yang sudah disunting tidak
+    /// ditimpa. Hanya cloud (tabelnya cloud-only). Kembar blok v70 `db-migrations.ts`.
+    async fn ensure_hris_keluar_v70(&self) -> Result<(), CommandError> {
+        self.execute_pipeline(
+            crate::desktop::hr_keluar::alasan_bawaan()
+                .iter()
+                .map(|alasan| {
+                    Statement::new(
+                        crate::desktop::hr_keluar::SEED_ALASAN_SQL,
+                        crate::desktop::hr_keluar::seed_alasan_args(alasan),
+                    )
+                })
+                .collect(),
+        )
+        .await?;
+        self.query_one(
+            "INSERT OR IGNORE INTO schema_migration (version, name, applied_at) VALUES (70, 'hris-keluar', datetime('now'));",
             vec![],
         )
         .await?;
@@ -5838,7 +5996,7 @@ impl TursoClient {
                 // Sentinel WAJIB dinaikkan setiap kali ensure_schema menambah
                 // tabel atau kolom — nilainya di sini dan pada INSERT di atas
                 // harus selalu sama.
-                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2045;",
+                "SELECT COUNT(*) AS total FROM schema_migration WHERE version = -2046;",
                 vec![],
             )
             .await
@@ -18336,7 +18494,7 @@ mod tests {
             connection
                 .execute_batch(
                     "DROP TABLE riwayat_identitas_karyawan;
-                     DELETE FROM schema_migration WHERE version IN (-2017, -2018, -2019, -2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2017, -2018, -2019, -2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
 
@@ -18372,7 +18530,7 @@ mod tests {
             connection
                 .execute_batch(
                     "DROP TABLE inventory_unit;
-                     DELETE FROM schema_migration WHERE version IN (-2018, -2019, -2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2018, -2019, -2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
 
@@ -18409,7 +18567,7 @@ mod tests {
                 .execute_batch(
                     "DROP TABLE personil_wajah;
                      ALTER TABLE absensi_foto DROP COLUMN wajah_vonis;
-                     DELETE FROM schema_migration WHERE version IN (-2019, -2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2019, -2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
 
@@ -18448,7 +18606,7 @@ mod tests {
                     "DROP TABLE keu_akun;
                      DROP TABLE keu_jurnal;
                      DROP TABLE keu_jurnal_baris;
-                     DELETE FROM schema_migration WHERE version IN (-2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2020, -2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
 
@@ -18561,7 +18719,7 @@ mod tests {
                     "DROP TABLE keu_pinjaman;
                      DROP TABLE keu_pinjaman_mutasi;
                      DROP TABLE keu_pinjaman_tunda;
-                     DELETE FROM schema_migration WHERE version IN (-2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2021, -2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
 
@@ -18598,7 +18756,7 @@ mod tests {
                 .execute_batch(
                     "DROP TABLE keu_tagihan;
                      DROP TABLE keu_tagihan_batal;
-                     DELETE FROM schema_migration WHERE version IN (-2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2022, -2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
             client.ensure_schema_current().await.expect("skema mutakhir");
@@ -18636,7 +18794,7 @@ mod tests {
                      DROP TABLE keu_pembayaran;
                      DROP TABLE keu_pembayaran_alokasi;
                      DROP TABLE keu_pembayaran_batal;
-                     DELETE FROM schema_migration WHERE version IN (-2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2023, -2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
             client.ensure_schema_current().await.expect("skema mutakhir");
@@ -18672,7 +18830,7 @@ mod tests {
                 .execute_batch(
                     "DROP TABLE nilai_jenis;
                      ALTER TABLE nilai_penilaian DROP COLUMN id_jenis;
-                     DELETE FROM schema_migration WHERE version IN (-2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (-2024, -2025, -2026, -2027, -2028, -2029, -2030, -2031, -2032, -2033, -2034, -2035, -2036, -2037, -2038, -2039, -2040, -2041, -2042, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
             client.ensure_schema_current().await.expect("skema mutakhir");
@@ -18721,7 +18879,7 @@ mod tests {
                      INSERT INTO payroll_components (id, name, category, calc_type, default_value, applies_to) VALUES ('c1', 'Tunjangan TU', 'ALLOWANCE', 'FIXED', 100000, 'DIVISI:Tata Usaha');
                      INSERT INTO hari_libur_whitelist (id, scope_type, scope_value) VALUES ('w1', 'DIVISI', 'Tata Usaha');
                      DELETE FROM hr_bagian; DELETE FROM hr_bagian_nama; DELETE FROM hr_jabatan;
-                     DELETE FROM schema_migration WHERE version IN (68, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (68, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database v67");
             client.ensure_schema_current().await.expect("skema mutakhir");
@@ -18948,7 +19106,7 @@ mod tests {
                      UPDATE bpjs_rules SET wage_cap = 10042300, effective_date = '2026-01-01' WHERE component_code = 'JP_EMP';
                      UPDATE bpjs_rules SET wage_cap = 9999999, effective_date = '2026-01-01' WHERE component_code = 'JP_CO';
                      ALTER TABLE payroll_components DROP COLUMN dasar_bpjs;
-                     DELETE FROM schema_migration WHERE version IN (67, -2043, -2044, -2045);",
+                     DELETE FROM schema_migration WHERE version IN (67, -2043, -2044, -2045, -2046);",
                 )
                 .expect("siapkan database lama");
 

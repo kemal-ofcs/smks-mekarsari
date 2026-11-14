@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { requireWebPermission } from "@/lib/server/auth/authorize";
+import { requireAnyWebPermission } from "@/lib/server/auth/authorize";
 import {
   ensureServerDatabaseInitialized,
   getServerDatabase,
@@ -15,11 +15,17 @@ import { suratSetupSchema } from "@/lib/validations/hr-beban";
 
 export const runtime = "nodejs";
 
-/** Bahan cetak SK dan surat (kop, pengaturan, kepala unit, identitas guru). */
+/**
+ * Bahan cetak SK dan surat (kop, pengaturan, kepala unit, identitas guru).
+ * Juga untuk pembaca SP: penanda tangan bawaan dan cetak SP.
+ */
 export async function POST(request: NextRequest) {
   try {
     assertSameOriginMutation(request);
-    await requireWebPermission(request, "hr.duty.manage");
+    await requireAnyWebPermission(request, [
+      "hr.duty.manage",
+      "hr.warning.view",
+    ]);
     await ensureServerDatabaseInitialized();
     const parsed = suratSetupSchema.safeParse(await readJsonBody(request));
     if (!parsed.success) {

@@ -5,6 +5,11 @@ import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
 import type { DataBeban, SetupSurat } from "@/lib/validations/hr-beban";
 import type {
+  DaftarSp,
+  HasilSimpanSp,
+  SpDraft,
+} from "@/lib/validations/hr-keluar";
+import type {
   BerkasDokumenDraft,
   DaftarDokumen,
   DaftarKontrak,
@@ -397,7 +402,7 @@ export async function muatSetupSurat(tanggal: string): Promise<SetupSurat> {
   return requestWebApi("/api/kepegawaian/letters/query", "POST", { tanggal });
 }
 
-/** Kedua belas kunci pengaturan surat sekaligus (`kunciPengaturanSurat`). */
+/** Ketiga belas kunci pengaturan surat sekaligus (`kunciPengaturanSurat`). */
 export function simpanPengaturanSurat(
   draft: Record<string, string>,
 ): Promise<Record<string, string>> {
@@ -406,5 +411,35 @@ export function simpanPengaturanSurat(
     { draft },
     "/api/kepegawaian/letters/settings",
     draft,
+  );
+}
+
+// HRIS Fase 4a: surat peringatan, cloud-only seperti data 1c.
+
+export function muatSuratPeringatan(idKaryawan: string): Promise<DaftarSp> {
+  return cloud(
+    "desktop_hr_warnings",
+    { idKaryawan },
+    "/api/kepegawaian/warnings/query",
+    { id_karyawan: idKaryawan },
+  );
+}
+
+/** Buat SP (`id_sp` kosong) atau ubah teksnya. */
+export function simpanSuratPeringatan(draft: SpDraft): Promise<HasilSimpanSp> {
+  return cloud(
+    "desktop_hr_warning_save",
+    { draft },
+    "/api/kepegawaian/warnings/save",
+    draft,
+  );
+}
+
+export function cabutSuratPeringatan(idSp: string, alasan: string) {
+  return cloud(
+    "desktop_hr_warning_revoke",
+    { idSp, alasan },
+    "/api/kepegawaian/warnings/revoke",
+    { id_sp: idSp, alasan },
   );
 }

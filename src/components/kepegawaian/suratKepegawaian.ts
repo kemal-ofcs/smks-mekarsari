@@ -26,6 +26,7 @@ export const KODE_SURAT: Record<JenisSurat, string> = {
   angkat: "SK-ANGKAT",
   tugas_luar: "ST",
   aktif: "SKET",
+  sp: "SP",
 };
 
 export const NAMA_SURAT: Record<JenisSurat, string> = {
@@ -34,6 +35,7 @@ export const NAMA_SURAT: Record<JenisSurat, string> = {
   angkat: "SK Pengangkatan GTY/PTY",
   tugas_luar: "Surat Tugas",
   aktif: "Surat Keterangan Aktif",
+  sp: "Surat Peringatan",
 };
 
 const NAMA_STATUS: Record<string, string> = {
@@ -218,6 +220,8 @@ const GAYA_SURAT = `
   #${ROOT_ID} .nama-ttd { font-weight: bold; text-decoration: underline; }
   #${ROOT_ID} .lampiran { page-break-before: always; }
   #${ROOT_ID} .tengah { text-align: center; }
+  #${ROOT_ID} .dicabut { border: 2px solid #000; padding: 4px 8px; margin: 8px 0; text-align: center; }
+  #${ROOT_ID} .terima { margin-top: 24px; width: 40%; page-break-inside: avoid; }
 `;
 
 const atau = (teks: string | null | undefined) => esc(teks?.trim() || "-");
@@ -638,6 +642,70 @@ export function suratKeteranganAktif(
     <p>Demikian surat keterangan ini dibuat untuk dipergunakan sebagaimana mestinya.</p>`,
     penanda,
   );
+}
+
+// ── 6. Surat Peringatan (HRIS Fase 4a, §22.2.5) ─────────────────────────────
+
+export interface IsianSp {
+  id_karyawan: string;
+  tingkat: string;
+  /** Tanggal SP = awal masa berlaku. */
+  tanggal: string;
+  berlaku_sampai: string;
+  pelanggaran: string;
+  harapan: string;
+  /** Dibekukan di baris SP. */
+  penanda: Penanda;
+  /** SP yang dicabut tetap bisa dicetak, dengan tanda DICABUT. */
+  alasan_cabut: string | null;
+}
+
+const NAMA_TINGKAT: Record<string, string> = {
+  SP1: "PERTAMA",
+  SP2: "KEDUA",
+  SP3: "KETIGA",
+};
+
+const paragraf = (teks: string) =>
+  `<p>${esc(teks.trim()).replace(/\r?\n/g, "<br>")}</p>`;
+
+export function suratPeringatan(d: DasarCetak, p: IsianSp): string {
+  const o = identitas(d.setup, p.id_karyawan);
+  const guru = o.guru === 1;
+  const masa = `${tanggalPanjang(p.tanggal, false) || "-"} sampai dengan ${tanggalPanjang(p.berlaku_sampai, false) || "-"}`;
+  const judul = NAMA_TINGKAT[p.tingkat]
+    ? `SURAT PERINGATAN ${NAMA_TINGKAT[p.tingkat]} (${p.tingkat})`
+    : "SURAT PERINGATAN";
+  const isi = `
+    ${
+      p.alasan_cabut !== null
+        ? `<div class="dicabut"><strong>DICABUT</strong>${p.alasan_cabut.trim() ? `: ${esc(p.alasan_cabut.trim())}` : ""}</div>`
+        : ""
+    }
+    <p>Diberikan kepada:</p>
+    ${tabelData([
+      ["Nama", namaGelar(o.nama, o.gelar)],
+      ["NIP", o.nip],
+      ...(guru ? ([["NUPTK", o.nuptk]] as [string, string][]) : []),
+      ["Jabatan", o.jabatan],
+      ["Unit kerja", o.unit],
+    ])}
+    <p>Surat peringatan ini diberikan atas pelanggaran berikut:</p>
+    ${paragraf(p.pelanggaran)}
+    ${p.harapan.trim() ? `<p>Perbaikan yang diminta:</p>${paragraf(p.harapan)}` : ""}
+    <p>Surat peringatan ini berlaku sejak ${esc(masa)}. ${
+      p.tingkat === "SP3"
+        ? "Ini adalah peringatan terakhir; pelanggaran ulang selama masa berlaku dapat diikuti pemutusan hubungan kerja sesuai peraturan yang berlaku."
+        : "Pelanggaran ulang selama masa berlaku dapat diikuti peringatan berikutnya."
+    }</p>
+    <p>Demikian surat peringatan ini dibuat untuk diperhatikan dan dilaksanakan.</p>`;
+  return `${surat(d, o.unit, judul, isi, p.penanda)}
+    <div class="terima">
+      <div>Diterima oleh,</div>
+      <div class="ruang"></div>
+      <div class="nama-ttd">${esc(namaGelar(o.nama, o.gelar)) || "...................................."}</div>
+      <div>Tanggal: ....................</div>
+    </div>`;
 }
 
 /** Cetak salah satu surat di atas lewat dialog cetak (`cetak-a4.ts`). */

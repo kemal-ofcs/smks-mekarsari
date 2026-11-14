@@ -12,6 +12,7 @@ import {
   suratKeteranganAktif,
   suratPembagianTugas,
   suratPengangkatan,
+  suratPeringatan,
   suratTugasLuar,
   suratTugasTambahan,
   unitSkTugas,
@@ -343,6 +344,25 @@ describe("templat: nilai di-escape, data kosong tanpa 'undefined'", () => {
       id_karyawan: "G1",
       mapel: d === kosong ? [] : [JAHAT],
     }),
+    ...["SP1", "SP3"].map((tingkat) =>
+      suratPeringatan(d, {
+        id_karyawan: "G1",
+        tingkat,
+        tanggal: "2026-01-10",
+        berlaku_sampai: "2026-07-09",
+        pelanggaran:
+          d === kosong
+            ? ""
+            : `${JAHAT}
+${JAHAT}`,
+        harapan: d === kosong ? "" : JAHAT,
+        penanda:
+          d === kosong
+            ? { nama: "", jabatan: "", nip: "" }
+            : { nama: JAHAT, jabatan: JAHAT, nip: JAHAT },
+        alasan_cabut: d === kosong ? null : JAHAT,
+      }),
+    ),
   ];
 
   test("setiap nilai di-escape", () => {
@@ -357,6 +377,18 @@ describe("templat: nilai di-escape, data kosong tanpa 'undefined'", () => {
     for (const html of bentuk(kosong)) {
       expect(html).not.toMatch(/undefined|null|NaN/);
     }
+  });
+
+  test("SP: tingkat, masa berlaku, tanda DICABUT, dan kolom tanda terima", () => {
+    const [sp1, sp3] = bentuk(kosong).slice(-2);
+    expect(sp1).toContain("SURAT PERINGATAN PERTAMA (SP1)");
+    expect(sp1).toContain("10 Januari 2026 sampai dengan 9 Juli 2026");
+    expect(sp1).toContain("Diterima oleh,");
+    expect(sp1).not.toContain("DICABUT");
+    expect(sp3).toContain("peringatan terakhir");
+    const [, dicabut] = bentuk(jahat).slice(-2);
+    expect(dicabut).toContain("<strong>DICABUT</strong>");
+    expect(dicabut).toContain("&lt;script&gt;&quot;&amp;'<br>&lt;script&gt;");
   });
 
   test("teks bawaan tercetak saat pengaturan kosong", () => {

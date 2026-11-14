@@ -148,6 +148,16 @@ export const PROMOTION_PLAN: readonly PromotionTable[] = [
     uniqueColumns: [],
     dependsOn: ["payroll_runs"],
   },
+
+  // Lapisan 6 — surat peringatan dan pegawai keluar (v70, cloud-only).
+  { table: "hr_keluar_alasan", uniqueColumns: [], dependsOn: [] },
+  { table: "hr_sp", uniqueColumns: [], dependsOn: ["master_data"] },
+  {
+    table: "hr_keluar",
+    uniqueColumns: [],
+    dependsOn: ["master_data", "hr_keluar_alasan"],
+  },
+  { table: "hr_keluar_rincian", uniqueColumns: [], dependsOn: ["hr_keluar"] },
 ];
 
 /**

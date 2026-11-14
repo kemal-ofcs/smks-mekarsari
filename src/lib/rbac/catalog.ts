@@ -531,6 +531,42 @@ export const PERMISSION_CATALOG = [
     name: "Sesuaikan Jatah Cuti",
     group: "Kepegawaian",
   },
+  // HRIS Fase 4 (`prd-hris.md` §22.4).
+  {
+    key: "hr.warning.view",
+    name: "Lihat Surat Peringatan",
+    group: "Kepegawaian",
+  },
+  {
+    key: "hr.warning.manage",
+    name: "Buat Surat Peringatan",
+    group: "Kepegawaian",
+  },
+  {
+    key: "hr.warning.sp3",
+    name: "Terbitkan SP3",
+    group: "Kepegawaian",
+  },
+  {
+    key: "hr.warning.cancel",
+    name: "Cabut Surat Peringatan",
+    group: "Kepegawaian",
+  },
+  {
+    key: "hr.offboard.view",
+    name: "Lihat Pegawai Keluar",
+    group: "Kepegawaian",
+  },
+  {
+    key: "hr.offboard.manage",
+    name: "Siapkan Pegawai Keluar",
+    group: "Kepegawaian",
+  },
+  {
+    key: "hr.offboard.decide",
+    name: "Berlakukan Pegawai Keluar",
+    group: "Kepegawaian",
+  },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_CATALOG)[number]["key"];
@@ -642,6 +678,11 @@ export const SENSITIVE_MUTATION_PERMISSIONS = new Set<PermissionKey>([
   "hr.request.decide_major",
   "hr.scope.all",
   "hr.leave.adjust",
+  // HRIS Fase 4 (§22.4): SP3 dan Berlakukan/Batalkan keluar adalah keputusan
+  // Yayasan; mencabut SP menghapus dasar eskalasi.
+  "hr.warning.sp3",
+  "hr.warning.cancel",
+  "hr.offboard.decide",
 ]);
 
 /**
@@ -657,6 +698,11 @@ export const CONFIDENTIAL_PERMISSIONS = new Set<PermissionKey>([
   "hr.finance.view",
   "hr.document.view",
   "hr.document.manage",
+  // Isi SP dan pesangon (§22.4).
+  "hr.warning.view",
+  "hr.warning.manage",
+  "hr.offboard.view",
+  "hr.offboard.manage",
 ]);
 
 export const SYSTEM_ROLE_KEYS = [
@@ -721,6 +767,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     "hr.request.decide",
     "hr.request.decide_major",
     "hr.scope.all",
+    "hr.warning.view",
+    "hr.warning.manage",
+    "hr.warning.sp3",
+    "hr.warning.cancel",
+    "hr.offboard.view",
+    "hr.offboard.manage",
+    "hr.offboard.decide",
   ],
   "kepala-sekolah": [
     "home.view",
@@ -732,6 +785,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     "hr.request.urgent",
     "hr.request.decide",
     "hr.substitute.manage",
+    "hr.warning.view",
+    "hr.warning.manage",
   ],
   kepegawaian: [
     "home.view",
@@ -752,6 +807,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     "hr.request.submit",
     "hr.substitute.manage",
     "hr.leave.adjust",
+    "hr.warning.view",
+    "hr.offboard.view",
+    "hr.offboard.manage",
   ],
   "kepala-tu": [
     "home.view",

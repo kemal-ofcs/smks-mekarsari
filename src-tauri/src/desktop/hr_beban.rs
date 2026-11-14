@@ -40,10 +40,11 @@ pub const KEPALA_UNIT_SQL: &str = "SELECT LOWER(TRIM(COALESCE(t.unit, ''))) AS k
 /// Identitas setiap pegawai (bukan siswa) untuk isi surat; tanpa data
 /// pribadi (Q-70).
 pub const IDENTITAS_PEGAWAI_SQL: &str = "SELECT m.id_unik, m.nama, COALESCE(g.gelar, '') AS gelar, COALESCE(g.nip, '') AS nip, COALESCE(g.nuptk, '') AS nuptk, COALESCE(m.jabatan_status, '') AS jabatan, COALESCE(m.unit, '') AS unit, COALESCE(m.tanggal_mulai_aktif, '') AS tmt, CASE WHEN g.id_guru IS NOT NULL OR LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'guru' THEN 1 ELSE 0 END AS guru FROM master_data m LEFT JOIN guru_data g ON g.id_guru = m.id_unik WHERE LOWER(TRIM(COALESCE(m.jenis_personil, ''))) <> 'siswa' AND NOT EXISTS (SELECT 1 FROM siswa_data sd WHERE sd.id_siswa = m.id_unik) ORDER BY m.id_unik\n-- batas: pegawai sekolah (guru dan tendik), dibatasi jumlah personil lembaga\n;";
-pub const PENGATURAN_SURAT_SQL: &str = "SELECT key, value FROM setting_gex_system WHERE substr(key, 1, 9) = 'hr_surat_'\n-- batas: dua belas kunci pengaturan surat\n;";
+pub const PENGATURAN_SURAT_SQL: &str = "SELECT key, value FROM setting_gex_system WHERE substr(key, 1, 9) = 'hr_surat_'\n-- batas: kunci pengaturan surat (pola, dasar, kota, yayasan)\n;";
 
 /// Jenis surat (`hr_surat_pola:<jenis>`); SK saja yang punya Menimbang/Mengingat.
-pub const JENIS_SURAT: [&str; 5] = ["ptm", "tugas", "angkat", "tugas_luar", "aktif"];
+/// `sp` (HRIS Fase 4a, §22.2.5): Surat Peringatan.
+pub const JENIS_SURAT: [&str; 6] = ["ptm", "tugas", "angkat", "tugas_luar", "aktif", "sp"];
 pub const JENIS_SK: [&str; 3] = ["ptm", "tugas", "angkat"];
 pub const TOKEN_POLA: [&str; 5] = ["urut", "kode", "unit", "romawi", "tahun"];
 pub const KUNCI_SURAT_KOTA: &str = "hr_surat_kota";
@@ -51,7 +52,7 @@ pub const KUNCI_YAYASAN_NAMA: &str = "hr_surat_yayasan_nama";
 pub const KUNCI_YAYASAN_KETUA: &str = "hr_surat_yayasan_ketua";
 pub const KUNCI_YAYASAN_JABATAN: &str = "hr_surat_yayasan_jabatan";
 
-/// Dua belas kunci pengaturan surat dalam urutan tetap; cermin `kunciPengaturanSurat`.
+/// Tiga belas kunci pengaturan surat dalam urutan tetap; cermin `kunciPengaturanSurat`.
 pub fn kunci_pengaturan_surat() -> Vec<String> {
     let mut kunci: Vec<String> = JENIS_SURAT.iter().map(|j| format!("hr_surat_pola:{j}")).collect();
     kunci.extend(JENIS_SK.iter().map(|j| format!("hr_surat_dasar:{j}")));
@@ -126,7 +127,7 @@ pub fn validasi_setting_surat(kunci: &str, nilai: &str) -> Result<String, String
     }
 }
 
-/// Draft layar: SEMUA dua belas kunci wajib ada (draft yang lupa satu kunci
+/// Draft layar: SEMUA tiga belas kunci wajib ada (draft yang lupa satu kunci
 /// tidak boleh mengosongkannya diam-diam). Cermin `validasiPengaturanSurat`.
 pub fn validasi_pengaturan_surat(draft: &Value) -> Result<Vec<(String, String)>, String> {
     let peta = draft.as_object().ok_or_else(|| "Pengaturan surat tidak valid.".to_owned())?;
@@ -177,7 +178,7 @@ pub fn letter_setup(state: &DesktopState, tanggal: &str) -> Result<Value, Comman
     }))
 }
 
-/// `desktop_hr_letter_settings_save`: dua belas kunci dalam satu transaksi,
+/// `desktop_hr_letter_settings_save`: tiga belas kunci dalam satu transaksi,
 /// masing-masing dengan event outbox `setting` (`hris::tulis_setting`).
 pub fn letter_settings_save(state: &DesktopState, draft: Value) -> Result<Value, CommandError> {
     let nilai = validasi_pengaturan_surat(&draft).map_err(|galat| invalid(&galat))?;
@@ -470,7 +471,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(antre, 12, "satu event outbox per kunci");
+        assert_eq!(antre, 13, "satu event outbox per kunci");
         draft.remove(KUNCI_YAYASAN_KETUA);
         assert!(letter_settings_save(&st, Value::Object(draft)).is_err());
     }

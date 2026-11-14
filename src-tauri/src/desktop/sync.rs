@@ -20,7 +20,7 @@ use super::{
 /// `CURRENT_SCHEMA_VERSION` di `web-desktop/src/lib/db-schema.ts` setiap kali
 /// migrasi baru ditambahkan, karena keduanya membaca tabel `schema_migration`
 /// yang sama di Turso.
-pub const CLIENT_SCHEMA_VERSION: i64 = 69;
+pub const CLIENT_SCHEMA_VERSION: i64 = 70;
 
 /// Hanya `cloud > client` yang berbahaya; `cloud <= client` adalah kondisi normal.
 fn is_client_schema_outdated(cloud_version: i64) -> bool {
@@ -107,6 +107,8 @@ const SNAPSHOT_TABLES: &[SnapshotTable] = &[
             "id_bagian",
             "id_jabatan",
             "id_atasan",
+            // v70: hanya ditulis cloud (Berlakukan/Batalkan keluar).
+            "id_keluar",
         ],
         conflict_column: "id_unik",
         entity_column: "id_unik",
@@ -2761,7 +2763,9 @@ pub fn enqueue_employee_snapshot(
           'email', email,
           -- Organisasi (v68): NULL = tidak dibawa (cloud memetakan teksnya),
           -- '' = dikosongkan.
-          'id_bagian', id_bagian, 'id_jabatan', id_jabatan, 'id_atasan', id_atasan
+          'id_bagian', id_bagian, 'id_jabatan', id_jabatan, 'id_atasan', id_atasan,
+          -- v70: dibawa apa adanya; handler cloud tidak pernah menulisnya.
+          'id_keluar', id_keluar
         ) FROM master_data WHERE id_unik = ?;
         "#,
             params![employee_id],

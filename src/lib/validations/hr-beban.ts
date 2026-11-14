@@ -355,14 +355,16 @@ export const IDENTITAS_PEGAWAI_SQL =
   "SELECT m.id_unik, m.nama, COALESCE(g.gelar, '') AS gelar, COALESCE(g.nip, '') AS nip, COALESCE(g.nuptk, '') AS nuptk, COALESCE(m.jabatan_status, '') AS jabatan, COALESCE(m.unit, '') AS unit, COALESCE(m.tanggal_mulai_aktif, '') AS tmt, CASE WHEN g.id_guru IS NOT NULL OR LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'guru' THEN 1 ELSE 0 END AS guru FROM master_data m LEFT JOIN guru_data g ON g.id_guru = m.id_unik WHERE LOWER(TRIM(COALESCE(m.jenis_personil, ''))) <> 'siswa' AND NOT EXISTS (SELECT 1 FROM siswa_data sd WHERE sd.id_siswa = m.id_unik) ORDER BY m.id_unik\n-- batas: pegawai sekolah (guru dan tendik), dibatasi jumlah personil lembaga\n;";
 
 export const PENGATURAN_SURAT_SQL =
-  "SELECT key, value FROM setting_gex_system WHERE substr(key, 1, 9) = 'hr_surat_'\n-- batas: dua belas kunci pengaturan surat\n;";
+  "SELECT key, value FROM setting_gex_system WHERE substr(key, 1, 9) = 'hr_surat_'\n-- batas: kunci pengaturan surat (pola, dasar, kota, yayasan)\n;";
 
+/** `sp` (HRIS Fase 4a, §22.2.5): Surat Peringatan. */
 export const JENIS_SURAT = [
   "ptm",
   "tugas",
   "angkat",
   "tugas_luar",
   "aktif",
+  "sp",
 ] as const;
 export type JenisSurat = (typeof JENIS_SURAT)[number];
 export const JENIS_SK = ["ptm", "tugas", "angkat"] as const;
@@ -373,7 +375,7 @@ export const KUNCI_YAYASAN_NAMA = "hr_surat_yayasan_nama";
 export const KUNCI_YAYASAN_KETUA = "hr_surat_yayasan_ketua";
 export const KUNCI_YAYASAN_JABATAN = "hr_surat_yayasan_jabatan";
 
-/** Dua belas kunci dalam urutan tetap; cermin `kunci_pengaturan_surat`. */
+/** Tiga belas kunci dalam urutan tetap; cermin `kunci_pengaturan_surat`. */
 export function kunciPengaturanSurat(): string[] {
   return [
     ...JENIS_SURAT.map((j) => `hr_surat_pola:${j}`),
@@ -439,7 +441,7 @@ export function validasiSettingSurat(
 }
 
 /**
- * Draft layar: SEMUA dua belas kunci wajib ada, kunci asing ditolak lebih
+ * Draft layar: SEMUA tiga belas kunci wajib ada, kunci asing ditolak lebih
  * dulu (urut nama kunci). Cermin `validasi_pengaturan_surat`.
  */
 export function validasiPengaturanSurat(
@@ -465,7 +467,7 @@ export const suratSetupSchema = z
   .object({ tanggal: z.string().trim().max(10) })
   .strict();
 
-/** Body rute `letters/settings`: kedua belas kunci; isinya diperiksa `validasiPengaturanSurat`. */
+/** Body rute `letters/settings`: ketiga belas kunci; isinya diperiksa `validasiPengaturanSurat`. */
 export const pengaturanSuratSchema = z
   .object(
     Object.fromEntries(

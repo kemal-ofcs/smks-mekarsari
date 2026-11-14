@@ -1,0 +1,652 @@
+{
+  "akhir_masa": [
+    {
+      "tanggal": "2026-01-10",
+      "masa_bulan": 6,
+      "hasil": "2026-07-09"
+    },
+    {
+      "tanggal": "2026-08-31",
+      "masa_bulan": 6,
+      "hasil": "2027-02-27"
+    },
+    {
+      "tanggal": "2026-03-01",
+      "masa_bulan": 1,
+      "hasil": "2026-03-31"
+    },
+    {
+      "tanggal": "2027-12-15",
+      "masa_bulan": 12,
+      "hasil": "2028-12-14"
+    },
+    {
+      "tanggal": "2028-01-31",
+      "masa_bulan": 1,
+      "hasil": "2028-02-28"
+    },
+    {
+      "tanggal": "2026-02-30",
+      "masa_bulan": 6,
+      "hasil": null
+    }
+  ],
+  "status": [
+    {
+      "tanggal": "2026-01-10",
+      "berlaku_sampai": "2026-07-09",
+      "dicabut": false,
+      "hari_ini": "2026-07-09",
+      "hasil": "Berlaku"
+    },
+    {
+      "tanggal": "2026-01-10",
+      "berlaku_sampai": "2026-07-09",
+      "dicabut": false,
+      "hari_ini": "2026-07-10",
+      "hasil": "Berakhir"
+    },
+    {
+      "tanggal": "2026-01-10",
+      "berlaku_sampai": "2026-07-09",
+      "dicabut": false,
+      "hari_ini": "2026-01-10",
+      "hasil": "Berlaku"
+    },
+    {
+      "tanggal": "2026-01-10",
+      "berlaku_sampai": "2026-07-09",
+      "dicabut": true,
+      "hari_ini": "2026-03-01",
+      "hasil": "Dicabut"
+    },
+    {
+      "tanggal": "2026-05-01",
+      "berlaku_sampai": "2026-10-31",
+      "dicabut": false,
+      "hari_ini": "2026-04-30",
+      "hasil": "Berakhir"
+    }
+  ],
+  "masa_setting": [
+    {
+      "nilai": null,
+      "hasil": 6
+    },
+    {
+      "nilai": "",
+      "hasil": 6
+    },
+    {
+      "nilai": "3",
+      "hasil": 3
+    },
+    {
+      "nilai": " 4 ",
+      "hasil": 4
+    },
+    {
+      "nilai": "12",
+      "hasil": 12
+    },
+    {
+      "nilai": "13",
+      "hasil": 6
+    },
+    {
+      "nilai": "0",
+      "hasil": 6
+    },
+    {
+      "nilai": "abc",
+      "hasil": 6
+    },
+    {
+      "nilai": "06",
+      "hasil": 6
+    }
+  ],
+  "usulan": [
+    {
+      "nama": "tanpa SP",
+      "sp": [],
+      "tanggal": "2026-06-01",
+      "tingkat": "SP1",
+      "sp3_berlaku": false
+    },
+    {
+      "nama": "SP1 berlaku",
+      "sp": [
+        {
+          "tingkat": "SP1",
+          "tanggal": "2026-01-10",
+          "berlaku_sampai": "2026-07-09",
+          "dicabut": false
+        }
+      ],
+      "tanggal": "2026-06-01",
+      "tingkat": "SP2",
+      "sp3_berlaku": false
+    },
+    {
+      "nama": "SP1 sudah berakhir",
+      "sp": [
+        {
+          "tingkat": "SP1",
+          "tanggal": "2025-01-10",
+          "berlaku_sampai": "2025-07-09",
+          "dicabut": false
+        }
+      ],
+      "tanggal": "2026-06-01",
+      "tingkat": "SP1",
+      "sp3_berlaku": false
+    },
+    {
+      "nama": "SP2 berlaku",
+      "sp": [
+        {
+          "tingkat": "SP1",
+          "tanggal": "2025-01-10",
+          "berlaku_sampai": "2025-07-09",
+          "dicabut": false
+        },
+        {
+          "tingkat": "SP2",
+          "tanggal": "2026-03-01",
+          "berlaku_sampai": "2026-08-31",
+          "dicabut": false
+        }
+      ],
+      "tanggal": "2026-06-01",
+      "tingkat": "SP3",
+      "sp3_berlaku": false
+    },
+    {
+      "nama": "SP3 berlaku",
+      "sp": [
+        {
+          "tingkat": "SP3",
+          "tanggal": "2026-02-01",
+          "berlaku_sampai": "2026-07-31",
+          "dicabut": false
+        }
+      ],
+      "tanggal": "2026-06-01",
+      "tingkat": "SP3",
+      "sp3_berlaku": true
+    },
+    {
+      "nama": "SP2 dicabut tidak dihitung",
+      "sp": [
+        {
+          "tingkat": "SP2",
+          "tanggal": "2026-03-01",
+          "berlaku_sampai": "2026-08-31",
+          "dicabut": true
+        }
+      ],
+      "tanggal": "2026-06-01",
+      "tingkat": "SP1",
+      "sp3_berlaku": false
+    },
+    {
+      "nama": "tertinggi yang berlaku menang",
+      "sp": [
+        {
+          "tingkat": "SP2",
+          "tanggal": "2026-02-01",
+          "berlaku_sampai": "2026-07-31",
+          "dicabut": false
+        },
+        {
+          "tingkat": "SP1",
+          "tanggal": "2026-04-01",
+          "berlaku_sampai": "2026-09-30",
+          "dicabut": false
+        }
+      ],
+      "tanggal": "2026-06-01",
+      "tingkat": "SP3",
+      "sp3_berlaku": false
+    },
+    {
+      "nama": "sehari sesudah masa SP1",
+      "sp": [
+        {
+          "tingkat": "SP1",
+          "tanggal": "2026-01-10",
+          "berlaku_sampai": "2026-07-09",
+          "dicabut": false
+        }
+      ],
+      "tanggal": "2026-07-10",
+      "tingkat": "SP1",
+      "sp3_berlaku": false
+    }
+  ],
+  "validasi": [
+    {
+      "nama": "sah minimal",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": {
+        "id_sp": null,
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "nomor": null,
+        "pelanggaran": "Terlambat 5 kali",
+        "harapan": null,
+        "alasan_tingkat": null,
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "penanda_nip": null
+      },
+      "galat": null
+    },
+    {
+      "nama": "isian kosong menjadi null, teks dirapikan",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "id_sp": "",
+        "nomor": "  ",
+        "harapan": "",
+        "alasan_tingkat": " ",
+        "penanda_nip": " 1987 "
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": {
+        "id_sp": null,
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "nomor": null,
+        "pelanggaran": "Terlambat 5 kali",
+        "harapan": null,
+        "alasan_tingkat": null,
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "penanda_nip": "1987"
+      },
+      "galat": null
+    },
+    {
+      "nama": "id SP dan teks opsional dibawa",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "id_sp": " sp-1 ",
+        "nomor": "001/SP/SMP/V/2026",
+        "harapan": "Datang tepat waktu",
+        "alasan_tingkat": "Berat"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": {
+        "id_sp": "sp-1",
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "nomor": "001/SP/SMP/V/2026",
+        "pelanggaran": "Terlambat 5 kali",
+        "harapan": "Datang tepat waktu",
+        "alasan_tingkat": "Berat",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "penanda_nip": null
+      },
+      "galat": null
+    },
+    {
+      "nama": "tanggal hari ini sah",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-06-01",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": {
+        "id_sp": null,
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-06-01",
+        "nomor": null,
+        "pelanggaran": "Terlambat 5 kali",
+        "harapan": null,
+        "alasan_tingkat": null,
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "penanda_nip": null
+      },
+      "galat": null
+    },
+    {
+      "nama": "nilai bukan teks diabaikan",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "nomor": 123,
+        "harapan": null
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": {
+        "id_sp": null,
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "nomor": null,
+        "pelanggaran": "Terlambat 5 kali",
+        "harapan": null,
+        "alasan_tingkat": null,
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "penanda_nip": null
+      },
+      "galat": null
+    },
+    {
+      "nama": "pelanggaran 2000 karakter Unicode sah",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": {
+        "id_sp": null,
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "nomor": null,
+        "pelanggaran": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "harapan": null,
+        "alasan_tingkat": null,
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "penanda_nip": null
+      },
+      "galat": null
+    },
+    {
+      "nama": "pegawai kosong",
+      "draft": {
+        "id_karyawan": " ",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Pegawai wajib dipilih."
+    },
+    {
+      "nama": "tingkat asing",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP4",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Tingkat SP tidak dikenal."
+    },
+    {
+      "nama": "tingkat huruf kecil ditolak, tidak dinormalkan",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "sp1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Tingkat SP tidak dikenal."
+    },
+    {
+      "nama": "tanggal tidak ada di kalender",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-02-30",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Tanggal SP tidak valid."
+    },
+    {
+      "nama": "tanggal masa depan",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-06-02",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Tanggal SP tidak boleh di masa depan."
+    },
+    {
+      "nama": "nomor 81 karakter",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "nomor": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Nomor surat maksimal 80 karakter."
+    },
+    {
+      "nama": "pelanggaran kosong",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "   ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Pelanggaran wajib diisi."
+    },
+    {
+      "nama": "pelanggaran 2001 karakter Unicode",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Pelanggaran maksimal 2000 karakter."
+    },
+    {
+      "nama": "harapan terlalu panjang",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "harapan": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Perbaikan yang diminta maksimal 1000 karakter."
+    },
+    {
+      "nama": "nama penanda kosong",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "",
+        "penanda_jabatan": "Kepala SMP"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Nama penanda tangan wajib diisi."
+    },
+    {
+      "nama": "jabatan penanda kosong",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": " "
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "Jabatan penanda tangan wajib diisi."
+    },
+    {
+      "nama": "NIP penanda terlalu panjang",
+      "draft": {
+        "id_karyawan": "P1",
+        "tingkat": "SP1",
+        "tanggal": "2026-05-20",
+        "pelanggaran": "  Terlambat 5 kali  ",
+        "penanda_nama": "Budi",
+        "penanda_jabatan": "Kepala SMP",
+        "penanda_nip": "1111111111111111111111111111111"
+      },
+      "hari_ini": "2026-06-01",
+      "hasil": null,
+      "galat": "NIP penanda tangan maksimal 30 karakter."
+    }
+  ],
+  "tingkat": [
+    {
+      "tingkat": "SP1",
+      "usulan": "SP1",
+      "alasan": null,
+      "galat": null
+    },
+    {
+      "tingkat": "SP2",
+      "usulan": "SP1",
+      "alasan": null,
+      "galat": "Tingkat berbeda dari usulan (SP1); alasannya wajib diisi."
+    },
+    {
+      "tingkat": "SP2",
+      "usulan": "SP1",
+      "alasan": "Pelanggaran berat",
+      "galat": null
+    },
+    {
+      "tingkat": "SP1",
+      "usulan": "SP3",
+      "alasan": null,
+      "galat": "Tingkat berbeda dari usulan (SP3); alasannya wajib diisi."
+    }
+  ],
+  "wewenang": [
+    {
+      "nama": "SP1 dalam unit",
+      "tingkat": "SP1",
+      "sendiri": false,
+      "dalam_cakupan": true,
+      "boleh_sp3": false,
+      "galat": null
+    },
+    {
+      "nama": "diri sendiri diperiksa lebih dulu",
+      "tingkat": "SP1",
+      "sendiri": true,
+      "dalam_cakupan": false,
+      "boleh_sp3": true,
+      "galat": "Tindakan ini tidak bisa dilakukan untuk diri sendiri."
+    },
+    {
+      "nama": "unit lain",
+      "tingkat": "SP2",
+      "sendiri": false,
+      "dalam_cakupan": false,
+      "boleh_sp3": true,
+      "galat": "Pegawai ini di luar unit Anda."
+    },
+    {
+      "nama": "SP3 tanpa izin",
+      "tingkat": "SP3",
+      "sendiri": false,
+      "dalam_cakupan": true,
+      "boleh_sp3": false,
+      "galat": "SP3 hanya bisa dibuat atau diubah pemegang izin Terbitkan SP3."
+    },
+    {
+      "nama": "SP3 dengan izin",
+      "tingkat": "SP3",
+      "sendiri": false,
+      "dalam_cakupan": true,
+      "boleh_sp3": true,
+      "galat": null
+    },
+    {
+      "nama": "SP3 unit lain: cakupan lebih dulu",
+      "tingkat": "SP3",
+      "sendiri": false,
+      "dalam_cakupan": false,
+      "boleh_sp3": false,
+      "galat": "Pegawai ini di luar unit Anda."
+    },
+    {
+      "nama": "cabut tanpa tingkat",
+      "tingkat": "",
+      "sendiri": false,
+      "dalam_cakupan": true,
+      "boleh_sp3": false,
+      "galat": null
+    }
+  ]
+}

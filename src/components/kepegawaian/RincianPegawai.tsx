@@ -23,6 +23,7 @@ import {
 } from "@/lib/gateways/hris";
 import { AGAMA, STATUS_NIKAH } from "@/lib/validations/hris";
 import { CutiPegawai } from "./CutiPegawai";
+import type { PermintaanSurat } from "./DialogCetakSurat";
 import { DokumenPegawai } from "./DokumenPegawai";
 import {
   INPUT,
@@ -33,6 +34,7 @@ import {
   TOMBOL_UTAMA,
 } from "./gaya";
 import { PendidikPegawai } from "./PendidikPegawai";
+import { SuratPeringatanPegawai } from "./SuratPeringatanPegawai";
 
 type TabRincian =
   | "kerja"
@@ -41,6 +43,7 @@ type TabRincian =
   | "pendidik"
   | "kontrak"
   | "cuti"
+  | "sp"
   | "dokumen";
 
 interface Isian {
@@ -100,6 +103,7 @@ export function RincianPegawai({
   hariIni,
   onClose,
   onCetakKeterangan,
+  onCetak,
 }: {
   pegawai: PegawaiKepegawaian;
   org: OrgKepegawaian;
@@ -107,6 +111,8 @@ export function RincianPegawai({
   onClose: () => void;
   /** Surat Keterangan Aktif; hanya bila sesi memegang `hr.duty.manage` (§21.5). */
   onCetakKeterangan?: () => void;
+  /** Cetak SP: pemanggil menutup rincian lalu membuka dialog cetak. */
+  onCetak: (permintaan: PermintaanSurat) => void;
 }) {
   const { user } = useAuth();
   const boleh = (izin: Parameters<typeof hasPermission>[1]) =>
@@ -125,6 +131,9 @@ export function RincianPegawai({
     { kunci: "kontrak", label: "Kontrak" },
     ...(boleh("hr.request.view")
       ? [{ kunci: "cuti" as const, label: "Cuti" }]
+      : []),
+    ...(boleh("hr.warning.view")
+      ? [{ kunci: "sp" as const, label: "SP" }]
       : []),
     ...(boleh("hr.document.view")
       ? [{ kunci: "dokumen" as const, label: "Dokumen" }]
@@ -251,6 +260,12 @@ export function RincianPegawai({
             <CutiPegawai
               idKaryawan={id}
               bolehSesuaikan={boleh("hr.leave.adjust")}
+            />
+          ) : tab === "sp" ? (
+            <SuratPeringatanPegawai
+              pegawai={pegawai}
+              boleh={boleh}
+              onCetak={onCetak}
             />
           ) : tab === "dokumen" ? (
             <DokumenPegawai

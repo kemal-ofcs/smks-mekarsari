@@ -10,6 +10,11 @@ import {
   SQL_PINDAH_BERKAS_PMB,
 } from "@/lib/validations/berkas-sekolah";
 import {
+  ALASAN_BAWAAN,
+  SEED_ALASAN_SQL,
+  seedAlasanArgs,
+} from "@/lib/validations/hr-keluar";
+import {
   JENIS_BAWAAN,
   SEED_JENIS_SQL as SEED_JENIS_PENGAJUAN_SQL,
   seedJenisArgs,
@@ -91,6 +96,7 @@ const TELEGRAM_NOTIFICATION_MIGRATION_VERSION = 66;
 const PAYROLL_TAX_PERIOD_MIGRATION_VERSION = 67;
 const HRIS_ORG_MIGRATION_VERSION = 68;
 const HRIS_PENGAJUAN_MIGRATION_VERSION = 69;
+const HRIS_KELUAR_MIGRATION_VERSION = 70;
 
 /**
  * Bentuk `akademik_jam_pelajaran` sejak v60: jenis `Pulang`, cakupan unit +
@@ -3687,6 +3693,12 @@ export async function runDatabaseMigrations(client: Client) {
       "id_atasan",
       "ALTER TABLE master_data ADD COLUMN id_atasan TEXT;",
     ],
+    // Penanda pegawai keluar (v70, HRIS Fase 4); hanya ditulis Berlakukan/Batalkan.
+    [
+      "master_data",
+      "id_keluar",
+      "ALTER TABLE master_data ADD COLUMN id_keluar TEXT;",
+    ],
     [
       "master_operator",
       "id_karyawan",
@@ -3853,6 +3865,120 @@ export async function runDatabaseMigrations(client: Client) {
     sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
           VALUES (?, 'hris-pengajuan', ?);`,
     args: [HRIS_PENGAJUAN_MIGRATION_VERSION, now],
+  });
+
+  // v70: surat peringatan dan pegawai keluar (HRIS Fase 4, `prd-hris.md`
+  // §22.3). Keempatnya cloud-only; DDL WAJIB identik dengan `turso.rs`.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS hr_sp (
+      id_sp TEXT PRIMARY KEY,
+      id_karyawan TEXT NOT NULL,
+      tingkat TEXT NOT NULL CHECK (tingkat IN ('SP1', 'SP2', 'SP3')),
+      usulan_tingkat TEXT NOT NULL CHECK (usulan_tingkat IN ('SP1', 'SP2', 'SP3')),
+      alasan_tingkat TEXT,
+      tanggal TEXT NOT NULL,
+      masa_bulan INTEGER NOT NULL CHECK (masa_bulan BETWEEN 1 AND 12),
+      berlaku_sampai TEXT NOT NULL,
+      nomor TEXT,
+      pelanggaran TEXT NOT NULL,
+      harapan TEXT,
+      penanda_nama TEXT NOT NULL,
+      penanda_jabatan TEXT NOT NULL,
+      penanda_nip TEXT,
+      unit TEXT,
+      dicatat_oleh TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      diubah_oleh TEXT,
+      diubah_pada TEXT,
+      dicabut_oleh TEXT,
+      dicabut_pada TEXT,
+      alasan_cabut TEXT
+    );
+  `);
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS hr_keluar_alasan (
+      id_alasan TEXT PRIMARY KEY,
+      nama TEXT NOT NULL,
+      pengali_up INTEGER NOT NULL DEFAULT 0 CHECK (pengali_up BETWEEN 0 AND 1000),
+      pengali_upmk INTEGER NOT NULL DEFAULT 0 CHECK (pengali_upmk BETWEEN 0 AND 1000),
+      uph INTEGER NOT NULL DEFAULT 0 CHECK (uph IN (0, 1)),
+      kompensasi_pkwt INTEGER NOT NULL DEFAULT 0 CHECK (kompensasi_pkwt IN (0, 1)),
+      uang_pisah INTEGER NOT NULL DEFAULT 0 CHECK (uang_pisah IN (0, 1)),
+      is_aktif INTEGER NOT NULL DEFAULT 1 CHECK (is_aktif IN (0, 1)),
+      dasar_hukum TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS hr_keluar (
+      id_keluar TEXT PRIMARY KEY,
+      id_karyawan TEXT NOT NULL,
+      id_alasan TEXT NOT NULL,
+      alasan_nama TEXT,
+      id_sp TEXT,
+      status_kepegawaian TEXT,
+      tanggal_pemberitahuan TEXT,
+      tanggal_terakhir TEXT NOT NULL,
+      keterangan TEXT,
+      masa_kerja_mulai TEXT,
+      upah_pokok INTEGER NOT NULL DEFAULT 0 CHECK (upah_pokok >= 0),
+      usulan_upah_pokok INTEGER NOT NULL DEFAULT 0 CHECK (usulan_upah_pokok >= 0),
+      tunjangan_tetap INTEGER NOT NULL DEFAULT 0 CHECK (tunjangan_tetap >= 0),
+      alasan_upah TEXT,
+      kartu_ditarik INTEGER NOT NULL DEFAULT 0 CHECK (kartu_ditarik IN (0, 1)),
+      catatan_checklist TEXT,
+      checklist_saat_berlaku TEXT,
+      nomor_sk TEXT,
+      nomor_keterangan TEXT,
+      dicatat_oleh TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      diubah_oleh TEXT,
+      diubah_pada TEXT,
+      berlaku_oleh TEXT,
+      berlaku_pada TEXT,
+      dibatalkan_oleh TEXT,
+      dibatalkan_pada TEXT,
+      alasan_batal TEXT
+    );
+  `);
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS hr_keluar_rincian (
+      id_rincian TEXT PRIMARY KEY,
+      id_keluar TEXT NOT NULL,
+      komponen TEXT NOT NULL CHECK (komponen IN ('UP', 'UPMK', 'UPH Cuti', 'UPH Lainnya', 'Kompensasi PKWT', 'Uang Pisah', 'Lainnya')),
+      dasar TEXT,
+      usulan INTEGER NOT NULL DEFAULT 0 CHECK (usulan >= 0),
+      nominal INTEGER NOT NULL DEFAULT 0 CHECK (nominal >= 0),
+      alasan_ubah TEXT,
+      urutan INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_hr_sp_karyawan ON hr_sp(id_karyawan, tanggal);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_hr_keluar_karyawan ON hr_keluar(id_karyawan);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_hr_keluar_tanggal ON hr_keluar(tanggal_terakhir);",
+  );
+  await client.execute(
+    "CREATE INDEX IF NOT EXISTS idx_hr_keluar_rincian_keluar ON hr_keluar_rincian(id_keluar);",
+  );
+  // Alasan keluar bawaan, berkas yang sama dengan seed Rust. `INSERT OR
+  // IGNORE` berid tetap: alasan yang sudah disunting tidak ditimpa.
+  await client.batch(
+    ALASAN_BAWAAN.map((alasan) => ({
+      sql: SEED_ALASAN_SQL,
+      args: seedAlasanArgs(alasan),
+    })),
+    "write",
+  );
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO schema_migration (version, name, applied_at)
+          VALUES (?, 'hris-keluar', ?);`,
+    args: [HRIS_KELUAR_MIGRATION_VERSION, now],
   });
 }
 

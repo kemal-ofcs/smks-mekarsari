@@ -215,7 +215,7 @@ export async function getSetupSurat(
 const UPSERT_SETTING_SQL =
   "INSERT INTO setting_gex_system (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value;";
 
-/** Kedua belas kunci dalam satu batch atomik. */
+/** Ketiga belas kunci dalam satu batch atomik. */
 export async function simpanPengaturanSurat(
   client: Client,
   draft: Record<string, string>,
