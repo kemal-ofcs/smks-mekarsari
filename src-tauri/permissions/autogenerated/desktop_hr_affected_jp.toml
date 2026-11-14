@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-hr-affected-jp"
+description = "Enables the desktop_hr_affected_jp command without any pre-configured scope."
+commands.allow = ["desktop_hr_affected_jp"]
+
+[[permission]]
+identifier = "deny-desktop-hr-affected-jp"
+description = "Denies the desktop_hr_affected_jp command without any pre-configured scope."
+commands.deny = ["desktop_hr_affected_jp"]

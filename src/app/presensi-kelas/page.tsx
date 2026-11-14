@@ -38,6 +38,7 @@ import {
   type StudentAttendanceDetailItem,
   saveClassAttendance,
 } from "@/lib/gateways/class-attendance";
+import { type JpTersusun, muatGantiSaya } from "@/lib/gateways/hr-pengajuan";
 import { subscribeSyncCompleted, syncNow } from "@/lib/gateways/sync-status";
 import { getDaftarGuru } from "@/lib/gateways/teacher";
 import {
@@ -61,6 +62,9 @@ import {
 } from "@/lib/validations/class-attendance";
 
 type TabKey = "input" | "reconciliation" | "history";
+
+/** Usulan sesi: jadwal sendiri, atau JP yang digantikan (nama guru asli). */
+type UsulanSesi = TeachingScheduleRow & { menggantikan?: string };
 
 export default function PresensiKelasPage() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -143,7 +147,7 @@ export default function PresensiKelasPage() {
   // sekarang dibaca dari perangkat dalam zona WIB, sama seperti tanggal bawaan
   // layar ini; tidak ada yang disimpan dari nilai itu.
   const [guruSaya, setGuruSaya] = useState("");
-  const [usulan, setUsulan] = useState<TeachingScheduleRow | null>(null);
+  const [usulan, setUsulan] = useState<UsulanSesi | null>(null);
   const [materiPokok, setMateriPokok] = useState<string>("");
   const [catatanSesi, setCatatanSesi] = useState<string>("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -245,11 +249,15 @@ export default function PresensiKelasPage() {
         setSelectedMapel(String(mapelData[0]?.id_mapel));
       }
 
-      // Default guru to current user if matches
+      // Guru yang login: tautan akun ke personil (A-2) lebih dulu; tebakan
+      // lama lewat id/kode operator hanya untuk akun yang belum ditautkan.
       if (user?.id) {
-        const matchingGuru = guruData.find(
-          (g) => g.id_guru === user.id || g.id_guru === user.kode_operator,
-        );
+        const tautan = (user.idKaryawan ?? "").trim();
+        const matchingGuru =
+          (tautan ? guruData.find((g) => g.id_guru === tautan) : undefined) ??
+          guruData.find(
+            (g) => g.id_guru === user.id || g.id_guru === user.kode_operator,
+          );
         if (matchingGuru) {
           setSelectedGuru(String(matchingGuru.id_guru));
           setGuruSaya(String(matchingGuru.id_guru));
@@ -271,18 +279,36 @@ export default function PresensiKelasPage() {
     if (!guruSaya || lessonPeriods.length === 0) return;
     let batal = false;
     const sekarang = new Date();
-    getJadwalMengajar({
-      id_guru: guruSaya,
-      tanggal: formatTanggalOperasional(sekarang),
-    })
-      .then((rows) => {
+    const hariIniOperasional = formatTanggalOperasional(sekarang);
+    Promise.all([
+      getJadwalMengajar({ id_guru: guruSaya, tanggal: hariIniOperasional }),
+      // JP yang ia gantikan hari ini (§20.2.5); gagal dimuat = tanpa usulan
+      // pengganti, jadwal sendiri tetap diusulkan.
+      muatGantiSaya().catch(() => ({ jp: [] as JpTersusun[] })),
+    ])
+      .then(([rows, ganti]) => {
         if (batal) return;
-        const hari = hariDariTanggal(formatTanggalOperasional(sekarang));
+        const hari = hariDariTanggal(hariIniOperasional);
         const pukul = formatJamOperasional(sekarang).slice(0, 5);
+        const gantiRows: UsulanSesi[] = ganti.jp.map((j) => ({
+          id_jadwal: j.id_jadwal,
+          id_tahun_ajaran: "",
+          id_rombel: j.id_rombel,
+          id_mapel: j.id_mapel,
+          id_guru: guruSaya,
+          hari: hari ?? 0,
+          jam_ke: j.jam_ke,
+          is_aktif: 1,
+          created_at: "",
+          updated_at: "",
+          nama_rombel: j.nama_rombel,
+          nama_mapel: j.nama_mapel,
+          menggantikan: j.nama_guru || j.id_karyawan,
+        }));
         // Guru bisa mengajar di dua unit, jadi setiap baris dinilai dengan
         // jadwal bel unit rombelnya sendiri.
         setUsulan(
-          rows
+          [...gantiRows, ...rows]
             .filter((row) => row.is_aktif === 1)
             .find((row) => {
               const unit =
@@ -772,6 +798,9 @@ export default function PresensiKelasPage() {
                     : ""}{" "}
                   · {usulan.nama_mapel || usulan.id_mapel} ·{" "}
                   {usulan.nama_rombel || usulan.id_rombel}
+                  {usulan.menggantikan
+                    ? ` · menggantikan ${usulan.menggantikan}`
+                    : ""}
                 </p>
                 <button
                   type="button"

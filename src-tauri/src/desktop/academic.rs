@@ -1364,9 +1364,12 @@ pub fn list_teaching_schedules(
           AND (?2 IS NULL OR j.id_tahun_ajaran = ?2)
           AND (?3 IS NULL OR j.id_guru = ?3)
           AND (?4 IS NULL OR j.hari = ?4)
+          AND (?5 IS NULL OR EXISTS (SELECT 1 FROM akademik_tahun_ajaran t WHERE t.id_tahun_ajaran = j.id_tahun_ajaran AND t.tanggal_mulai <= ?5 AND t.tanggal_selesai >= ?5))
         ORDER BY j.hari, CAST(j.jam_ke AS INTEGER), j.jam_ke;
         "#
     );
+    // Dengan `tanggal`, hanya jadwal tahun ajaran yang semesternya memuat
+    // tanggal itu (Q-58): jadwal semester lalu tidak pernah dinonaktifkan.
 
     // Hari diturunkan lebih dulu supaya query utamanya tetap satu bentuk.
     let hari_terpakai = match (hari, tanggal.as_deref()) {
@@ -1385,7 +1388,7 @@ pub fn list_teaching_schedules(
     let mut stmt = conn.prepare(&sql).map_err(|_| CommandError::internal())?;
     let rows = stmt
         .query_map(
-            params![id_rombel, id_tahun_ajaran, id_guru, hari_terpakai],
+            params![id_rombel, id_tahun_ajaran, id_guru, hari_terpakai, tanggal],
             |row| {
                 Ok(json!({
                     "id_jadwal": row.get::<_, String>(0)?,

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-hr-my-substitutions"
+description = "Enables the desktop_hr_my_substitutions command without any pre-configured scope."
+commands.allow = ["desktop_hr_my_substitutions"]
+
+[[permission]]
+identifier = "deny-desktop-hr-my-substitutions"
+description = "Denies the desktop_hr_my_substitutions command without any pre-configured scope."
+commands.deny = ["desktop_hr_my_substitutions"]

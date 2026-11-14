@@ -192,6 +192,74 @@ describe("hr-pengajuan: aturan kembar", () => {
     }
   });
 
+  test("JP terdampak, bentrok pengganti, susun, hitung (2c)", () => {
+    const t = vektor.jp_terdampak;
+    for (const k of t.kasus) {
+      expect(
+        P.jpTerdampak(
+          t.pengajuan as P.PengajuanJp[],
+          t.jadwal as P.JadwalJp[],
+          new Set(k.libur),
+          k.dari,
+          k.sampai,
+        ),
+      ).toEqual(k.hasil as P.Jp[]);
+    }
+    const b = vektor.pengganti_bentrok;
+    for (const [masuk, hasil] of b.kasus) {
+      const [pengganti, status, tanggal, jamKe, id] = masuk as string[];
+      expect(
+        P.penggantiBentrok(
+          pengganti,
+          status,
+          tanggal,
+          jamKe,
+          id,
+          t.jadwal as P.JadwalJp[],
+          b.penanganan as P.Penanganan[],
+        ),
+      ).toBe(hasil as boolean);
+    }
+    const s = vektor.susun_jp;
+    expect(
+      P.susunJp(
+        s.jp as P.Jp[],
+        s.penanganan as P.Penanganan[],
+        s.presensi as P.PresensiJp[],
+        t.jadwal as P.JadwalJp[],
+      ),
+    ).toEqual(s.hasil as P.JpTersusun[]);
+    const h = vektor.hitung_jp;
+    expect(P.hitungJp(h.jp as P.Jp[], new Set(h.ditangani))).toEqual(h.hasil);
+    for (const k of vektor.validasi_penanganan) {
+      const hasil = P.validasiPenanganan(k.masuk as Record<string, unknown>);
+      expect(galat(hasil)).toBe(k.galat);
+      expect(hasil.ok ? hasil.nilai : null).toEqual(
+        k.hasil as P.PenangananSah | null,
+      );
+    }
+    for (const [masuk, hasil] of vektor.periksa_penanganan) {
+      const [guru, pengganti, sesi, cakupan] = masuk as [
+        string,
+        string,
+        string,
+        boolean,
+      ];
+      expect(galat(P.periksaPenanganan(guru, pengganti, sesi, cakupan))).toBe(
+        hasil as string | null,
+      );
+    }
+  });
+
+  test("SQL JP memakai predikat Menunggu/berlaku yang sama", () => {
+    const aktif = P.PENGAJUAN_AKTIF_ORANG_SQL.slice(
+      P.PENGAJUAN_AKTIF_ORANG_SQL.indexOf("NOT EXISTS"),
+      P.PENGAJUAN_AKTIF_ORANG_SQL.indexOf(" ORDER BY p.tanggal_mulai"),
+    );
+    expect(P.JP_TERDAMPAK_SQL).toContain(aktif);
+    expect(P.PENANGANAN_SQL).toContain(aktif);
+  });
+
   test("jenis bawaan sah menurut validasi", () => {
     expect(P.JENIS_BAWAAN).toHaveLength(10);
     for (const j of P.JENIS_BAWAAN) {
@@ -234,6 +302,15 @@ describe("hr-pengajuan: aturan kembar", () => {
       P.RIWAYAT_PENGAJUAN_SQL,
       P.ATURAN_CUTI_SQL,
       P.CLOUD_PENYESUAIAN_SQL,
+      P.JP_TERDAMPAK_SQL,
+      P.JADWAL_JP_SQL,
+      P.PENANGANAN_SQL,
+      P.PRESENSI_JP_SQL,
+      P.GURU_AKTIF_SQL,
+      P.CLOUD_PENANGANAN_SQL,
+      P.PESAN_JP_SENDIRI,
+      P.PESAN_CAKUPAN_JP,
+      P.PESAN_BENTROK_PENGGANTI,
     ];
     let diperiksa = 0;
     for (const dir of ["desktop", "mobile"]) {
@@ -261,6 +338,7 @@ describe("hr-pengajuan: aturan kembar", () => {
         ["PERIODE_CUTI", P.PERIODE_CUTI],
         ["SISA_CUTI", P.SISA_CUTI],
         ["JENIS_PENYESUAIAN", P.JENIS_PENYESUAIAN],
+        ["STATUS_PENANGANAN", P.STATUS_PENANGANAN],
       ] as const) {
         expect(rust).toContain(
           `${nama}:[&str;${daftar.length}]=${JSON.stringify(daftar).replace(/\s+/g, "")};`,

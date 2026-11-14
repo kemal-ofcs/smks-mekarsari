@@ -2,14 +2,23 @@ import "server-only";
 
 import type { Client, ResultSet, Row, Transaction } from "@libsql/client";
 import type { z } from "zod";
+import { hasPermission } from "@/lib/auth/access";
+import type { OperatorUser } from "@/lib/auth/operator-user";
+import type { PermissionKey } from "@/lib/rbac/catalog";
 import { ApiRequestError } from "@/lib/server/http/api-response";
-import { type BarisJenis, JENIS_SQL } from "@/lib/validations/hr-pengajuan";
+import {
+  type BarisJenis,
+  JENIS_SQL,
+  samaOrang,
+} from "@/lib/validations/hr-pengajuan";
 import {
   AMBIL_BERKAS_SQL,
+  AMBIL_LAMPIRAN_SQL,
   ATURAN_PERCOBAAN,
   ATURAN_PKWT,
   angkaPengaturan,
   BATAL_TUGAS_SQL,
+  type BarisLampiran,
   type BarisPtk,
   BENTROK_BAGIAN_SQL,
   BENTROK_JABATAN_SQL,
@@ -22,12 +31,14 @@ import {
   CERMIN_STATUS_SQL,
   type DaftarDokumen,
   type DaftarKontrak,
+  type DaftarLampiran,
   type DaftarTugas,
   DOKUMEN_SQL,
   type DokumenBaris,
   type dokumenDraftSchema,
   GABUNG_BAGIAN_SQL,
   HAPUS_DOKUMEN_SQL,
+  HAPUS_LAMPIRAN_SQL,
   HARI_INI_SQL,
   ID_WALI_KELAS,
   type IsiBerkasDokumen,
@@ -45,7 +56,9 @@ import {
   KUNCI_PERCOBAAN_MAKS,
   KUNCI_PKWT_MAKS,
   type keuanganDraftSchema,
+  LAMPIRAN_SQL,
   type LaporanPtk,
+  type lampiranSchema,
   type MasterDraft,
   normalisasiNama,
   ORG_BAGIAN_NAMA_SQL,
@@ -54,11 +67,16 @@ import {
   ORG_PEGAWAI_SQL,
   type OrgKepegawaian,
   PEGAWAI_SQL,
+  PEMILIK_LAMPIRAN_SQL,
   PENDIDIKAN_SQL,
+  PENGAJUAN_LAMPIRAN_SQL,
   PENGATURAN_KONTRAK_SQL,
   PESAN_BERKAS_PENUH,
   PESAN_DOKUMEN_DITOLAK,
+  PESAN_LAMPIRAN_DITOLAK,
+  PESAN_LAMPIRAN_PENUH,
   PESAN_PEGAWAI_BELUM_DI_CLOUD,
+  PESAN_PENGAJUAN_BELUM_DI_CLOUD,
   type PegawaiKepegawaian,
   type PendidikanBaris,
   type PengaturanKontrak,
@@ -91,11 +109,13 @@ import {
   susunOrg,
   TAHUN_AJARAN_SQL,
   TAMBAH_BERKAS_SQL,
+  TAMBAH_LAMPIRAN_SQL,
   TUGAS_BERLAKU_SQL,
   TUGAS_SQL,
   TULIS_ULANG_BAGIAN_SQL,
   TULIS_ULANG_JABATAN_SQL,
   type TugasDraft,
+  tandaLampiran,
   uraiBerkasDokumen,
   validasiAlasan,
   validasiAngkaPengaturan,
@@ -1107,4 +1127,91 @@ export async function getLaporanPtk(client: Client): Promise<LaporanPtk> {
       status: kini.get(String(b.id_unik)) ?? "",
     })) as unknown as BarisPtk[],
   };
+}
+
+// Lampiran pengajuan (HRIS Fase 2 §20.3, Q-51), cermin `hris_cloud.rs`.
+
+/** Cermin `boleh_ubah_lampiran`: pengaju atau pemegang izin pemutus jenis. */
+function bolehUbahLampiran(operator: OperatorUser, baris: Row | undefined) {
+  if (!baris) return false;
+  return (
+    samaOrang(teks(baris, "diajukan_oleh"), operator.username) ||
+    hasPermission(operator, teks(baris, "izin_pemutus") as PermissionKey)
+  );
+}
+
+export async function getLampiran(
+  client: Client,
+  operator: OperatorUser,
+  idPengajuan: string,
+): Promise<DaftarLampiran> {
+  const id = idPengajuan.trim();
+  const [pengajuan, berkas] = await Promise.all([
+    client.execute({ sql: PENGAJUAN_LAMPIRAN_SQL, args: [id] }),
+    client.execute({ sql: LAMPIRAN_SQL, args: [id] }),
+  ]);
+  const p = pengajuan.rows[0];
+  if (!p) return { ada: false, boleh_ubah: false, berkas: [], tanda: [] };
+  const daftar = objek(berkas) as unknown as BarisLampiran[];
+  return {
+    ada: true,
+    boleh_ubah: bolehUbahLampiran(operator, p),
+    tanda: tandaLampiran(Number(p.wajib_dokumen ?? 0) === 1, daftar.length),
+    berkas: daftar,
+  };
+}
+
+export async function getIsiLampiran(
+  client: Client,
+  idBerkas: string,
+): Promise<IsiBerkasDokumen> {
+  const baris = objek(
+    await client.execute({ sql: AMBIL_LAMPIRAN_SQL, args: [idBerkas.trim()] }),
+  )[0];
+  if (!baris) throw new ApiRequestError("Berkas tidak ditemukan.", 404);
+  return baris as unknown as IsiBerkasDokumen;
+}
+
+export async function tambahLampiran(
+  client: Client,
+  operator: OperatorUser,
+  draft: z.output<typeof lampiranSchema>,
+) {
+  const berkas = ambilValid(
+    uraiBerkasDokumen(draft.nama_berkas, draft.mime_type, draft.data_base64),
+  );
+  const id = draft.id_pengajuan.trim();
+  const p = (await client.execute({ sql: PENGAJUAN_LAMPIRAN_SQL, args: [id] }))
+    .rows[0];
+  if (!p) galat(PESAN_PENGAJUAN_BELUM_DI_CLOUD);
+  if (!bolehUbahLampiran(operator, p)) galat(PESAN_LAMPIRAN_DITOLAK);
+  const idBerkas = idBaru("pgb-");
+  await tulisPegawai(
+    client,
+    TAMBAH_LAMPIRAN_SQL,
+    [
+      idBerkas,
+      id,
+      berkas.nama_berkas,
+      berkas.mime_type,
+      berkas.data_base64,
+      operator.username,
+    ],
+    PESAN_LAMPIRAN_PENUH,
+  );
+  return { id_berkas: idBerkas };
+}
+
+export async function hapusLampiran(
+  client: Client,
+  operator: OperatorUser,
+  idBerkas: string,
+) {
+  const id = idBerkas.trim();
+  const pemilik = (
+    await client.execute({ sql: PEMILIK_LAMPIRAN_SQL, args: [id] })
+  ).rows[0];
+  if (!pemilik) throw new ApiRequestError("Berkas tidak ditemukan.", 404);
+  if (!bolehUbahLampiran(operator, pemilik)) galat(PESAN_LAMPIRAN_DITOLAK);
+  return hapusBaris(client, HAPUS_LAMPIRAN_SQL, id);
 }

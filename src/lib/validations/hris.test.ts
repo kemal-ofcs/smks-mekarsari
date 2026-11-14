@@ -266,6 +266,14 @@ describe("hris 1c: data cloud-only (kembar hris_cloud.rs)", () => {
     periksaKasus(vektor.dokumen, vektor.dokumen_dasar, H.validasiDokumen);
   });
 
+  test("tanda lampiran pengajuan (Q-51)", () => {
+    for (const [wajib, jumlah, hasil] of vektor.tanda_lampiran) {
+      expect(H.tandaLampiran(wajib as boolean, jumlah as number)).toEqual(
+        hasil as string[],
+      );
+    }
+  });
+
   test("berkas dokumen", () => {
     for (const k of vektor.berkas_dokumen) {
       const hasil = H.uraiBerkasDokumen(
@@ -369,6 +377,15 @@ describe("hris 1c: data cloud-only (kembar hris_cloud.rs)", () => {
       H.PESAN_PEGAWAI_BELUM_DI_CLOUD,
       H.PESAN_DOKUMEN_DITOLAK,
       H.PESAN_BERKAS_PENUH,
+      H.PENGAJUAN_LAMPIRAN_SQL,
+      H.LAMPIRAN_SQL,
+      H.AMBIL_LAMPIRAN_SQL,
+      H.PEMILIK_LAMPIRAN_SQL,
+      H.TAMBAH_LAMPIRAN_SQL,
+      H.HAPUS_LAMPIRAN_SQL,
+      H.PESAN_PENGAJUAN_BELUM_DI_CLOUD,
+      H.PESAN_LAMPIRAN_PENUH,
+      H.PESAN_LAMPIRAN_DITOLAK,
     ];
     let diperiksa = 0;
     for (const dir of ["desktop", "mobile"]) {

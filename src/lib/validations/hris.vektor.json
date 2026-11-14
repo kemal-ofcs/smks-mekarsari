@@ -1043,5 +1043,10 @@
       "galat": "Nama berkas maksimal 180 karakter.",
       "hasil": null
     }
+  ],
+  "tanda_lampiran": [
+    [true, 0, ["tanpa_dokumen"]],
+    [true, 2, []],
+    [false, 0, []]
   ]
 }

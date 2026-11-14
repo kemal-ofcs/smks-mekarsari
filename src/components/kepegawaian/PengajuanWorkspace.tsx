@@ -16,6 +16,8 @@ import { hasPermission } from "@/lib/auth/access";
 import type { OperatorUser } from "@/lib/auth/operator-user";
 import {
   type DaftarPengajuan,
+  type JpTersusun,
+  muatJpTerdampak,
   muatPengajuan,
   muatSaldoCuti,
   type PengajuanDraft,
@@ -41,6 +43,8 @@ import {
   TOMBOL,
   TOMBOL_UTAMA,
 } from "./gaya";
+import { RingkasJp } from "./JamKosongWorkspace";
+import { LampiranPengajuan } from "./LampiranPengajuan";
 
 type Saringan = "menunggu" | "diketahui" | "ditinjau" | "semua";
 
@@ -269,6 +273,18 @@ export function PengajuanWorkspace({ user }: { user: OperatorUser | null }) {
                 </p>
                 <p className="text-slate-300">{rentangTeks(p)}</p>
                 <p className="break-words text-slate-400">{p.alasan}</p>
+                {data?.jp[p.id_pengajuan] ? (
+                  <p
+                    className={
+                      data.jp[p.id_pengajuan].belum > 0
+                        ? "text-xs text-amber-200"
+                        : "text-xs text-slate-400"
+                    }
+                  >
+                    {data.jp[p.id_pengajuan].total} jam pelajaran terdampak,{" "}
+                    {data.jp[p.id_pengajuan].belum} belum ditangani
+                  </p>
+                ) : null}
                 {p.tanda.length > 0 ? (
                   <p className="text-xs text-amber-200">
                     {p.tanda.map((t) => LABEL_TANDA[t] ?? t).join(" · ")}
@@ -375,6 +391,13 @@ function FormPengajuan({
     periodeMulai && jenis?.potong_jatah === 1
       ? periodeMulai.sisa - (ringkasan?.hari_wajib ?? 0)
       : null;
+  const jpForm = useJpForm(
+    guru ? d.id_karyawan : "",
+    d.tanggal_mulai,
+    d.tanggal_selesai,
+    pakaiJam ? (d.jam_mulai_ke ?? null) : null,
+    pakaiJam ? (d.jam_sampai_ke ?? null) : null,
+  );
 
   const kirim = async (event: FormEvent) => {
     event.preventDefault();
@@ -602,10 +625,38 @@ function FormPengajuan({
             ) : null}
           </div>
         ) : null}
+        {jpForm ? (
+          <div className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-200">
+            {jpForm.length === 0 ? (
+              <p>Tidak ada jam pelajaran terjadwal yang terdampak.</p>
+            ) : (
+              <>
+                <p>
+                  {jpForm.length} jam pelajaran terdampak; penggantinya diatur
+                  di menu Jam Kosong.
+                </p>
+                <ul className="mt-1 space-y-0.5 text-slate-300">
+                  {jpForm.slice(0, 20).map((j) => (
+                    <li key={j.id_penanganan}>
+                      {j.tanggal} · jam {j.jam_ke} · {j.nama_rombel} ·{" "}
+                      {j.nama_mapel}
+                    </li>
+                  ))}
+                  {jpForm.length > 20 ? (
+                    <li className="text-slate-400">
+                      dan {jpForm.length - 20} lainnya
+                    </li>
+                  ) : null}
+                </ul>
+              </>
+            )}
+          </div>
+        ) : null}
         {jenis?.wajib_dokumen === 1 ? (
           <p className={PERINGATAN}>
             Jenis ini perlu dokumen pendukung (misalnya surat dokter). Pengajuan
-            tetap bisa disimpan tanpa dokumen.
+            tetap bisa disimpan tanpa dokumen; lampirannya ditambahkan di
+            rincian sesudah tersimpan.
           </p>
         ) : null}
         <div className="flex justify-end gap-2">
@@ -649,6 +700,88 @@ function useRingkasanJatah(id: string, mulai: string, selesai: string) {
     };
   }, [id, mulai, selesai]);
   return hasil;
+}
+
+/**
+ * JP terdampak isian form guru sebelum disimpan (§20.5 layar 1). Tanpa guru
+ * atau rentang belum lengkap = tanpa ringkasan.
+ */
+function useJpForm(
+  id: string,
+  mulai: string,
+  selesai: string,
+  jamMulai: number | null,
+  jamSampai: number | null,
+) {
+  const [hasil, setHasil] = useState<JpTersusun[] | null>(null);
+  useEffect(() => {
+    if (!id || !mulai || !selesai || selesai < mulai) {
+      setHasil(null);
+      return;
+    }
+    let batal = false;
+    const tunda = setTimeout(() => {
+      muatJpTerdampak({
+        draft: {
+          id_karyawan: id,
+          tanggal_mulai: mulai,
+          tanggal_selesai: selesai,
+          jam_mulai_ke: jamMulai,
+          jam_sampai_ke: jamSampai,
+        },
+      })
+        .then((d) => {
+          if (!batal) setHasil(d.jp);
+        })
+        .catch(() => {
+          if (!batal) setHasil(null);
+        });
+    }, 300);
+    return () => {
+      batal = true;
+      clearTimeout(tunda);
+    };
+  }, [id, mulai, selesai, jamMulai, jamSampai]);
+  return hasil;
+}
+
+/** JP terdampak satu pengajuan beserta penanganannya (rincian). */
+function JpPengajuan({ idPengajuan }: { idPengajuan: string }) {
+  const [jp, setJp] = useState<JpTersusun[] | null>(null);
+  const [galat, setGalat] = useState<string | null>(null);
+  useEffect(() => {
+    let batal = false;
+    muatJpTerdampak({ idPengajuan })
+      .then((d) => {
+        if (!batal) setJp(d.jp);
+      })
+      .catch((error) => {
+        if (!batal) setGalat(pesanGalat(error));
+      });
+    return () => {
+      batal = true;
+    };
+  }, [idPengajuan]);
+  if (galat) return <p className="text-slate-400">{galat}</p>;
+  if (!jp || jp.length === 0) return null;
+  return (
+    <section aria-labelledby="jp-pengajuan" className="space-y-2">
+      <h3 id="jp-pengajuan" className="text-sm font-semibold text-white">
+        Jam pelajaran terdampak ({jp.filter((j) => !j.penanganan).length} belum
+        ditangani)
+      </h3>
+      <ul className="space-y-2">
+        {jp.map((j) => (
+          <li
+            key={j.id_penanganan}
+            className="rounded-xl border border-white/10 px-3 py-2"
+          >
+            <RingkasJp j={j} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 const TOMBOL_AKSI: [string, string][] = [
@@ -757,6 +890,8 @@ function RincianPengajuan({
             ))}
           </ul>
         ) : null}
+        {p.guru === 1 ? <JpPengajuan idPengajuan={p.id_pengajuan} /> : null}
+        <LampiranPengajuan idPengajuan={p.id_pengajuan} />
         <section aria-labelledby="riwayat-keputusan" className="space-y-2">
           <h3
             id="riwayat-keputusan"

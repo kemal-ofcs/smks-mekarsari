@@ -12,14 +12,15 @@
 //! `validations/hr-pengajuan.vektor.json`, teks SQL dibandingkan harfiah oleh
 //! `hr-pengajuan.test.ts`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::hari_kerja::{parse_hari_kerja, tanggal_valid, wajib_masuk};
+use super::class_attendance::jam_ke_range;
+use super::hari_kerja::{hari_iso, parse_hari_kerja, tanggal_valid, wajib_masuk};
 use super::hris::{self, rows_json_with};
 use super::scanner::{evaluate_holiday_scan, HolidayWhitelistEntry};
 use super::time_policy::{add_days, days_between};
@@ -500,7 +501,7 @@ pub fn status_berlaku(status: &str) -> bool {
     status == "Disetujui" || status == "Disetujui (urgent)"
 }
 
-fn sama_orang(a: &str, b: &str) -> bool {
+pub(crate) fn sama_orang(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
@@ -1439,8 +1440,10 @@ pub fn requests(
     )?;
     susun_daftar(&mut pengajuan, &keputusan);
     tandai_hadir_saat_cuti(&connection, &mut pengajuan)?;
+    let jp = hitung_jp_daftar(&connection, &pengajuan)?;
     Ok(json!({
         "pengajuan": pengajuan,
+        "jp": jp,
         "jenis": rows_json_with(&connection, JENIS_SQL, [])?,
         "pegawai": rows_json_with(&connection, PEGAWAI_PENGAJUAN_SQL, [])?,
         "sesi": {
@@ -2331,6 +2334,610 @@ pub fn sesuaikan_cuti(
     Ok(payload)
 }
 
+// Sub-fase 2c: JP terdampak dan penanganannya (§20.2.5, §20.2.8, §20.2.9)
+
+pub const STATUS_PENANGANAN: [&str; 3] = ["Diganti", "Tugas Mandiri", "Digabung"];
+
+/// Pengajuan guru yang Menunggu ATAU berlaku (bukan Ditolak/Dibatalkan) dan
+/// punya jadwal aktif, bertumpuk `?1..?2`; `?3` satu pengajuan atau `''`.
+/// Predikatnya turunan harfiah `PENGAJUAN_AKTIF_ORANG_SQL`.
+pub const JP_TERDAMPAK_SQL: &str = "SELECT p.id_pengajuan, p.id_karyawan, COALESCE(m.nama, p.id_karyawan) AS nama_guru, p.tanggal_mulai, p.tanggal_selesai, p.jam_mulai_ke, p.jam_sampai_ke FROM hr_pengajuan p LEFT JOIN master_data m ON m.id_unik = p.id_karyawan WHERE p.tanggal_mulai <= ?2 AND p.tanggal_selesai >= ?1 AND (?3 = '' OR p.id_pengajuan = ?3) AND EXISTS (SELECT 1 FROM jadwal_mengajar j WHERE j.id_guru = p.id_karyawan AND j.is_aktif = 1) AND NOT EXISTS (SELECT 1 FROM hr_pengajuan_keputusan b WHERE b.id_pengajuan = p.id_pengajuan AND b.jenis = 'Batal') AND COALESCE((SELECT k.jenis FROM hr_pengajuan_keputusan k WHERE k.id_pengajuan = p.id_pengajuan AND k.sidik = p.sidik AND k.jenis IN ('Setujui', 'Tolak', 'Setujui Urgent') ORDER BY k.diterima_cloud IS NULL, k.diterima_cloud, k.waktu_perangkat, k.id_keputusan LIMIT 1), '') <> 'Tolak' ORDER BY p.tanggal_mulai, p.id_pengajuan\n-- batas: pengajuan guru yang bertumpuk rentang, sebesar jumlah guru kali pengajuan\n;";
+/// Jadwal aktif dari tahun ajaran yang semesternya bertumpuk `?1..?2`, dengan
+/// unit rombel (unit JP, Q-42). Dipakai JP terdampak dan cek bentrok pengganti.
+pub const JADWAL_JP_SQL: &str = "SELECT j.id_jadwal, j.id_guru, j.hari, j.jam_ke, j.id_rombel, COALESCE(r.nama_rombel, j.id_rombel) AS nama_rombel, j.id_mapel, COALESCE(mp.nama_mapel, j.id_mapel) AS nama_mapel, COALESCE(u.nama_unit, '') AS unit, t.tanggal_mulai AS ta_mulai, t.tanggal_selesai AS ta_selesai FROM jadwal_mengajar j JOIN akademik_tahun_ajaran t ON t.id_tahun_ajaran = j.id_tahun_ajaran LEFT JOIN akademik_rombel r ON r.id_rombel = j.id_rombel LEFT JOIN akademik_mapel mp ON mp.id_mapel = j.id_mapel LEFT JOIN akademik_unit u ON u.id_unit = r.id_unit WHERE j.is_aktif = 1 AND t.tanggal_mulai <= ?2 AND t.tanggal_selesai >= ?1 ORDER BY j.id_guru, j.hari, CAST(j.jam_ke AS INTEGER), j.jam_ke, j.id_jadwal\n-- batas: jadwal mingguan semester yang bertumpuk rentang, sebesar rombel kali jam pelajaran\n;";
+/// Penanganan tercatat `?1..?2` milik pengajuan yang masih Menunggu/berlaku.
+pub const PENANGANAN_SQL: &str = "SELECT h.id_penanganan, h.id_pengajuan, h.tanggal, h.id_jadwal, COALESCE(h.jam_ke, '') AS jam_ke, h.status, COALESCE(h.id_guru_pengganti, '') AS id_guru_pengganti, COALESCE(mg.nama, h.id_guru_pengganti, '') AS nama_pengganti, COALESCE(h.catatan, '') AS catatan, h.dicatat_oleh, h.waktu_perangkat FROM hr_jp_penanganan h JOIN hr_pengajuan p ON p.id_pengajuan = h.id_pengajuan LEFT JOIN master_data mg ON mg.id_unik = h.id_guru_pengganti WHERE h.tanggal >= ?1 AND h.tanggal <= ?2 AND NOT EXISTS (SELECT 1 FROM hr_pengajuan_keputusan b WHERE b.id_pengajuan = p.id_pengajuan AND b.jenis = 'Batal') AND COALESCE((SELECT k.jenis FROM hr_pengajuan_keputusan k WHERE k.id_pengajuan = p.id_pengajuan AND k.sidik = p.sidik AND k.jenis IN ('Setujui', 'Tolak', 'Setujui Urgent') ORDER BY k.diterima_cloud IS NULL, k.diterima_cloud, k.waktu_perangkat, k.id_keputusan LIMIT 1), '') <> 'Tolak' ORDER BY h.tanggal, h.id_penanganan\n-- batas: satu baris per JP terdampak dalam rentang\n;";
+/// Presensi kelas yang tersimpan `?1..?2`, untuk tanda `pengganti_berbeda`.
+pub const PRESENSI_JP_SQL: &str = "SELECT id_rombel, tanggal, jam_ke, id_guru FROM presensi_mapel WHERE tanggal >= ?1 AND tanggal <= ?2 ORDER BY tanggal, id_rombel\n-- batas: sesi presensi kelas dalam rentang pengajuan\n;";
+pub const GURU_AKTIF_SQL: &str = "SELECT 1 FROM master_data m JOIN guru_data g ON g.id_guru = m.id_unik WHERE m.id_unik = ?1 AND COALESCE(m.status_aktif, 'Aktif') = 'Aktif' LIMIT 1;";
+
+pub const PESAN_JP_SENDIRI: &str = "Jam pelajaranmu sendiri harus ditangani orang lain.";
+pub const PESAN_CAKUPAN_JP: &str = "Rombel ini di luar unit yang kamu pegang.";
+pub const PESAN_BENTROK_PENGGANTI: &str =
+    "Guru pengganti sudah punya jadwal atau tugas pengganti lain di jam itu.";
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PengajuanJp {
+    pub id_pengajuan: String,
+    pub id_karyawan: String,
+    #[serde(default)]
+    pub nama_guru: String,
+    pub tanggal_mulai: String,
+    pub tanggal_selesai: String,
+    #[serde(default)]
+    pub jam_mulai_ke: Option<i64>,
+    #[serde(default)]
+    pub jam_sampai_ke: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct JadwalJp {
+    pub id_jadwal: String,
+    pub id_guru: String,
+    pub hari: i64,
+    pub jam_ke: String,
+    pub id_rombel: String,
+    pub nama_rombel: String,
+    pub id_mapel: String,
+    pub nama_mapel: String,
+    pub unit: String,
+    pub ta_mulai: String,
+    pub ta_selesai: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct Jp {
+    pub id_penanganan: String,
+    pub id_pengajuan: String,
+    pub id_karyawan: String,
+    pub nama_guru: String,
+    pub tanggal: String,
+    pub id_jadwal: String,
+    pub jam_ke: String,
+    pub id_rombel: String,
+    pub nama_rombel: String,
+    pub id_mapel: String,
+    pub nama_mapel: String,
+    pub unit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct Penanganan {
+    pub id_penanganan: String,
+    pub id_pengajuan: String,
+    pub tanggal: String,
+    pub id_jadwal: String,
+    pub jam_ke: String,
+    pub status: String,
+    pub id_guru_pengganti: String,
+    #[serde(default)]
+    pub nama_pengganti: String,
+    #[serde(default)]
+    pub catatan: String,
+    #[serde(default)]
+    pub dicatat_oleh: String,
+    #[serde(default)]
+    pub waktu_perangkat: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresensiJp {
+    pub id_rombel: String,
+    pub tanggal: String,
+    pub jam_ke: String,
+    pub id_guru: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct JpTersusun {
+    #[serde(flatten)]
+    pub jp: Jp,
+    pub penanganan: Option<Penanganan>,
+    pub tanda: Vec<String>,
+}
+
+pub fn id_penanganan(id_pengajuan: &str, tanggal: &str, id_jadwal: &str) -> String {
+    format!("jp:{id_pengajuan}:{tanggal}:{id_jadwal}")
+}
+
+fn jam_awal(jam_ke: &str) -> i64 {
+    jam_ke_range(jam_ke).map_or(0, |(a, _)| i64::from(a))
+}
+
+fn beririsan(a: &str, b: &str) -> bool {
+    match (jam_ke_range(a), jam_ke_range(b)) {
+        (Some((a0, a1)), Some((b0, b1))) => a0 <= b1 && b0 <= a1,
+        _ => false,
+    }
+}
+
+fn ta_memuat(j: &JadwalJp, t: &str) -> bool {
+    j.ta_mulai.as_str() <= t && t <= j.ta_selesai.as_str()
+}
+
+/// Cermin `jpTerdampak` (§20.2.5): setiap tanggal rentang yang bukan libur,
+/// setiap jadwal guru pada hari itu dari tahun ajaran yang memuat tanggalnya,
+/// yang `jam_ke`-nya beririsan dengan jam pengajuan (hari pertama dari
+/// `jam_mulai_ke`, hari terakhir sampai `jam_sampai_ke`, hari tengah penuh).
+/// Baris rentang (`3-4`) yang tersentuh sebagian dihitung utuh (Q-46).
+pub fn jp_terdampak(
+    pengajuan: &[PengajuanJp],
+    jadwal: &[JadwalJp],
+    libur: &HashSet<String>,
+    dari: &str,
+    sampai: &str,
+) -> Vec<Jp> {
+    let mut hasil = Vec::new();
+    for p in pengajuan {
+        let r = Ringkas {
+            id_karyawan: p.id_karyawan.clone(),
+            tanggal_mulai: p.tanggal_mulai.clone(),
+            tanggal_selesai: p.tanggal_selesai.clone(),
+            jam_mulai_ke: p.jam_mulai_ke,
+            jam_sampai_ke: p.jam_sampai_ke,
+        };
+        let mulai = p.tanggal_mulai.as_str().max(dari);
+        let selesai = p.tanggal_selesai.as_str().min(sampai);
+        for t in tanggal_rentang(mulai, selesai) {
+            if libur.contains(&t) {
+                continue;
+            }
+            let Some(hari) = hari_iso(&t) else {
+                continue;
+            };
+            let (awal, akhir) = jam_pada(&r, &t);
+            for j in jadwal.iter().filter(|j| {
+                j.id_guru == p.id_karyawan && j.hari == hari && ta_memuat(j, &t)
+            }) {
+                let Some((j0, j1)) = jam_ke_range(&j.jam_ke) else {
+                    continue;
+                };
+                if i64::from(j0) <= akhir && awal <= i64::from(j1) {
+                    hasil.push(Jp {
+                        id_penanganan: id_penanganan(&p.id_pengajuan, &t, &j.id_jadwal),
+                        id_pengajuan: p.id_pengajuan.clone(),
+                        id_karyawan: p.id_karyawan.clone(),
+                        nama_guru: p.nama_guru.clone(),
+                        tanggal: t.clone(),
+                        id_jadwal: j.id_jadwal.clone(),
+                        jam_ke: j.jam_ke.clone(),
+                        id_rombel: j.id_rombel.clone(),
+                        nama_rombel: j.nama_rombel.clone(),
+                        id_mapel: j.id_mapel.clone(),
+                        nama_mapel: j.nama_mapel.clone(),
+                        unit: j.unit.clone(),
+                    });
+                }
+            }
+        }
+    }
+    hasil.sort_by(|a, b| {
+        (a.tanggal.as_str(), jam_awal(&a.jam_ke), a.id_penanganan.as_str()).cmp(&(
+            b.tanggal.as_str(),
+            jam_awal(&b.jam_ke),
+            b.id_penanganan.as_str(),
+        ))
+    });
+    hasil
+}
+
+/// Cermin `penggantiBentrok`: Diganti bentrok dengan jadwal pengganti sendiri
+/// atau penanganan lain atas namanya di jam yang beririsan; Digabung memang
+/// mengajar kelasnya sendiri, jadi hanya bentrok dengan tugas Diganti.
+pub fn pengganti_bentrok(
+    pengganti: &str,
+    status: &str,
+    tanggal: &str,
+    jam_ke: &str,
+    id_sendiri: &str,
+    jadwal: &[JadwalJp],
+    penanganan: &[Penanganan],
+) -> bool {
+    if pengganti.is_empty() || status == "Tugas Mandiri" {
+        return false;
+    }
+    let hari = hari_iso(tanggal);
+    let jadwal_bentrok = status == "Diganti"
+        && jadwal.iter().any(|j| {
+            j.id_guru == pengganti
+                && Some(j.hari) == hari
+                && ta_memuat(j, tanggal)
+                && beririsan(&j.jam_ke, jam_ke)
+        });
+    jadwal_bentrok
+        || penanganan.iter().any(|h| {
+            h.id_penanganan != id_sendiri
+                && h.id_guru_pengganti == pengganti
+                && h.tanggal == tanggal
+                && (status == "Diganti" || h.status == "Diganti")
+                && beririsan(&h.jam_ke, jam_ke)
+        })
+}
+
+/// Cermin `susunJp`: penanganan per JP dan tandanya (tidak pernah menolak).
+pub fn susun_jp(
+    jp: Vec<Jp>,
+    penanganan: &[Penanganan],
+    presensi: &[PresensiJp],
+    jadwal: &[JadwalJp],
+) -> Vec<JpTersusun> {
+    jp.into_iter()
+        .map(|j| {
+            let h = penanganan
+                .iter()
+                .find(|h| h.id_penanganan == j.id_penanganan)
+                .cloned();
+            let mut tanda = Vec::new();
+            if let Some(h) = &h {
+                let pengganti = h.id_guru_pengganti.as_str();
+                if !pengganti.is_empty()
+                    && presensi.iter().any(|s| {
+                        s.id_rombel == j.id_rombel
+                            && s.tanggal == j.tanggal
+                            && s.id_guru != pengganti
+                            && beririsan(&s.jam_ke, &j.jam_ke)
+                    })
+                {
+                    tanda.push("pengganti_berbeda".to_owned());
+                }
+                if pengganti_bentrok(
+                    pengganti,
+                    &h.status,
+                    &j.tanggal,
+                    &j.jam_ke,
+                    &j.id_penanganan,
+                    jadwal,
+                    penanganan,
+                ) {
+                    tanda.push("pengganti_bentrok".to_owned());
+                }
+            }
+            JpTersusun {
+                jp: j,
+                penanganan: h,
+                tanda,
+            }
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct HitungJp {
+    pub total: i64,
+    pub belum: i64,
+}
+
+/// Cermin `hitungJp`: JP terdampak dan yang belum ditangani per pengajuan.
+pub fn hitung_jp(jp: &[Jp], ditangani: &HashSet<String>) -> BTreeMap<String, HitungJp> {
+    let mut hasil: BTreeMap<String, HitungJp> = BTreeMap::new();
+    for j in jp {
+        let h = hasil
+            .entry(j.id_pengajuan.clone())
+            .or_insert(HitungJp { total: 0, belum: 0 });
+        h.total += 1;
+        if !ditangani.contains(&j.id_penanganan) {
+            h.belum += 1;
+        }
+    }
+    hasil
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct PenangananSah {
+    pub id_pengajuan: String,
+    pub tanggal: String,
+    pub id_jadwal: String,
+    pub status: String,
+    pub id_guru_pengganti: String,
+    pub catatan: String,
+}
+
+/// Cermin `validasiPenanganan`. Tugas Mandiri tanpa pengganti.
+pub fn validasi_penanganan(draft: &Value) -> Result<PenangananSah, String> {
+    let id_pengajuan = teks(draft, "id_pengajuan");
+    let id_jadwal = teks(draft, "id_jadwal");
+    if id_pengajuan.is_empty() || id_jadwal.is_empty() {
+        return Err("Jam pelajaran yang ditangani tidak dikenal.".into());
+    }
+    let tanggal = teks(draft, "tanggal");
+    if !tanggal_valid(&tanggal) {
+        return Err("Tanggal tidak valid.".into());
+    }
+    let status = teks(draft, "status");
+    if !STATUS_PENANGANAN.contains(&status.as_str()) {
+        return Err("Status penanganan tidak dikenal.".into());
+    }
+    let id_guru_pengganti = if status == "Tugas Mandiri" {
+        String::new()
+    } else {
+        teks(draft, "id_guru_pengganti")
+    };
+    if status != "Tugas Mandiri" && id_guru_pengganti.is_empty() {
+        return Err("Pilih guru pengganti.".into());
+    }
+    let catatan = teks(draft, "catatan");
+    if panjang(&catatan) > MAKS_ALASAN {
+        return Err(format!("Catatan maksimal {MAKS_ALASAN} karakter."));
+    }
+    Ok(PenangananSah {
+        id_pengajuan,
+        tanggal,
+        id_jadwal,
+        status,
+        id_guru_pengganti,
+        catatan,
+    })
+}
+
+/// Cermin `periksaPenanganan` (§20.2.8, §20.2.9): bukan JP sendiri, dalam
+/// cakupan unit JP, dan pengganti bukan guru yang berhalangan.
+pub fn periksa_penanganan(
+    guru_jp: &str,
+    pengganti: &str,
+    sesi_karyawan: &str,
+    dalam_cakupan: bool,
+) -> Result<(), String> {
+    if !sesi_karyawan.is_empty() && sesi_karyawan == guru_jp {
+        return Err(PESAN_JP_SENDIRI.into());
+    }
+    if !dalam_cakupan {
+        return Err(PESAN_CAKUPAN_JP.into());
+    }
+    if !pengganti.is_empty() && pengganti == guru_jp {
+        return Err("Guru pengganti tidak boleh guru yang berhalangan.".into());
+    }
+    Ok(())
+}
+
+fn dari_baris<T: serde::de::DeserializeOwned>(rows: Vec<Value>) -> Vec<T> {
+    rows.into_iter()
+        .filter_map(|r| serde_json::from_value(r).ok())
+        .collect()
+}
+
+/// JP terdampak `dari..sampai` beserta jadwal yang dipakai menilainya.
+fn muat_jp(
+    connection: &rusqlite::Connection,
+    dari: &str,
+    sampai: &str,
+    id_pengajuan: &str,
+) -> Result<(Vec<Jp>, Vec<JadwalJp>), CommandError> {
+    let pengajuan: Vec<PengajuanJp> = dari_baris(rows_json_with(
+        connection,
+        JP_TERDAMPAK_SQL,
+        params![dari, sampai, id_pengajuan],
+    )?);
+    let jadwal: Vec<JadwalJp> =
+        dari_baris(rows_json_with(connection, JADWAL_JP_SQL, params![dari, sampai])?);
+    if pengajuan.is_empty() {
+        return Ok((Vec::new(), jadwal));
+    }
+    let (libur, _) = muat_kalender(connection, dari, sampai)?;
+    Ok((jp_terdampak(&pengajuan, &jadwal, &libur, dari, sampai), jadwal))
+}
+
+fn muat_penanganan(
+    connection: &rusqlite::Connection,
+    dari: &str,
+    sampai: &str,
+) -> Result<Vec<Penanganan>, CommandError> {
+    Ok(dari_baris(rows_json_with(
+        connection,
+        PENANGANAN_SQL,
+        params![dari, sampai],
+    )?))
+}
+
+/// Hitungan JP per pengajuan untuk daftar `/pengajuan` (rentang semua
+/// pengajuan guru di daftar).
+fn hitung_jp_daftar(
+    connection: &rusqlite::Connection,
+    pengajuan: &[Value],
+) -> Result<BTreeMap<String, HitungJp>, CommandError> {
+    let guru: Vec<&Value> = pengajuan
+        .iter()
+        .filter(|p| angka_kolom(p, "guru") == 1)
+        .collect();
+    let (Some(dari), Some(sampai)) = (
+        guru.iter().map(|p| teks(p, "tanggal_mulai")).min(),
+        guru.iter().map(|p| teks(p, "tanggal_selesai")).max(),
+    ) else {
+        return Ok(BTreeMap::new());
+    };
+    let (jp, _) = muat_jp(connection, &dari, &sampai, "")?;
+    let ditangani = muat_penanganan(connection, &dari, &sampai)?
+        .into_iter()
+        .map(|h| h.id_penanganan)
+        .collect();
+    Ok(hitung_jp(&jp, &ditangani))
+}
+
+/// `desktop_hr_affected_jp`: JP terdampak satu pengajuan, satu tanggal (Jam
+/// Kosong, bawaan hari ini WIB), atau isian form Ajukan yang belum disimpan.
+pub fn jp_terdampak_baca(
+    state: &DesktopState,
+    operator: &OperatorUser,
+    id_pengajuan: Option<&str>,
+    tanggal: Option<&str>,
+    draft: Option<&Value>,
+) -> Result<Value, CommandError> {
+    let connection = storage::database(&state.data_dir)?;
+    let sesi = json!({
+        "id_karyawan": tautan(operator),
+        "unit": unit_akun(&connection, operator)?,
+        "lingkup_semua": punya(operator, "hr.scope.all"),
+    });
+    if let Some(d) = draft {
+        let p = PengajuanJp {
+            id_pengajuan: String::new(),
+            id_karyawan: teks(d, "id_karyawan"),
+            nama_guru: String::new(),
+            tanggal_mulai: teks(d, "tanggal_mulai"),
+            tanggal_selesai: teks(d, "tanggal_selesai"),
+            jam_mulai_ke: opsional_kolom(d, "jam_mulai_ke"),
+            jam_sampai_ke: opsional_kolom(d, "jam_sampai_ke"),
+        };
+        if !tanggal_valid(&p.tanggal_mulai)
+            || !tanggal_valid(&p.tanggal_selesai)
+            || p.tanggal_selesai < p.tanggal_mulai
+            || days_between(&p.tanggal_mulai, &p.tanggal_selesai).unwrap_or(i64::MAX)
+                >= MAKS_RENTANG_HARI
+        {
+            return Err(invalid("Rentang tanggal tidak valid."));
+        }
+        let jadwal: Vec<JadwalJp> = dari_baris(rows_json_with(
+            &connection,
+            JADWAL_JP_SQL,
+            params![p.tanggal_mulai, p.tanggal_selesai],
+        )?);
+        let (libur, _) = muat_kalender(&connection, &p.tanggal_mulai, &p.tanggal_selesai)?;
+        let (dari, sampai) = (p.tanggal_mulai.clone(), p.tanggal_selesai.clone());
+        let jp = jp_terdampak(&[p], &jadwal, &libur, &dari, &sampai);
+        return Ok(json!({ "jp": susun_jp(jp, &[], &[], &[]), "dari": dari, "sampai": sampai, "sesi": sesi }));
+    }
+    let (dari, sampai, id) = match id_pengajuan.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => {
+            let p = rows_json_with(&connection, PENGAJUAN_SATU_SQL, params![id])?
+                .into_iter()
+                .next()
+                .ok_or_else(|| invalid("Pengajuan tidak ditemukan."))?;
+            (teks(&p, "tanggal_mulai"), teks(&p, "tanggal_selesai"), id.to_owned())
+        }
+        None => {
+            let t = match tanggal.map(str::trim).filter(|t| !t.is_empty()) {
+                Some(t) => t.to_owned(),
+                None => waktu(&connection)?.1,
+            };
+            if !tanggal_valid(&t) {
+                return Err(invalid("Tanggal tidak valid."));
+            }
+            (t.clone(), t, String::new())
+        }
+    };
+    let (jp, jadwal) = muat_jp(&connection, &dari, &sampai, &id)?;
+    let penanganan = muat_penanganan(&connection, &dari, &sampai)?;
+    let presensi: Vec<PresensiJp> =
+        dari_baris(rows_json_with(&connection, PRESENSI_JP_SQL, params![dari, sampai])?);
+    let guru: Vec<Value> = rows_json_with(&connection, PEGAWAI_PENGAJUAN_SQL, [])?
+        .into_iter()
+        .filter(|p| angka_kolom(p, "guru") == 1)
+        .collect();
+    Ok(json!({
+        "jp": susun_jp(jp, &penanganan, &presensi, &jadwal),
+        "jadwal": jadwal,
+        "penanganan": penanganan,
+        "guru": guru,
+        "dari": dari,
+        "sampai": sampai,
+        "sesi": sesi,
+    }))
+}
+
+/// `desktop_hr_substitute_save`: Diganti, Tugas Mandiri, atau Digabung atas id
+/// deterministik (Q-48). JP, unit, dan guru asli dinilai ulang dari database
+/// lokal; cakupan dan "bukan JP sendiri" dari sesi.
+pub fn simpan_penanganan(
+    state: &DesktopState,
+    operator: &OperatorUser,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let s = validasi_penanganan(&draft).map_err(invalid)?;
+    let client_id = sync::ensure_client_id(state)?;
+    let mut connection = storage::database(&state.data_dir)?;
+    let transaction = connection.transaction().map_err(db_error)?;
+    let id = id_penanganan(&s.id_pengajuan, &s.tanggal, &s.id_jadwal);
+    let (jp, jadwal) = muat_jp(&transaction, &s.tanggal, &s.tanggal, &s.id_pengajuan)?;
+    let j = jp
+        .into_iter()
+        .find(|j| j.id_penanganan == id)
+        .ok_or_else(|| invalid("Jam pelajaran itu tidak (lagi) terdampak pengajuan ini."))?;
+    let cakupan = dalam_cakupan(
+        punya(operator, "hr.scope.all"),
+        &unit_akun(&transaction, operator)?,
+        &j.unit,
+    );
+    periksa_penanganan(&j.id_karyawan, &s.id_guru_pengganti, &tautan(operator), cakupan)
+        .map_err(invalid)?;
+    if !s.id_guru_pengganti.is_empty()
+        && transaction
+            .query_row(GURU_AKTIF_SQL, params![s.id_guru_pengganti], |_| Ok(()))
+            .optional()
+            .map_err(db_error)?
+            .is_none()
+    {
+        return Err(invalid("Guru pengganti tidak ditemukan atau tidak aktif."));
+    }
+    let (sekarang, _) = waktu(&transaction)?;
+    let payload = json!({
+        "id_penanganan": id,
+        "id_pengajuan": s.id_pengajuan,
+        "tanggal": s.tanggal,
+        "id_jadwal": s.id_jadwal,
+        "id_rombel": j.id_rombel,
+        "id_mapel": j.id_mapel,
+        "jam_ke": j.jam_ke,
+        "status": s.status,
+        "id_guru_pengganti": s.id_guru_pengganti,
+        "catatan": s.catatan,
+        "dicatat_oleh": operator.username,
+        "waktu_perangkat": sekarang,
+    });
+    let lain = muat_penanganan(&transaction, &s.tanggal, &s.tanggal)?;
+    let bentrok = pengganti_bentrok(
+        &s.id_guru_pengganti,
+        &s.status,
+        &s.tanggal,
+        &j.jam_ke,
+        &id,
+        &jadwal,
+        &lain,
+    );
+    for (sql, args) in cloud_penanganan_statements(&payload, &id) {
+        transaction
+            .execute(
+                &sql,
+                rusqlite::params_from_iter(args.iter().map(json_ke_sql)),
+            )
+            .map_err(db_error)?;
+    }
+    sync::enqueue(
+        &transaction,
+        &client_id,
+        "hr-substitute",
+        "save",
+        &id,
+        &payload,
+        None,
+    )?;
+    transaction.commit().map_err(db_error)?;
+    Ok(json!({
+        "penanganan": payload,
+        "peringatan": if bentrok { Some(PESAN_BENTROK_PENGGANTI) } else { None },
+    }))
+}
+
+/// `desktop_hr_my_substitutions`: JP hari ini (WIB) yang Diganti/Digabung atas
+/// nama personil sesi, untuk isi otomatis presensi kelas. Akun tak tertaut =
+/// daftar kosong.
+pub fn ganti_saya(state: &DesktopState, operator: &OperatorUser) -> Result<Value, CommandError> {
+    let connection = storage::database(&state.data_dir)?;
+    let (_, hari_ini) = waktu(&connection)?;
+    let saya = tautan(operator);
+    if saya.is_empty() {
+        return Ok(json!({ "tanggal": hari_ini, "jp": [] }));
+    }
+    let (jp, _) = muat_jp(&connection, &hari_ini, &hari_ini, "")?;
+    let penanganan: Vec<Penanganan> = muat_penanganan(&connection, &hari_ini, &hari_ini)?
+        .into_iter()
+        .filter(|h| h.id_guru_pengganti == saya && h.status != "Tugas Mandiri")
+        .collect();
+    let milik: Vec<Jp> = jp
+        .into_iter()
+        .filter(|j| penanganan.iter().any(|h| h.id_penanganan == j.id_penanganan))
+        .collect();
+    Ok(json!({ "tanggal": hari_ini, "jp": susun_jp(milik, &penanganan, &[], &[]) }))
+}
+
 #[cfg(test)]
 mod tests {
     // Vektor yang sama diuji `validations/hr-pengajuan.test.ts`.
@@ -2535,6 +3142,168 @@ mod tests {
         let urutan = "ORDER BY k.diterima_cloud IS NULL, k.diterima_cloud, k.waktu_perangkat, k.id_keputusan LIMIT 1";
         assert!(PENGAJUAN_AKTIF_ORANG_SQL.contains(urutan));
         assert!(PENGAJUAN_BERLAKU_SQL.contains(urutan));
+        // JP terdampak memakai pengajuan Menunggu ATAU berlaku (§20.2.5).
+        let a = PENGAJUAN_AKTIF_ORANG_SQL.find("NOT EXISTS").expect("awal");
+        let b = PENGAJUAN_AKTIF_ORANG_SQL
+            .find(" ORDER BY p.tanggal_mulai")
+            .expect("akhir");
+        let aktif = &PENGAJUAN_AKTIF_ORANG_SQL[a..b];
+        assert!(JP_TERDAMPAK_SQL.contains(aktif));
+        assert!(PENANGANAN_SQL.contains(aktif));
+    }
+
+    #[test]
+    fn hr_pengajuan_vektor_jp_terdampak() {
+        let v = vektor();
+        let t = &v["jp_terdampak"];
+        let pengajuan: Vec<PengajuanJp> =
+            serde_json::from_value(t["pengajuan"].clone()).expect("pengajuan");
+        let jadwal: Vec<JadwalJp> = serde_json::from_value(t["jadwal"].clone()).expect("jadwal");
+        for k in t["kasus"].as_array().expect("kasus") {
+            let libur: HashSet<String> = serde_json::from_value(k["libur"].clone()).expect("libur");
+            let hasil = jp_terdampak(
+                &pengajuan,
+                &jadwal,
+                &libur,
+                k["dari"].as_str().expect("dari"),
+                k["sampai"].as_str().expect("sampai"),
+            );
+            assert_eq!(json!(hasil), k["hasil"], "{}", k["_"]);
+        }
+        let b = &v["pengganti_bentrok"];
+        let penanganan: Vec<Penanganan> =
+            serde_json::from_value(b["penanganan"].clone()).expect("penanganan");
+        for k in b["kasus"].as_array().expect("kasus") {
+            let m: Vec<String> = serde_json::from_value(k[0].clone()).expect("masuk");
+            let hasil = pengganti_bentrok(&m[0], &m[1], &m[2], &m[3], &m[4], &jadwal, &penanganan);
+            assert_eq!(json!(hasil), k[1], "{k}");
+        }
+        let s = &v["susun_jp"];
+        let jp: Vec<Jp> = serde_json::from_value(s["jp"].clone()).expect("jp");
+        let penanganan: Vec<Penanganan> =
+            serde_json::from_value(s["penanganan"].clone()).expect("penanganan");
+        let presensi: Vec<PresensiJp> =
+            serde_json::from_value(s["presensi"].clone()).expect("presensi");
+        assert_eq!(
+            json!(susun_jp(jp, &penanganan, &presensi, &jadwal)),
+            s["hasil"]
+        );
+        let h = &v["hitung_jp"];
+        let jp: Vec<Jp> = serde_json::from_value(h["jp"].clone()).expect("jp");
+        let ditangani: HashSet<String> =
+            serde_json::from_value(h["ditangani"].clone()).expect("ditangani");
+        assert_eq!(json!(hitung_jp(&jp, &ditangani)), h["hasil"]);
+        for k in v["validasi_penanganan"].as_array().expect("validasi") {
+            let hasil = validasi_penanganan(&k["masuk"]);
+            assert_eq!(galat(hasil.clone()), k["galat"], "{k}");
+            assert_eq!(
+                hasil.map(|h| json!(h)).unwrap_or(Value::Null),
+                k["hasil"],
+                "{k}"
+            );
+        }
+        for k in v["periksa_penanganan"].as_array().expect("periksa") {
+            let m = &k[0];
+            let hasil = periksa_penanganan(
+                m[0].as_str().expect("guru"),
+                m[1].as_str().expect("pengganti"),
+                m[2].as_str().expect("sesi"),
+                m[3] == true,
+            );
+            assert_eq!(galat(hasil), k[1], "{k}");
+        }
+    }
+
+    /// Jalur baca dan simpan lokal di database sungguhan: Ditolak tidak
+    /// menghasilkan JP, penanganan upsert atas id deterministik, JP sendiri
+    /// ditolak, dan pengganti melihat JP-nya hari itu.
+    #[test]
+    fn hr_pengajuan_jp_dari_database() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        storage::initialize(dir.path()).expect("schema");
+        let c = storage::database(dir.path()).expect("db");
+        c.execute_batch(
+            "INSERT INTO akademik_unit (id_unit, nama_unit) VALUES ('u-smp', 'SMP');
+             INSERT INTO akademik_tahun_ajaran (id_tahun_ajaran, nama_tahun, semester, tanggal_mulai, tanggal_selesai, is_aktif, created_at, updated_at) VALUES
+               ('ta-lama', '2025/2026', 'Genap', '2026-01-05', '2026-06-20', 0, 'x', 'x'),
+               ('ta-kini', '2026/2027', 'Ganjil', '2026-07-13', '2026-12-19', 1, 'x', 'x');
+             INSERT INTO akademik_rombel (id_rombel, id_tahun_ajaran, tingkat, nama_rombel, id_unit) VALUES ('R7A', 'ta-kini', 7, 'VII A', 'u-smp');
+             INSERT INTO master_data (id_unik, nama, divisi, id_shift, status_aktif, jenis_personil, unit) VALUES ('G1', 'Guru Satu', 'Guru', 1, 'Aktif', 'GURU', 'SMP'), ('G2', 'Guru Dua', 'Guru', 1, 'Aktif', 'GURU', 'SMP');
+             INSERT INTO guru_data (id_guru, created_at, updated_at) VALUES ('G1', 'x', 'x'), ('G2', 'x', 'x');
+             INSERT INTO jadwal_mengajar (id_jadwal, id_tahun_ajaran, id_rombel, id_mapel, id_guru, hari, jam_ke, is_aktif, created_at, updated_at) VALUES
+               ('J1', 'ta-kini', 'R7A', 'MTK', 'G1', 1, '3-4', 1, 'x', 'x'),
+               ('J9', 'ta-lama', 'R7A', 'MTK', 'G1', 1, '5', 1, 'x', 'x');
+             INSERT INTO hr_pengajuan (id_pengajuan, id_karyawan, id_jenis, kelompok, potong_jatah, dampak_gaji, izin_pemutus, tanggal_mulai, tanggal_selesai, setengah_hari, alasan, sidik, diajukan_oleh, waktu_perangkat) VALUES
+               ('pgn-1', 'G1', 'jns-sakit', 'Sakit', 0, 'Dibayar', 'hr.request.decide', '2026-11-09', '2026-11-09', 0, 'a', 's1', 'tu', 'x'),
+               ('pgn-2', 'G1', 'jns-sakit', 'Sakit', 0, 'Dibayar', 'hr.request.decide', '2026-11-16', '2026-11-16', 0, 'a', 's2', 'tu', 'x');
+             INSERT INTO hr_pengajuan_keputusan (id_keputusan, id_pengajuan, jenis, sidik, oleh, waktu_perangkat) VALUES ('k2', 'pgn-2', 'Tolak', 's2', 'kepsek', 'x');",
+        )
+        .expect("fixture");
+        let (jp, _) = muat_jp(&c, "2026-11-01", "2026-11-30", "").expect("jp");
+        let ids: Vec<&str> = jp.iter().map(|j| j.id_penanganan.as_str()).collect();
+        assert_eq!(ids, vec!["jp:pgn-1:2026-11-09:J1"], "Menunggu ikut, Ditolak dan semester lama tidak");
+        assert_eq!(jp[0].unit, "SMP");
+        let hitung = hitung_jp(&jp, &HashSet::new());
+        assert_eq!(hitung["pgn-1"], HitungJp { total: 1, belum: 1 });
+
+        let tulis = |status: &str, pengganti: &str| {
+            let payload = json!({
+                "id_penanganan": jp[0].id_penanganan, "id_pengajuan": "pgn-1", "tanggal": "2026-11-09",
+                "id_jadwal": "J1", "id_rombel": "R7A", "id_mapel": "MTK", "jam_ke": "3-4", "status": status,
+                "id_guru_pengganti": pengganti, "catatan": "", "dicatat_oleh": "piket", "waktu_perangkat": "x",
+            });
+            for (sql, args) in cloud_penanganan_statements(&payload, &jp[0].id_penanganan) {
+                c.execute(&sql, rusqlite::params_from_iter(args.iter().map(json_ke_sql)))
+                    .expect("upsert");
+            }
+        };
+        tulis("Tugas Mandiri", "");
+        tulis("Diganti", "G2");
+        let h = muat_penanganan(&c, "2026-11-09", "2026-11-09").expect("penanganan");
+        assert_eq!(h.len(), 1, "upsert atas id deterministik");
+        assert_eq!((h[0].status.as_str(), h[0].nama_pengganti.as_str()), ("Diganti", "Guru Dua"));
+        assert_eq!(
+            periksa_penanganan(&jp[0].id_karyawan, "G2", "G1", true),
+            Err(PESAN_JP_SENDIRI.to_owned())
+        );
+    }
+
+    #[test]
+    fn hr_pengajuan_jadwal_disaring_semester() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        storage::initialize(dir.path()).expect("schema");
+        let c = storage::database(dir.path()).expect("db");
+        c.execute_batch(
+            "INSERT INTO akademik_tahun_ajaran (id_tahun_ajaran, nama_tahun, semester, tanggal_mulai, tanggal_selesai, is_aktif, created_at, updated_at) VALUES
+               ('ta-lama', '2025/2026', 'Genap', '2026-01-05', '2026-06-20', 0, 'x', 'x'),
+               ('ta-kini', '2026/2027', 'Ganjil', '2026-07-13', '2026-12-19', 1, 'x', 'x');
+             INSERT INTO jadwal_mengajar (id_jadwal, id_tahun_ajaran, id_rombel, id_mapel, id_guru, hari, jam_ke, is_aktif, created_at, updated_at) VALUES
+               ('J1', 'ta-kini', 'R7A', 'MTK', 'G1', 1, '1', 1, 'x', 'x'),
+               ('J9', 'ta-lama', 'R7A', 'MTK', 'G1', 1, '2', 1, 'x', 'x');",
+        )
+        .expect("fixture");
+        drop(c);
+        let state = DesktopState {
+            server_origin: std::sync::RwLock::new("http://localhost:3000".to_string()),
+            offline_max_age_hours: 24,
+            data_dir: dir.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            turso_config: std::sync::RwLock::new(None),
+            session: std::sync::Mutex::new(None),
+            vault_lock: std::sync::Mutex::new(()),
+        };
+        let hasil = super::super::academic::list_teaching_schedules(
+            &state,
+            &json!({ "id_guru": "G1", "tanggal": "2026-11-09" }),
+        )
+        .expect("jadwal");
+        let ids: Vec<&str> = hasil
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|r| r["id_jadwal"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(ids, vec!["J1"]);
     }
 
     #[test]

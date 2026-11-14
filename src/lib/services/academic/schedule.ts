@@ -247,8 +247,11 @@ export async function getTeachingSchedules(filter?: {
         AND (? IS NULL OR j.id_tahun_ajaran = ?)
         AND (? IS NULL OR j.id_guru = ?)
         AND (? IS NULL OR j.hari = ?)
+        AND (? IS NULL OR EXISTS (SELECT 1 FROM akademik_tahun_ajaran t WHERE t.id_tahun_ajaran = j.id_tahun_ajaran AND t.tanggal_mulai <= ? AND t.tanggal_selesai >= ?))
       ORDER BY j.hari, CAST(j.jam_ke AS INTEGER), j.jam_ke;
     `,
+    // Dengan `tanggal`, hanya jadwal tahun ajaran yang semesternya memuat
+    // tanggal itu (Q-58), sama dengan `list_teaching_schedules`.
     args: [
       filter?.id_rombel ?? null,
       filter?.id_rombel ?? null,
@@ -258,6 +261,9 @@ export async function getTeachingSchedules(filter?: {
       filter?.id_guru ?? null,
       hari,
       hari,
+      filter?.tanggal ?? null,
+      filter?.tanggal ?? null,
+      filter?.tanggal ?? null,
     ],
   });
   return res.rows;

@@ -10,7 +10,13 @@
  */
 
 import { z } from "zod";
-import { parseHariKerja, tanggalValid, wajibMasuk } from "./hari-kerja";
+import { rentangJamKe } from "./class-attendance";
+import {
+  hariIso,
+  parseHariKerja,
+  tanggalValid,
+  wajibMasuk,
+} from "./hari-kerja";
 import {
   evaluateHolidayScan,
   type HolidayWhitelistEntry,
@@ -1312,6 +1318,8 @@ export interface PegawaiPengajuan {
 /** Bentuk jawaban `desktop_hr_requests` / `POST /api/pengajuan/query`. */
 export interface DaftarPengajuan {
   pengajuan: PengajuanTersusun[];
+  /** JP terdampak dan yang belum ditangani per pengajuan guru (2c). */
+  jp: Record<string, HitungJp>;
   jenis: BarisJenis[];
   pegawai: PegawaiPengajuan[];
   sesi: { id_karyawan: string; unit: string; lingkup_semua: boolean };
@@ -1322,4 +1330,373 @@ export interface DaftarPengajuan {
 export interface HasilSimpanPengajuan {
   pengajuan: Record<string, unknown>;
   peringatan: string | null;
+}
+
+// Sub-fase 2c: JP terdampak dan penanganannya (§20.2.5, §20.2.8, §20.2.9)
+
+export const STATUS_PENANGANAN = [
+  "Diganti",
+  "Tugas Mandiri",
+  "Digabung",
+] as const;
+
+export const JP_TERDAMPAK_SQL =
+  "SELECT p.id_pengajuan, p.id_karyawan, COALESCE(m.nama, p.id_karyawan) AS nama_guru, p.tanggal_mulai, p.tanggal_selesai, p.jam_mulai_ke, p.jam_sampai_ke FROM hr_pengajuan p LEFT JOIN master_data m ON m.id_unik = p.id_karyawan WHERE p.tanggal_mulai <= ?2 AND p.tanggal_selesai >= ?1 AND (?3 = '' OR p.id_pengajuan = ?3) AND EXISTS (SELECT 1 FROM jadwal_mengajar j WHERE j.id_guru = p.id_karyawan AND j.is_aktif = 1) AND NOT EXISTS (SELECT 1 FROM hr_pengajuan_keputusan b WHERE b.id_pengajuan = p.id_pengajuan AND b.jenis = 'Batal') AND COALESCE((SELECT k.jenis FROM hr_pengajuan_keputusan k WHERE k.id_pengajuan = p.id_pengajuan AND k.sidik = p.sidik AND k.jenis IN ('Setujui', 'Tolak', 'Setujui Urgent') ORDER BY k.diterima_cloud IS NULL, k.diterima_cloud, k.waktu_perangkat, k.id_keputusan LIMIT 1), '') <> 'Tolak' ORDER BY p.tanggal_mulai, p.id_pengajuan\n-- batas: pengajuan guru yang bertumpuk rentang, sebesar jumlah guru kali pengajuan\n;";
+export const JADWAL_JP_SQL =
+  "SELECT j.id_jadwal, j.id_guru, j.hari, j.jam_ke, j.id_rombel, COALESCE(r.nama_rombel, j.id_rombel) AS nama_rombel, j.id_mapel, COALESCE(mp.nama_mapel, j.id_mapel) AS nama_mapel, COALESCE(u.nama_unit, '') AS unit, t.tanggal_mulai AS ta_mulai, t.tanggal_selesai AS ta_selesai FROM jadwal_mengajar j JOIN akademik_tahun_ajaran t ON t.id_tahun_ajaran = j.id_tahun_ajaran LEFT JOIN akademik_rombel r ON r.id_rombel = j.id_rombel LEFT JOIN akademik_mapel mp ON mp.id_mapel = j.id_mapel LEFT JOIN akademik_unit u ON u.id_unit = r.id_unit WHERE j.is_aktif = 1 AND t.tanggal_mulai <= ?2 AND t.tanggal_selesai >= ?1 ORDER BY j.id_guru, j.hari, CAST(j.jam_ke AS INTEGER), j.jam_ke, j.id_jadwal\n-- batas: jadwal mingguan semester yang bertumpuk rentang, sebesar rombel kali jam pelajaran\n;";
+export const PENANGANAN_SQL =
+  "SELECT h.id_penanganan, h.id_pengajuan, h.tanggal, h.id_jadwal, COALESCE(h.jam_ke, '') AS jam_ke, h.status, COALESCE(h.id_guru_pengganti, '') AS id_guru_pengganti, COALESCE(mg.nama, h.id_guru_pengganti, '') AS nama_pengganti, COALESCE(h.catatan, '') AS catatan, h.dicatat_oleh, h.waktu_perangkat FROM hr_jp_penanganan h JOIN hr_pengajuan p ON p.id_pengajuan = h.id_pengajuan LEFT JOIN master_data mg ON mg.id_unik = h.id_guru_pengganti WHERE h.tanggal >= ?1 AND h.tanggal <= ?2 AND NOT EXISTS (SELECT 1 FROM hr_pengajuan_keputusan b WHERE b.id_pengajuan = p.id_pengajuan AND b.jenis = 'Batal') AND COALESCE((SELECT k.jenis FROM hr_pengajuan_keputusan k WHERE k.id_pengajuan = p.id_pengajuan AND k.sidik = p.sidik AND k.jenis IN ('Setujui', 'Tolak', 'Setujui Urgent') ORDER BY k.diterima_cloud IS NULL, k.diterima_cloud, k.waktu_perangkat, k.id_keputusan LIMIT 1), '') <> 'Tolak' ORDER BY h.tanggal, h.id_penanganan\n-- batas: satu baris per JP terdampak dalam rentang\n;";
+export const PRESENSI_JP_SQL =
+  "SELECT id_rombel, tanggal, jam_ke, id_guru FROM presensi_mapel WHERE tanggal >= ?1 AND tanggal <= ?2 ORDER BY tanggal, id_rombel\n-- batas: sesi presensi kelas dalam rentang pengajuan\n;";
+export const GURU_AKTIF_SQL =
+  "SELECT 1 FROM master_data m JOIN guru_data g ON g.id_guru = m.id_unik WHERE m.id_unik = ?1 AND COALESCE(m.status_aktif, 'Aktif') = 'Aktif' LIMIT 1;";
+export const CLOUD_PENANGANAN_SQL =
+  "INSERT INTO hr_jp_penanganan (id_penanganan, id_pengajuan, tanggal, id_jadwal, id_rombel, id_mapel, jam_ke, status, id_guru_pengganti, catatan, dicatat_oleh, waktu_perangkat, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, NULLIF(?5, ''), NULLIF(?6, ''), NULLIF(?7, ''), ?8, NULLIF(?9, ''), NULLIF(?10, ''), ?11, ?12, datetime('now'), datetime('now')) ON CONFLICT(id_penanganan) DO UPDATE SET id_rombel = excluded.id_rombel, id_mapel = excluded.id_mapel, jam_ke = excluded.jam_ke, status = excluded.status, id_guru_pengganti = excluded.id_guru_pengganti, catatan = excluded.catatan, dicatat_oleh = excluded.dicatat_oleh, waktu_perangkat = excluded.waktu_perangkat, updated_at = excluded.updated_at;";
+
+export const PESAN_JP_SENDIRI =
+  "Jam pelajaranmu sendiri harus ditangani orang lain.";
+export const PESAN_CAKUPAN_JP = "Rombel ini di luar unit yang kamu pegang.";
+export const PESAN_BENTROK_PENGGANTI =
+  "Guru pengganti sudah punya jadwal atau tugas pengganti lain di jam itu.";
+
+export interface PengajuanJp {
+  id_pengajuan: string;
+  id_karyawan: string;
+  nama_guru: string;
+  tanggal_mulai: string;
+  tanggal_selesai: string;
+  jam_mulai_ke: number | null;
+  jam_sampai_ke: number | null;
+}
+
+export interface JadwalJp {
+  id_jadwal: string;
+  id_guru: string;
+  hari: number;
+  jam_ke: string;
+  id_rombel: string;
+  nama_rombel: string;
+  id_mapel: string;
+  nama_mapel: string;
+  unit: string;
+  ta_mulai: string;
+  ta_selesai: string;
+}
+
+export interface Jp {
+  id_penanganan: string;
+  id_pengajuan: string;
+  id_karyawan: string;
+  nama_guru: string;
+  tanggal: string;
+  id_jadwal: string;
+  jam_ke: string;
+  id_rombel: string;
+  nama_rombel: string;
+  id_mapel: string;
+  nama_mapel: string;
+  unit: string;
+}
+
+export interface Penanganan {
+  id_penanganan: string;
+  id_pengajuan: string;
+  tanggal: string;
+  id_jadwal: string;
+  jam_ke: string;
+  status: string;
+  id_guru_pengganti: string;
+  nama_pengganti: string;
+  catatan: string;
+  dicatat_oleh: string;
+  waktu_perangkat: string;
+}
+
+export interface PresensiJp {
+  id_rombel: string;
+  tanggal: string;
+  jam_ke: string;
+  id_guru: string;
+}
+
+export interface JpTersusun extends Jp {
+  penanganan: Penanganan | null;
+  tanda: string[];
+}
+
+export const LABEL_TANDA_JP: Record<string, string> = {
+  pengganti_berbeda: "Presensi kelas ini disimpan guru lain",
+  pengganti_bentrok: "Pengganti punya jam lain di waktu yang sama",
+};
+
+/** Cermin `id_penanganan`. */
+export const idPenanganan = (
+  idPengajuan: string,
+  tanggal: string,
+  idJadwal: string,
+) => `jp:${idPengajuan}:${tanggal}:${idJadwal}`;
+
+const jamAwal = (jamKe: string) => rentangJamKe(jamKe)?.awal ?? 0;
+
+function beririsan(a: string, b: string): boolean {
+  const x = rentangJamKe(a);
+  const y = rentangJamKe(b);
+  return x !== null && y !== null && x.awal <= y.akhir && y.awal <= x.akhir;
+}
+
+const taMemuat = (j: JadwalJp, t: string) =>
+  j.ta_mulai <= t && t <= j.ta_selesai;
+
+/** Cermin `jp_terdampak` (§20.2.5, Q-46). */
+export function jpTerdampak(
+  pengajuan: readonly PengajuanJp[],
+  jadwal: readonly JadwalJp[],
+  libur: ReadonlySet<string>,
+  dari: string,
+  sampai: string,
+): Jp[] {
+  const hasil: Jp[] = [];
+  for (const p of pengajuan) {
+    const mulai = p.tanggal_mulai > dari ? p.tanggal_mulai : dari;
+    const selesai = p.tanggal_selesai < sampai ? p.tanggal_selesai : sampai;
+    for (const t of tanggalRentang(mulai, selesai)) {
+      if (libur.has(t)) continue;
+      const hari = hariIso(t);
+      if (hari === null) continue;
+      const [awal, akhir] = jamPada(p, t);
+      for (const j of jadwal) {
+        if (j.id_guru !== p.id_karyawan || j.hari !== hari || !taMemuat(j, t))
+          continue;
+        const r = rentangJamKe(j.jam_ke);
+        if (r === null || !(r.awal <= akhir && awal <= r.akhir)) continue;
+        hasil.push({
+          id_penanganan: idPenanganan(p.id_pengajuan, t, j.id_jadwal),
+          id_pengajuan: p.id_pengajuan,
+          id_karyawan: p.id_karyawan,
+          nama_guru: p.nama_guru,
+          tanggal: t,
+          id_jadwal: j.id_jadwal,
+          jam_ke: j.jam_ke,
+          id_rombel: j.id_rombel,
+          nama_rombel: j.nama_rombel,
+          id_mapel: j.id_mapel,
+          nama_mapel: j.nama_mapel,
+          unit: j.unit,
+        });
+      }
+    }
+  }
+  return hasil.sort(
+    (a, b) =>
+      bandingTeks(a.tanggal, b.tanggal) ||
+      jamAwal(a.jam_ke) - jamAwal(b.jam_ke) ||
+      bandingTeks(a.id_penanganan, b.id_penanganan),
+  );
+}
+
+/** Cermin `pengganti_bentrok`. */
+export function penggantiBentrok(
+  pengganti: string,
+  status: string,
+  tanggal: string,
+  jamKe: string,
+  idSendiri: string,
+  jadwal: readonly JadwalJp[],
+  penanganan: readonly Penanganan[],
+): boolean {
+  if (pengganti === "" || status === "Tugas Mandiri") return false;
+  const hari = hariIso(tanggal);
+  const jadwalBentrok =
+    status === "Diganti" &&
+    jadwal.some(
+      (j) =>
+        j.id_guru === pengganti &&
+        j.hari === hari &&
+        taMemuat(j, tanggal) &&
+        beririsan(j.jam_ke, jamKe),
+    );
+  return (
+    jadwalBentrok ||
+    penanganan.some(
+      (h) =>
+        h.id_penanganan !== idSendiri &&
+        h.id_guru_pengganti === pengganti &&
+        h.tanggal === tanggal &&
+        (status === "Diganti" || h.status === "Diganti") &&
+        beririsan(h.jam_ke, jamKe),
+    )
+  );
+}
+
+/** Cermin `susun_jp`. */
+export function susunJp(
+  jp: readonly Jp[],
+  penanganan: readonly Penanganan[],
+  presensi: readonly PresensiJp[],
+  jadwal: readonly JadwalJp[],
+): JpTersusun[] {
+  return jp.map((j) => {
+    const h = penanganan.find((x) => x.id_penanganan === j.id_penanganan);
+    const tanda: string[] = [];
+    if (h) {
+      const pengganti = h.id_guru_pengganti;
+      if (
+        pengganti !== "" &&
+        presensi.some(
+          (s) =>
+            s.id_rombel === j.id_rombel &&
+            s.tanggal === j.tanggal &&
+            s.id_guru !== pengganti &&
+            beririsan(s.jam_ke, j.jam_ke),
+        )
+      ) {
+        tanda.push("pengganti_berbeda");
+      }
+      if (
+        penggantiBentrok(
+          pengganti,
+          h.status,
+          j.tanggal,
+          j.jam_ke,
+          j.id_penanganan,
+          jadwal,
+          penanganan,
+        )
+      ) {
+        tanda.push("pengganti_bentrok");
+      }
+    }
+    return { ...j, penanganan: h ?? null, tanda };
+  });
+}
+
+export interface HitungJp {
+  total: number;
+  belum: number;
+}
+
+/** Cermin `hitung_jp`. */
+export function hitungJp(
+  jp: readonly Jp[],
+  ditangani: ReadonlySet<string>,
+): Record<string, HitungJp> {
+  const hasil: Record<string, HitungJp> = {};
+  for (const j of jp) {
+    const h = hasil[j.id_pengajuan] ?? { total: 0, belum: 0 };
+    hasil[j.id_pengajuan] = h;
+    h.total += 1;
+    if (!ditangani.has(j.id_penanganan)) h.belum += 1;
+  }
+  return hasil;
+}
+
+export interface PenangananSah {
+  id_pengajuan: string;
+  tanggal: string;
+  id_jadwal: string;
+  status: string;
+  id_guru_pengganti: string;
+  catatan: string;
+}
+
+/** Cermin `validasi_penanganan`. */
+export function validasiPenanganan(draft: Draft): Hasil<PenangananSah> {
+  const id_pengajuan = teks(draft, "id_pengajuan");
+  const id_jadwal = teks(draft, "id_jadwal");
+  if (id_pengajuan === "" || id_jadwal === "") {
+    return gagal("Jam pelajaran yang ditangani tidak dikenal.");
+  }
+  const tanggal = teks(draft, "tanggal");
+  if (!tanggalValid(tanggal)) return gagal("Tanggal tidak valid.");
+  const status = teks(draft, "status");
+  if (!termasuk(STATUS_PENANGANAN, status)) {
+    return gagal("Status penanganan tidak dikenal.");
+  }
+  const id_guru_pengganti =
+    status === "Tugas Mandiri" ? "" : teks(draft, "id_guru_pengganti");
+  if (status !== "Tugas Mandiri" && id_guru_pengganti === "") {
+    return gagal("Pilih guru pengganti.");
+  }
+  const catatan = teks(draft, "catatan");
+  if (panjang(catatan) > MAKS_ALASAN) {
+    return gagal(`Catatan maksimal ${MAKS_ALASAN} karakter.`);
+  }
+  return ok({
+    id_pengajuan,
+    tanggal,
+    id_jadwal,
+    status,
+    id_guru_pengganti,
+    catatan,
+  });
+}
+
+/** Cermin `periksa_penanganan`. */
+export function periksaPenanganan(
+  guruJp: string,
+  pengganti: string,
+  sesiKaryawan: string,
+  cakupan: boolean,
+): Hasil<null> {
+  if (sesiKaryawan !== "" && sesiKaryawan === guruJp) {
+    return gagal(PESAN_JP_SENDIRI);
+  }
+  if (!cakupan) return gagal(PESAN_CAKUPAN_JP);
+  if (pengganti !== "" && pengganti === guruJp) {
+    return gagal("Guru pengganti tidak boleh guru yang berhalangan.");
+  }
+  return ok(null);
+}
+
+export const penangananDraftSchema = z
+  .object({
+    id_pengajuan: z.string().max(80),
+    tanggal: z.string().max(10),
+    id_jadwal: z.string().max(80),
+    status: z.enum(STATUS_PENANGANAN),
+    id_guru_pengganti: z.string().max(80).optional(),
+    catatan: z.string().max(2000).optional(),
+  })
+  .strict();
+export type PenangananDraft = z.infer<typeof penangananDraftSchema>;
+
+const draftJpSchema = z
+  .object({
+    id_karyawan: z.string().max(80),
+    tanggal_mulai: z.string().max(10),
+    tanggal_selesai: z.string().max(10),
+    jam_mulai_ke: jamKe,
+    jam_sampai_ke: jamKe,
+  })
+  .strict();
+
+export const jpQuerySchema = z
+  .object({
+    id_pengajuan: z.string().max(80).nullable().optional(),
+    tanggal: z.string().max(10).nullable().optional(),
+    draft: draftJpSchema.nullable().optional(),
+  })
+  .strict();
+export type DraftJp = z.infer<typeof draftJpSchema>;
+
+/** Bentuk jawaban `desktop_hr_affected_jp` / `POST /api/pengajuan/jp/query`. */
+export interface DaftarJp {
+  jp: JpTersusun[];
+  jadwal?: JadwalJp[];
+  penanganan?: Penanganan[];
+  guru?: PegawaiPengajuan[];
+  dari: string;
+  sampai: string;
+  sesi: { id_karyawan: string; unit: string; lingkup_semua: boolean };
+}
+
+export interface HasilSimpanPenanganan {
+  penanganan: Record<string, unknown>;
+  peringatan: string | null;
+}
+
+/** Jawaban `desktop_hr_my_substitutions` / `POST /api/pengajuan/jp/mine/query`. */
+export interface GantiSaya {
+  tanggal: string;
+  jp: JpTersusun[];
 }

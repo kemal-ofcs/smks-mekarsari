@@ -3465,6 +3465,109 @@ pub fn desktop_hr_leave_adjust(
     hr_pengajuan::sesuaikan_cuti(&state, &operator, draft)
 }
 
+/// JP terdampak satu pengajuan, satu tanggal (Jam Kosong), atau isian form
+/// Ajukan yang belum disimpan, beserta penanganan dan tandanya.
+#[tauri::command]
+pub fn desktop_hr_affected_jp(
+    state: State<'_, DesktopState>,
+    id_pengajuan: Option<String>,
+    tanggal: Option<String>,
+    draft: Option<Value>,
+) -> Result<Value, CommandError> {
+    let operator = require_any_permission(&state, &["hr.request.view", "hr.substitute.manage"])?;
+    hr_pengajuan::jp_terdampak_baca(
+        &state,
+        &operator,
+        id_pengajuan.as_deref(),
+        tanggal.as_deref(),
+        draft.as_ref(),
+    )
+}
+
+/// Tunjuk pengganti, Tugas Mandiri, atau Digabung; cakupan unit rombel dan
+/// "bukan JP sendiri" dinilai dari sesi.
+#[tauri::command]
+pub fn desktop_hr_substitute_save(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "hr.substitute.manage")?;
+    hr_pengajuan::simpan_penanganan(&state, &operator, draft)
+}
+
+/// JP hari ini yang digantikan personil sesi (isi otomatis presensi kelas).
+#[tauri::command]
+pub fn desktop_hr_my_substitutions(state: State<'_, DesktopState>) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "class_attendance.view")?;
+    hr_pengajuan::ganti_saya(&state, &operator)
+}
+
+/// Lampiran pengajuan (tanpa isi berkas), tanda `tanpa_dokumen`, dan apakah
+/// sesi boleh mengubahnya; cloud-only.
+#[tauri::command]
+pub async fn desktop_hr_request_files(
+    state: State<'_, DesktopState>,
+    id_pengajuan: String,
+) -> Result<Value, CommandError> {
+    let operator = require_permission(&state, "hr.request.view")?;
+    hris_cloud::lampiran_pengajuan(&klien_cloud(&state)?, &operator, &id_pengajuan)
+        .await
+        .map_err(hris_cloud::luring)
+}
+
+/// Satu lampiran pengajuan beserta isinya.
+#[tauri::command]
+pub async fn desktop_hr_request_file(
+    state: State<'_, DesktopState>,
+    id_berkas: String,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "hr.request.view")?;
+    hris_cloud::ambil_lampiran(&klien_cloud(&state)?, &id_berkas)
+        .await
+        .map_err(hris_cloud::luring)
+}
+
+/// Tambah lampiran (maks 1 MB, 5 per pengajuan); hanya pengaju atau pemegang
+/// izin pemutus jenisnya.
+#[tauri::command]
+pub async fn desktop_hr_request_file_add(
+    state: State<'_, DesktopState>,
+    id_pengajuan: String,
+    nama_berkas: String,
+    mime_type: String,
+    data_base64: String,
+) -> Result<Value, CommandError> {
+    let operator = require_any_permission(
+        &state,
+        &["hr.request.submit", "hr.request.decide", "hr.request.decide_major"],
+    )?;
+    hris_cloud::tambah_lampiran(
+        &klien_cloud(&state)?,
+        &operator,
+        &id_pengajuan,
+        &nama_berkas,
+        &mime_type,
+        &data_base64,
+    )
+    .await
+    .map_err(hris_cloud::luring)
+}
+
+/// Hapus satu lampiran; hanya pengaju atau pemegang izin pemutus jenisnya.
+#[tauri::command]
+pub async fn desktop_hr_request_file_delete(
+    state: State<'_, DesktopState>,
+    id_berkas: String,
+) -> Result<Value, CommandError> {
+    let operator = require_any_permission(
+        &state,
+        &["hr.request.submit", "hr.request.decide", "hr.request.decide_major"],
+    )?;
+    hris_cloud::hapus_lampiran(&klien_cloud(&state)?, &operator, &id_berkas)
+        .await
+        .map_err(hris_cloud::luring)
+}
+
 /// Jenis tagihan, tarif, serta pilihan unit/rombel/tahun ajaran untuk
 /// menerbitkan, dengan izin tagihan (bukan `academic.view`).
 #[tauri::command]

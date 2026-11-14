@@ -94,6 +94,12 @@ export const NAVIGATION: readonly NavigationItem[] = [
     label: "Presensi KBM",
   },
   {
+    area: "jam_kosong",
+    href: "/jam-kosong",
+    icon: "clock",
+    label: "Jam Kosong",
+  },
+  {
     area: "jurnal_mengajar",
     href: "/jurnal-mengajar",
     icon: "document",
@@ -244,6 +250,7 @@ export const NAVIGATION_GROUPS: readonly NavigationGroupSpec[] = [
     hrefs: [
       "/akademik",
       "/presensi-kelas",
+      "/jam-kosong",
       "/jurnal-mengajar",
       "/leger-kehadiran",
       "/nilai",

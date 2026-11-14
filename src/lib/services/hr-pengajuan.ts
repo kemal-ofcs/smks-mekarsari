@@ -21,27 +21,41 @@ import {
   bentrokPengajuan,
   berlakuDari,
   CLOUD_KEPUTUSAN_SQL,
+  CLOUD_PENANGANAN_SQL,
   CLOUD_PENYESUAIAN_SQL,
   type CutiDibayar,
   DAFTAR_KEPUTUSAN_SQL,
   DAFTAR_PENGAJUAN_SQL,
+  type DaftarJp,
   type DaftarPengajuan,
+  type DraftJp,
   dalamCakupan,
+  type GantiSaya,
+  GURU_AKTIF_SQL,
   HADIR_ORANG_SQL,
   HARI_ABSEN_SQL,
+  type HasilSimpanPenanganan,
   type HasilSimpanPengajuan,
+  type HitungJp,
   hadirSaatCuti,
   hitungCutiDibayar,
+  hitungJp,
   type IsiPengajuan,
+  idPenanganan,
+  JADWAL_JP_SQL,
   JADWAL_PEGAWAI_SQL,
   JATAH_PEGAWAI_SQL,
   JATAH_TERPAKAI_SQL,
+  type JadwalJp,
   JENIS_SQL,
   type JenisDraft,
   type JenisPengajuan,
   JP_MAX_SQL,
+  JP_TERDAMPAK_SQL,
+  type Jp,
   jadwalDariBaris,
   jatahCuti,
+  jpTerdampak,
   KEPUTUSAN_SATU_SQL,
   type KelompokCuti,
   type Keputusan,
@@ -50,6 +64,7 @@ import {
   MAKS_RENTANG_HARI,
   PEGAWAI_PENGAJUAN_SQL,
   PEGAWAI_SATU_SQL,
+  PENANGANAN_SQL,
   PENGAJUAN_AKTIF_ORANG_SQL,
   PENGAJUAN_RENTANG_SQL,
   PENGAJUAN_SATU_SQL,
@@ -57,13 +72,21 @@ import {
   PENYESUAIAN_SATU_SQL,
   PERIODE_DIBAYAR_SQL,
   PERIODE_PERLU_ULANG_SQL,
+  PESAN_BENTROK_PENGGANTI,
   type PegawaiPengajuan,
+  type Penanganan,
+  type PenangananDraft,
   type PengajuanDraft,
+  type PengajuanJp,
   type PengajuanTersusun,
+  PRESENSI_JP_SQL,
+  type PresensiJp,
+  penggantiBentrok,
   penuhPada,
   periksaAksi,
   periksaJenis,
   periksaMaks,
+  periksaPenanganan,
   periksaSunting,
   periksaUrgent,
   pesanBertumpuk,
@@ -79,10 +102,12 @@ import {
   statusBerlaku,
   statusPengajuan,
   susunDaftar,
+  susunJp,
   tanggalWajib,
   UNIT_PERSONIL_SQL,
   validasiAturanCuti,
   validasiJenis,
+  validasiPenanganan,
   validasiPengajuan,
   validasiPenyesuaian,
   WAKTU_SQL,
@@ -232,6 +257,7 @@ export async function daftarPengajuan(
   await tandaiHadirSaatCuti(client, tersusun);
   return {
     pengajuan: tersusun,
+    jp: await hitungJpDaftar(client, tersusun),
     jenis: jenis.rows.map((r) => ({ ...r }) as unknown as BarisJenis),
     pegawai: pegawai.rows.map(
       (r): PegawaiPengajuan => ({
@@ -997,4 +1023,311 @@ export async function sesuaikanCuti(
   } finally {
     tx.close();
   }
+}
+
+// Sub-fase 2c: JP terdampak dan penanganannya (cermin `hr_pengajuan.rs`)
+
+const barisPengajuanJp = (r: Row): PengajuanJp => ({
+  id_pengajuan: teks(r, "id_pengajuan"),
+  id_karyawan: teks(r, "id_karyawan"),
+  nama_guru: teks(r, "nama_guru"),
+  tanggal_mulai: teks(r, "tanggal_mulai"),
+  tanggal_selesai: teks(r, "tanggal_selesai"),
+  jam_mulai_ke: angkaAtauNull(r.jam_mulai_ke),
+  jam_sampai_ke: angkaAtauNull(r.jam_sampai_ke),
+});
+
+const barisJadwalJp = (r: Row): JadwalJp => ({
+  id_jadwal: teks(r, "id_jadwal"),
+  id_guru: teks(r, "id_guru"),
+  hari: kolomAngka(r, "hari"),
+  jam_ke: teks(r, "jam_ke"),
+  id_rombel: teks(r, "id_rombel"),
+  nama_rombel: teks(r, "nama_rombel"),
+  id_mapel: teks(r, "id_mapel"),
+  nama_mapel: teks(r, "nama_mapel"),
+  unit: teks(r, "unit"),
+  ta_mulai: teks(r, "ta_mulai"),
+  ta_selesai: teks(r, "ta_selesai"),
+});
+
+const barisPenanganan = (r: Row): Penanganan => ({
+  id_penanganan: teks(r, "id_penanganan"),
+  id_pengajuan: teks(r, "id_pengajuan"),
+  tanggal: teks(r, "tanggal"),
+  id_jadwal: teks(r, "id_jadwal"),
+  jam_ke: teks(r, "jam_ke"),
+  status: teks(r, "status"),
+  id_guru_pengganti: teks(r, "id_guru_pengganti"),
+  nama_pengganti: teks(r, "nama_pengganti"),
+  catatan: teks(r, "catatan"),
+  dicatat_oleh: teks(r, "dicatat_oleh"),
+  waktu_perangkat: teks(r, "waktu_perangkat"),
+});
+
+async function muatJadwalJp(db: Db, dari: string, sampai: string) {
+  return (
+    await db.execute({ sql: JADWAL_JP_SQL, args: [dari, sampai] })
+  ).rows.map(barisJadwalJp);
+}
+
+/** Cermin `muat_jp`. */
+async function muatJp(
+  db: Db,
+  dari: string,
+  sampai: string,
+  idPengajuan: string,
+): Promise<{ jp: Jp[]; jadwal: JadwalJp[] }> {
+  const [pengajuan, jadwal] = await Promise.all([
+    db.execute({ sql: JP_TERDAMPAK_SQL, args: [dari, sampai, idPengajuan] }),
+    muatJadwalJp(db, dari, sampai),
+  ]);
+  if (pengajuan.rows.length === 0) return { jp: [], jadwal };
+  const { libur } = await muatKalender(db, dari, sampai);
+  return {
+    jp: jpTerdampak(
+      pengajuan.rows.map(barisPengajuanJp),
+      jadwal,
+      libur,
+      dari,
+      sampai,
+    ),
+    jadwal,
+  };
+}
+
+async function muatPenanganan(db: Db, dari: string, sampai: string) {
+  return (
+    await db.execute({ sql: PENANGANAN_SQL, args: [dari, sampai] })
+  ).rows.map(barisPenanganan);
+}
+
+/** Cermin `hitung_jp_daftar`. */
+async function hitungJpDaftar(
+  db: Db,
+  pengajuan: readonly BarisPengajuan[],
+): Promise<Record<string, HitungJp>> {
+  const guru = pengajuan.filter((p) => p.guru === 1);
+  if (guru.length === 0) return {};
+  const dari = guru.map((p) => p.tanggal_mulai).sort()[0];
+  const sampai = guru.map((p) => p.tanggal_selesai).sort()[guru.length - 1];
+  const [{ jp }, penanganan] = await Promise.all([
+    muatJp(db, dari, sampai, ""),
+    muatPenanganan(db, dari, sampai),
+  ]);
+  return hitungJp(jp, new Set(penanganan.map((h) => h.id_penanganan)));
+}
+
+/** Cermin `jp_terdampak_baca`. */
+export async function jpTerdampakBaca(
+  client: Client,
+  operator: OperatorUser,
+  idPengajuan: string | null,
+  tanggal: string | null,
+  draft: DraftJp | null,
+): Promise<DaftarJp> {
+  const sesi = {
+    id_karyawan: tautan(operator),
+    unit: await unitAkun(client, operator),
+    lingkup_semua: punya(operator, "hr.scope.all"),
+  };
+  if (draft) {
+    const p: PengajuanJp = {
+      id_pengajuan: "",
+      id_karyawan: draft.id_karyawan.trim(),
+      nama_guru: "",
+      tanggal_mulai: draft.tanggal_mulai.trim(),
+      tanggal_selesai: draft.tanggal_selesai.trim(),
+      jam_mulai_ke: draft.jam_mulai_ke ?? null,
+      jam_sampai_ke: draft.jam_sampai_ke ?? null,
+    };
+    if (
+      !tanggalValid(p.tanggal_mulai) ||
+      !tanggalValid(p.tanggal_selesai) ||
+      p.tanggal_selesai < p.tanggal_mulai ||
+      selisihHari(p.tanggal_mulai, p.tanggal_selesai) >= MAKS_RENTANG_HARI
+    ) {
+      galat("Rentang tanggal tidak valid.");
+    }
+    const [jadwal, kalender] = await Promise.all([
+      muatJadwalJp(client, p.tanggal_mulai, p.tanggal_selesai),
+      muatKalender(client, p.tanggal_mulai, p.tanggal_selesai),
+    ]);
+    const jp = jpTerdampak(
+      [p],
+      jadwal,
+      kalender.libur,
+      p.tanggal_mulai,
+      p.tanggal_selesai,
+    );
+    return {
+      jp: susunJp(jp, [], [], []),
+      dari: p.tanggal_mulai,
+      sampai: p.tanggal_selesai,
+      sesi,
+    };
+  }
+  let dari: string;
+  let sampai: string;
+  let id = "";
+  const satu = (idPengajuan ?? "").trim();
+  if (satu !== "") {
+    const p = (await client.execute({ sql: PENGAJUAN_SATU_SQL, args: [satu] }))
+      .rows[0];
+    if (!p) galat("Pengajuan tidak ditemukan.");
+    dari = teks(p, "tanggal_mulai");
+    sampai = teks(p, "tanggal_selesai");
+    id = satu;
+  } else {
+    const t = (tanggal ?? "").trim() || (await hariIniWib(client));
+    if (!tanggalValid(t)) galat("Tanggal tidak valid.");
+    dari = t;
+    sampai = t;
+  }
+  const [{ jp, jadwal }, penanganan, presensi, pegawai] = await Promise.all([
+    muatJp(client, dari, sampai, id),
+    muatPenanganan(client, dari, sampai),
+    client.execute({ sql: PRESENSI_JP_SQL, args: [dari, sampai] }),
+    client.execute(PEGAWAI_PENGAJUAN_SQL),
+  ]);
+  return {
+    jp: susunJp(
+      jp,
+      penanganan,
+      presensi.rows.map(
+        (r): PresensiJp => ({
+          id_rombel: teks(r, "id_rombel"),
+          tanggal: teks(r, "tanggal"),
+          jam_ke: teks(r, "jam_ke"),
+          id_guru: teks(r, "id_guru"),
+        }),
+      ),
+      jadwal,
+    ),
+    jadwal,
+    penanganan,
+    guru: pegawai.rows
+      .filter((r) => kolomAngka(r, "guru") === 1)
+      .map(
+        (r): PegawaiPengajuan => ({
+          id_unik: teks(r, "id_unik"),
+          nama: teks(r, "nama"),
+          unit: teks(r, "unit"),
+          guru: 1,
+        }),
+      ),
+    dari,
+    sampai,
+    sesi,
+  };
+}
+
+/** Cermin `simpan_penanganan`. Web menulis langsung ke cloud. */
+export async function simpanPenanganan(
+  client: Client,
+  operator: OperatorUser,
+  draft: PenangananDraft,
+): Promise<HasilSimpanPenanganan> {
+  const valid = validasiPenanganan(draft);
+  if (!valid.ok) galat(valid.pesan);
+  const s = valid.nilai;
+  const tx = await client.transaction("write");
+  try {
+    const id = idPenanganan(s.id_pengajuan, s.tanggal, s.id_jadwal);
+    const { jp, jadwal } = await muatJp(
+      tx,
+      s.tanggal,
+      s.tanggal,
+      s.id_pengajuan,
+    );
+    const j = jp.find((x) => x.id_penanganan === id);
+    if (!j) galat("Jam pelajaran itu tidak (lagi) terdampak pengajuan ini.");
+    const cakupan = dalamCakupan(
+      punya(operator, "hr.scope.all"),
+      await unitAkun(tx, operator),
+      j.unit,
+    );
+    const cek = periksaPenanganan(
+      j.id_karyawan,
+      s.id_guru_pengganti,
+      tautan(operator),
+      cakupan,
+    );
+    if (!cek.ok) galat(cek.pesan);
+    if (
+      s.id_guru_pengganti !== "" &&
+      (await tx.execute({ sql: GURU_AKTIF_SQL, args: [s.id_guru_pengganti] }))
+        .rows.length === 0
+    ) {
+      galat("Guru pengganti tidak ditemukan atau tidak aktif.");
+    }
+    const payload = {
+      id_penanganan: id,
+      id_pengajuan: s.id_pengajuan,
+      tanggal: s.tanggal,
+      id_jadwal: s.id_jadwal,
+      id_rombel: j.id_rombel,
+      id_mapel: j.id_mapel,
+      jam_ke: j.jam_ke,
+      status: s.status,
+      id_guru_pengganti: s.id_guru_pengganti,
+      catatan: s.catatan,
+      dicatat_oleh: operator.username,
+      waktu_perangkat: await waktuSekarang(tx),
+    };
+    const bentrok = penggantiBentrok(
+      s.id_guru_pengganti,
+      s.status,
+      s.tanggal,
+      j.jam_ke,
+      id,
+      jadwal,
+      await muatPenanganan(tx, s.tanggal, s.tanggal),
+    );
+    await tx.execute({
+      sql: CLOUD_PENANGANAN_SQL,
+      args: [
+        payload.id_penanganan,
+        payload.id_pengajuan,
+        payload.tanggal,
+        payload.id_jadwal,
+        payload.id_rombel,
+        payload.id_mapel,
+        payload.jam_ke,
+        payload.status,
+        payload.id_guru_pengganti,
+        payload.catatan,
+        payload.dicatat_oleh,
+        payload.waktu_perangkat,
+      ],
+    });
+    await tx.commit();
+    return {
+      penanganan: payload,
+      peringatan: bentrok ? PESAN_BENTROK_PENGGANTI : null,
+    };
+  } finally {
+    tx.close();
+  }
+}
+
+/** Cermin `ganti_saya`. */
+export async function gantiSaya(
+  client: Client,
+  operator: OperatorUser,
+): Promise<GantiSaya> {
+  const hariIni = await hariIniWib(client);
+  const saya = tautan(operator);
+  if (saya === "") return { tanggal: hariIni, jp: [] };
+  const [{ jp }, semua] = await Promise.all([
+    muatJp(client, hariIni, hariIni, ""),
+    muatPenanganan(client, hariIni, hariIni),
+  ]);
+  const penanganan = semua.filter(
+    (h) => h.id_guru_pengganti === saya && h.status !== "Tugas Mandiri",
+  );
+  const milik = jp.filter((j) =>
+    penanganan.some((h) => h.id_penanganan === j.id_penanganan),
+  );
+  return { tanggal: hariIni, jp: susunJp(milik, penanganan, [], []) };
 }

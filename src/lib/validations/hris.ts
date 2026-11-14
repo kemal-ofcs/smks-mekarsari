@@ -1415,6 +1415,39 @@ export type JenisDokumenDraft = z.input<typeof jenisDokumenDraftSchema>;
 
 export const idSchema = z.object({ id: pemilik }).strict();
 
+export const lampiranQuerySchema = z.object({ id_pengajuan: pemilik }).strict();
+
+export const lampiranSchema = z
+  .object({
+    id_pengajuan: pemilik,
+    nama_berkas: z.string().max(400),
+    mime_type: z.string().max(40),
+    data_base64: z
+      .string()
+      .max(MAKS_BASE64_DOKUMEN + 8, "Berkas lebih dari 1 MB."),
+  })
+  .strict();
+export type LampiranDraft = z.input<typeof lampiranSchema>;
+
+export interface BarisLampiran {
+  id_berkas: string;
+  urutan: number;
+  nama_berkas: string;
+  mime_type: string;
+  ukuran_byte: number;
+  diunggah_oleh: string;
+  created_at: string;
+}
+
+/** Jawaban `desktop_hr_request_files` / `POST /api/pengajuan/files/query`. */
+export interface DaftarLampiran {
+  /** Pengajuan sudah sampai di database pusat. */
+  ada: boolean;
+  boleh_ubah: boolean;
+  tanda: string[];
+  berkas: BarisLampiran[];
+}
+
 // Bentuk kembalian command/rute 1c
 
 export interface Jejak {
@@ -1624,6 +1657,31 @@ export const TAMBAH_BERKAS_SQL =
 
 export const HAPUS_BERKAS_SQL =
   "DELETE FROM hr_dokumen_berkas WHERE id_berkas = ?1;";
+
+// Lampiran pengajuan (HRIS Fase 2 §20.3, Q-51), cermin `hris_cloud.rs`.
+export const PENGAJUAN_LAMPIRAN_SQL =
+  "SELECT p.diajukan_oleh, p.izin_pemutus, COALESCE(j.wajib_dokumen, 0) AS wajib_dokumen FROM hr_pengajuan p LEFT JOIN hr_jenis_pengajuan j ON j.id_jenis = p.id_jenis WHERE p.id_pengajuan = ?1 LIMIT 1;";
+export const LAMPIRAN_SQL =
+  "SELECT id_berkas, urutan, COALESCE(nama_berkas, '') AS nama_berkas, mime_type, (length(data_base64) / 4) * 3 - (CASE WHEN data_base64 LIKE '%==' THEN 2 WHEN data_base64 LIKE '%=' THEN 1 ELSE 0 END) AS ukuran_byte, COALESCE(diunggah_oleh, '') AS diunggah_oleh, created_at FROM hr_pengajuan_berkas WHERE id_pengajuan = ?1 ORDER BY urutan\n-- batas: lampiran satu pengajuan, maksimal 5\n;";
+export const AMBIL_LAMPIRAN_SQL =
+  "SELECT id_berkas, id_pengajuan, COALESCE(nama_berkas, '') AS nama_berkas, mime_type, data_base64 FROM hr_pengajuan_berkas WHERE id_berkas = ?1 LIMIT 1;";
+export const PEMILIK_LAMPIRAN_SQL =
+  "SELECT p.diajukan_oleh, p.izin_pemutus FROM hr_pengajuan_berkas b JOIN hr_pengajuan p ON p.id_pengajuan = b.id_pengajuan WHERE b.id_berkas = ?1 LIMIT 1;";
+export const TAMBAH_LAMPIRAN_SQL =
+  "WITH slot(n) AS (VALUES (1), (2), (3), (4), (5)) INSERT INTO hr_pengajuan_berkas (id_berkas, id_pengajuan, urutan, nama_berkas, mime_type, data_base64, diunggah_oleh, created_at) SELECT ?1, ?2, MIN(slot.n), ?3, ?4, ?5, ?6, datetime('now') FROM slot WHERE slot.n NOT IN (SELECT urutan FROM hr_pengajuan_berkas WHERE id_pengajuan = ?2) AND EXISTS (SELECT 1 FROM hr_pengajuan WHERE id_pengajuan = ?2) HAVING MIN(slot.n) IS NOT NULL;";
+export const HAPUS_LAMPIRAN_SQL =
+  "DELETE FROM hr_pengajuan_berkas WHERE id_berkas = ?1;";
+
+export const PESAN_PENGAJUAN_BELUM_DI_CLOUD =
+  "Pengajuan ini belum sampai di database pusat. Sinkronkan perangkat, lalu coba lagi.";
+export const PESAN_LAMPIRAN_PENUH = "Pengajuan ini sudah berisi 5 lampiran.";
+export const PESAN_LAMPIRAN_DITOLAK =
+  "Hanya pengaju atau pemutus jenis pengajuan ini yang bisa mengubah lampirannya.";
+
+/** Cermin `tanda_lampiran` (Q-51): tanda, bukan penolakan. */
+export function tandaLampiran(wajibDokumen: boolean, jumlah: number): string[] {
+  return wajibDokumen && jumlah === 0 ? ["tanpa_dokumen"] : [];
+}
 
 export const PTK_SQL =
   "SELECT m.id_unik, m.nama, COALESCE(g.nip, '') AS nip, COALESCE(g.nuptk, '') AS nuptk, COALESCE(m.unit, '') AS unit, COALESCE(m.divisi, '') AS bagian, COALESCE(m.jabatan_status, '') AS jabatan, COALESCE(m.tanggal_mulai_aktif, '') AS tmt, CASE WHEN g.id_guru IS NOT NULL OR LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'guru' THEN 'Guru' ELSE 'Tendik' END AS kelompok, COALESCE(p.jenjang, '') AS jenjang, COALESCE(p.prodi, '') AS prodi, COALESCE(p.perguruan_tinggi, '') AS perguruan_tinggi, COALESCE(p.linier, 0) AS linier, COALESCE(s.bidang_studi, '') AS sertifikat_bidang, s.tahun AS sertifikat_tahun, COALESCE(s.nrg, '') AS nrg, COALESCE((SELECT group_concat(nama_mapel, ', ') FROM (SELECT DISTINCT mp.nama_mapel FROM jadwal_mengajar j JOIN akademik_mapel mp ON mp.id_mapel = j.id_mapel JOIN akademik_tahun_ajaran ta ON ta.id_tahun_ajaran = j.id_tahun_ajaran WHERE j.id_guru = m.id_unik AND j.is_aktif = 1 AND ta.is_aktif = 1 ORDER BY mp.nama_mapel)), '') AS mapel FROM master_data m LEFT JOIN guru_data g ON g.id_guru = m.id_unik LEFT JOIN hr_pendidikan p ON p.id_pendidikan = (SELECT x.id_pendidikan FROM hr_pendidikan x WHERE x.id_karyawan = m.id_unik ORDER BY CASE x.jenjang WHEN 'S3' THEN 10 WHEN 'S2' THEN 9 WHEN 'S1' THEN 8 WHEN 'D4' THEN 7 WHEN 'D3' THEN 6 WHEN 'D2' THEN 5 WHEN 'D1' THEN 4 WHEN 'SMA/SMK' THEN 3 WHEN 'SMP' THEN 2 ELSE 1 END DESC, COALESCE(x.tahun_lulus, 0) DESC, x.id_pendidikan DESC LIMIT 1) LEFT JOIN hr_sertifikasi s ON s.id_sertifikasi = (SELECT y.id_sertifikasi FROM hr_sertifikasi y WHERE y.id_karyawan = m.id_unik ORDER BY COALESCE(y.tahun, 0) DESC, y.id_sertifikasi DESC LIMIT 1) WHERE LOWER(TRIM(COALESCE(m.jenis_personil, ''))) <> 'siswa' AND NOT EXISTS (SELECT 1 FROM siswa_data sd WHERE sd.id_siswa = m.id_unik) AND COALESCE(m.status_aktif, 'Aktif') = 'Aktif' ORDER BY unit, m.nama, m.id_unik\n-- batas: pegawai aktif sekolah, dibatasi jumlah personil lembaga\n;";

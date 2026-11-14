@@ -78,6 +78,24 @@ pub const HAPUS_DOKUMEN_SQL: [&str; 2] = [
 pub const TAMBAH_BERKAS_SQL: &str = "WITH slot(n) AS (VALUES (1), (2), (3), (4), (5)) INSERT INTO hr_dokumen_berkas (id_berkas, id_dokumen, urutan, nama_berkas, mime_type, data_base64, created_at) SELECT ?1, ?2, MIN(slot.n), ?3, ?4, ?5, datetime('now') FROM slot WHERE slot.n NOT IN (SELECT urutan FROM hr_dokumen_berkas WHERE id_dokumen = ?2) AND EXISTS (SELECT 1 FROM hr_dokumen WHERE id_dokumen = ?2) HAVING MIN(slot.n) IS NOT NULL;";
 pub const HAPUS_BERKAS_SQL: &str = "DELETE FROM hr_dokumen_berkas WHERE id_berkas = ?1;";
 
+// Lampiran pengajuan (HRIS Fase 2 §20.3, Q-51): `hr_pengajuan_berkas`, aturan
+// berkas yang sama dengan dokumen pegawai.
+pub const PENGAJUAN_LAMPIRAN_SQL: &str = "SELECT p.diajukan_oleh, p.izin_pemutus, COALESCE(j.wajib_dokumen, 0) AS wajib_dokumen FROM hr_pengajuan p LEFT JOIN hr_jenis_pengajuan j ON j.id_jenis = p.id_jenis WHERE p.id_pengajuan = ?1 LIMIT 1;";
+pub const LAMPIRAN_SQL: &str = "SELECT id_berkas, urutan, COALESCE(nama_berkas, '') AS nama_berkas, mime_type, (length(data_base64) / 4) * 3 - (CASE WHEN data_base64 LIKE '%==' THEN 2 WHEN data_base64 LIKE '%=' THEN 1 ELSE 0 END) AS ukuran_byte, COALESCE(diunggah_oleh, '') AS diunggah_oleh, created_at FROM hr_pengajuan_berkas WHERE id_pengajuan = ?1 ORDER BY urutan\n-- batas: lampiran satu pengajuan, maksimal 5\n;";
+pub const AMBIL_LAMPIRAN_SQL: &str = "SELECT id_berkas, id_pengajuan, COALESCE(nama_berkas, '') AS nama_berkas, mime_type, data_base64 FROM hr_pengajuan_berkas WHERE id_berkas = ?1 LIMIT 1;";
+/// Pengajuan pemilik satu lampiran, untuk menilai siapa yang boleh menghapus.
+pub const PEMILIK_LAMPIRAN_SQL: &str = "SELECT p.diajukan_oleh, p.izin_pemutus FROM hr_pengajuan_berkas b JOIN hr_pengajuan p ON p.id_pengajuan = b.id_pengajuan WHERE b.id_berkas = ?1 LIMIT 1;";
+/// ?1 id, ?2 pengajuan, ?3 nama, ?4 MIME, ?5 isi, ?6 pengunggah. Slot 1–5
+/// seperti `TAMBAH_BERKAS_SQL`.
+pub const TAMBAH_LAMPIRAN_SQL: &str = "WITH slot(n) AS (VALUES (1), (2), (3), (4), (5)) INSERT INTO hr_pengajuan_berkas (id_berkas, id_pengajuan, urutan, nama_berkas, mime_type, data_base64, diunggah_oleh, created_at) SELECT ?1, ?2, MIN(slot.n), ?3, ?4, ?5, ?6, datetime('now') FROM slot WHERE slot.n NOT IN (SELECT urutan FROM hr_pengajuan_berkas WHERE id_pengajuan = ?2) AND EXISTS (SELECT 1 FROM hr_pengajuan WHERE id_pengajuan = ?2) HAVING MIN(slot.n) IS NOT NULL;";
+pub const HAPUS_LAMPIRAN_SQL: &str = "DELETE FROM hr_pengajuan_berkas WHERE id_berkas = ?1;";
+
+pub const PESAN_PENGAJUAN_BELUM_DI_CLOUD: &str =
+    "Pengajuan ini belum sampai di database pusat. Sinkronkan perangkat, lalu coba lagi.";
+pub const PESAN_LAMPIRAN_PENUH: &str = "Pengajuan ini sudah berisi 5 lampiran.";
+pub const PESAN_LAMPIRAN_DITOLAK: &str =
+    "Hanya pengaju atau pemutus jenis pengajuan ini yang bisa mengubah lampirannya.";
+
 /// Baris Laporan PTK (§19.2.7): pegawai aktif dengan pendidikan tertinggi,
 /// sertifikat terakhir, dan mapel yang diajar pada tahun ajaran aktif. Status
 /// kini digabung dari `STATUS_KINI_SQL`.
@@ -375,6 +393,22 @@ pub fn boleh_baca_dokumen(operator: &OperatorUser, id_karyawan: &str) -> bool {
     punya(operator, "hr.document.view") || (id_karyawan.trim().is_empty() && punya(operator, "hr.org.manage"))
 }
 
+/// Cermin `tandaLampiran` (Q-51): jenis wajib dokumen tanpa lampiran = tanda,
+/// bukan penolakan.
+pub fn tanda_lampiran(wajib_dokumen: bool, jumlah: usize) -> Vec<&'static str> {
+    if wajib_dokumen && jumlah == 0 {
+        vec!["tanpa_dokumen"]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Cermin `bolehUbahLampiran`: pengaju (atau Superadmin) atau pemegang izin
+/// pemutus jenisnya, dari sesi.
+pub fn boleh_ubah_lampiran(operator: &OperatorUser, diajukan_oleh: &str, izin_pemutus: &str) -> bool {
+    super::hr_pengajuan::sama_orang(diajukan_oleh, &operator.username) || punya(operator, izin_pemutus)
+}
+
 // ── Akses cloud ──
 
 /// Belum ada database atau jaringan gagal → pesan yang bisa dibaca pengguna.
@@ -646,6 +680,105 @@ pub async fn tambah_berkas(
     Ok(json!({ "id_berkas": id }))
 }
 
+async fn pengajuan_lampiran(client: &TursoClient, id_pengajuan: &str) -> Result<Value, CommandError> {
+    let hasil = client.query_one(PENGAJUAN_LAMPIRAN_SQL, vec![json!(id_pengajuan)]).await?;
+    match baris_pertama(&hasil) {
+        Value::Null => Err(galat_validasi(PESAN_PENGAJUAN_BELUM_DI_CLOUD)),
+        baris => Ok(baris),
+    }
+}
+
+fn teks_kolom(baris: &Value, kunci: &str) -> String {
+    baris.get(kunci).and_then(Value::as_str).unwrap_or_default().to_owned()
+}
+
+fn boleh_ubah_baris(operator: &OperatorUser, baris: &Value) -> bool {
+    boleh_ubah_lampiran(operator, &teks_kolom(baris, "diajukan_oleh"), &teks_kolom(baris, "izin_pemutus"))
+}
+
+pub async fn lampiran_pengajuan(
+    client: &TursoClient,
+    operator: &OperatorUser,
+    id_pengajuan: &str,
+) -> Result<Value, CommandError> {
+    client.ensure_schema_current().await?;
+    let id = id_pengajuan.trim();
+    let hasil = client
+        .execute_pipeline(vec![
+            Statement::new(PENGAJUAN_LAMPIRAN_SQL, vec![json!(id)]),
+            Statement::new(LAMPIRAN_SQL, vec![json!(id)]),
+        ])
+        .await?;
+    let pengajuan = baris_pertama(&hasil[0]);
+    let berkas = hasil[1].to_objects();
+    if pengajuan.is_null() {
+        return Ok(json!({ "ada": false, "boleh_ubah": false, "berkas": [], "tanda": [] }));
+    }
+    let wajib = pengajuan.get("wajib_dokumen").and_then(Value::as_i64) == Some(1);
+    Ok(json!({
+        "ada": true,
+        "boleh_ubah": boleh_ubah_baris(operator, &pengajuan),
+        "tanda": tanda_lampiran(wajib, berkas.len()),
+        "berkas": berkas,
+    }))
+}
+
+pub async fn ambil_lampiran(client: &TursoClient, id_berkas: &str) -> Result<Value, CommandError> {
+    client.ensure_schema_current().await?;
+    let hasil = client.query_one(AMBIL_LAMPIRAN_SQL, vec![json!(id_berkas.trim())]).await?;
+    match baris_pertama(&hasil) {
+        Value::Null => Err(CommandError::new("NOT_FOUND", "Berkas tidak ditemukan.")),
+        baris => Ok(baris),
+    }
+}
+
+pub async fn tambah_lampiran(
+    client: &TursoClient,
+    operator: &OperatorUser,
+    id_pengajuan: &str,
+    nama_berkas: &str,
+    mime_type: &str,
+    data_base64: &str,
+) -> Result<Value, CommandError> {
+    let berkas = urai_berkas_dokumen(nama_berkas, mime_type, data_base64).map_err(galat_validasi)?;
+    client.ensure_schema_current().await?;
+    let id_pengajuan = id_pengajuan.trim();
+    if !boleh_ubah_baris(operator, &pengajuan_lampiran(client, id_pengajuan).await?) {
+        return Err(CommandError::new("DESKTOP_ACCESS_DENIED", PESAN_LAMPIRAN_DITOLAK));
+    }
+    let id = new_id("pgb-");
+    let hasil = client
+        .execute_pipeline(vec![Statement::new(
+            TAMBAH_LAMPIRAN_SQL,
+            vec![
+                json!(id),
+                json!(id_pengajuan),
+                json!(berkas.nama_berkas),
+                json!(berkas.mime_type),
+                json!(berkas.data_base64),
+                json!(operator.username),
+            ],
+        )])
+        .await?;
+    if terpengaruh(&hasil) == 0 {
+        return Err(galat_validasi(PESAN_LAMPIRAN_PENUH));
+    }
+    Ok(json!({ "id_berkas": id }))
+}
+
+pub async fn hapus_lampiran(client: &TursoClient, operator: &OperatorUser, id_berkas: &str) -> Result<Value, CommandError> {
+    client.ensure_schema_current().await?;
+    let id = id_berkas.trim();
+    let pemilik = baris_pertama(&client.query_one(PEMILIK_LAMPIRAN_SQL, vec![json!(id)]).await?);
+    if pemilik.is_null() {
+        return Err(CommandError::new("NOT_FOUND", "Berkas tidak ditemukan."));
+    }
+    if !boleh_ubah_baris(operator, &pemilik) {
+        return Err(CommandError::new("DESKTOP_ACCESS_DENIED", PESAN_LAMPIRAN_DITOLAK));
+    }
+    hapus(client, HAPUS_LAMPIRAN_SQL, id).await
+}
+
 #[derive(Deserialize)]
 #[serde(default)]
 struct JenisDokumenDraft {
@@ -755,6 +888,10 @@ mod tests {
             .map(|b| json!({ "nama_berkas": b.nama_berkas, "mime_type": b.mime_type, "ukuran_byte": b.ukuran_byte }));
             let harapan = if k["galat"].is_null() { json!({ "hasil": k["hasil"] }) } else { json!({ "galat": k["galat"] }) };
             assert_eq!(hasil(h), harapan, "{k}");
+        }
+        for k in v["tanda_lampiran"].as_array().expect("tanda_lampiran") {
+            let tanda = tanda_lampiran(k[0] == true, k[1].as_u64().unwrap() as usize);
+            assert_eq!(json!(tanda), k[2], "{k}");
         }
     }
 
@@ -866,6 +1003,58 @@ mod tests {
             let sisa = client.query_one("SELECT COUNT(*) AS n FROM hr_dokumen_berkas;", vec![]).await.unwrap();
             assert_eq!(baris_pertama(&sisa)["n"], 0);
             assert!(dokumen(&client, "").await.unwrap()["jenis"].as_array().unwrap().len() >= 13);
+        });
+    }
+
+    /// Lampiran pengajuan (§20.3, Q-51) di database cloud sungguhan: maks 5,
+    /// hanya pengaju atau pemutus jenis, wajib dokumen = tanda.
+    #[test]
+    fn hris_cloud_lampiran_pengajuan() {
+        let dir = tempfile::tempdir().expect("direktori sementara");
+        let hub = dir.path().join("sppg-hub.db");
+        let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime uji");
+        let client = TursoClient::local_file(Url::parse(super::super::turso::LOCAL_FILE_ORIGIN).unwrap(), &hub, Client::new());
+        rt.block_on(async {
+            client.ensure_schema().await.expect("skema");
+            client
+                .query_one(
+                    "INSERT INTO hr_pengajuan (id_pengajuan, id_karyawan, id_jenis, kelompok, potong_jatah, dampak_gaji, izin_pemutus, tanggal_mulai, tanggal_selesai, setengah_hari, alasan, sidik, diajukan_oleh, waktu_perangkat) VALUES ('pgn-1', 'p1', 'jns-sakit', 'Sakit', 0, 'Dibayar', 'hr.request.decide', '2026-11-10', '2026-11-10', 0, 'demam', 's', 'tu', '2026-11-10 07:00:00');",
+                    vec![],
+                )
+                .await
+                .expect("pengajuan");
+            let mut tu = operator(&["hr.request.submit"]);
+            tu.username = "tu".into();
+            let awal = lampiran_pengajuan(&client, &tu, "pgn-1").await.unwrap();
+            assert_eq!(awal["tanda"], json!(["tanpa_dokumen"]));
+            assert_eq!(awal["boleh_ubah"], true);
+            let belum = lampiran_pengajuan(&client, &tu, "pgn-tak-ada").await.unwrap();
+            assert_eq!(belum["ada"], false);
+
+            let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+            let lain = operator(&["hr.request.submit"]);
+            let ditolak = tambah_lampiran(&client, &lain, "pgn-1", "a.png", "image/png", png).await.unwrap_err();
+            assert_eq!(ditolak.message, PESAN_LAMPIRAN_DITOLAK);
+            let pemutus = operator(&["hr.request.decide"]);
+            for _ in 0..MAKS_BERKAS_DOKUMEN {
+                tambah_lampiran(&client, &pemutus, "pgn-1", "surat.png", "image/png", png).await.expect("lampiran");
+            }
+            let keenam = tambah_lampiran(&client, &tu, "pgn-1", "surat.png", "image/png", png).await.unwrap_err();
+            assert_eq!(keenam.message, PESAN_LAMPIRAN_PENUH);
+            let tak_ada = tambah_lampiran(&client, &tu, "pgn-tak-ada", "a.png", "image/png", png).await.unwrap_err();
+            assert_eq!(tak_ada.message, PESAN_PENGAJUAN_BELUM_DI_CLOUD);
+
+            let isi = lampiran_pengajuan(&client, &lain, "pgn-1").await.unwrap();
+            assert_eq!(isi["boleh_ubah"], false);
+            assert_eq!(isi["tanda"], json!([]));
+            let berkas = isi["berkas"].as_array().unwrap();
+            assert_eq!(berkas.len(), 5);
+            assert!(berkas[0].get("data_base64").is_none());
+            let id = berkas[0]["id_berkas"].as_str().unwrap().to_owned();
+            assert_eq!(ambil_lampiran(&client, &id).await.unwrap()["data_base64"], png);
+            assert_eq!(hapus_lampiran(&client, &lain, &id).await.unwrap_err().message, PESAN_LAMPIRAN_DITOLAK);
+            hapus_lampiran(&client, &tu, &id).await.expect("hapus");
+            assert_eq!(lampiran_pengajuan(&client, &tu, "pgn-1").await.unwrap()["berkas"].as_array().unwrap().len(), 4);
         });
     }
 

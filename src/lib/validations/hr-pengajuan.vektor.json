@@ -2566,5 +2566,665 @@
       "galat": "Alasan maksimal 500 karakter.",
       "hasil": null
     }
+  ],
+  "jp_terdampak": {
+    "jadwal": [
+      {
+        "id_jadwal": "J1",
+        "id_guru": "G1",
+        "hari": 1,
+        "jam_ke": "3-4",
+        "id_rombel": "R7A",
+        "nama_rombel": "VII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP",
+        "ta_mulai": "2026-07-13",
+        "ta_selesai": "2026-12-19"
+      },
+      {
+        "id_jadwal": "J2",
+        "id_guru": "G1",
+        "hari": 1,
+        "jam_ke": "1",
+        "id_rombel": "R7B",
+        "nama_rombel": "VII B",
+        "id_mapel": "IPA",
+        "nama_mapel": "IPA",
+        "unit": "SMP",
+        "ta_mulai": "2026-07-13",
+        "ta_selesai": "2026-12-19"
+      },
+      {
+        "id_jadwal": "J3",
+        "id_guru": "G1",
+        "hari": 2,
+        "jam_ke": "1-2",
+        "id_rombel": "R8A",
+        "nama_rombel": "VIII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP",
+        "ta_mulai": "2026-07-13",
+        "ta_selesai": "2026-12-19"
+      },
+      {
+        "id_jadwal": "J4",
+        "id_guru": "G1",
+        "hari": 3,
+        "jam_ke": "5",
+        "id_rombel": "R8B",
+        "nama_rombel": "VIII B",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SD",
+        "ta_mulai": "2026-07-13",
+        "ta_selesai": "2026-12-19"
+      },
+      {
+        "id_jadwal": "J5",
+        "id_guru": "G1",
+        "hari": 1,
+        "jam_ke": "6",
+        "id_rombel": "R9A",
+        "nama_rombel": "IX A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "",
+        "ta_mulai": "2026-01-05",
+        "ta_selesai": "2026-06-20"
+      },
+      {
+        "id_jadwal": "J6",
+        "id_guru": "G2",
+        "hari": 1,
+        "jam_ke": "3",
+        "id_rombel": "R7C",
+        "nama_rombel": "VII C",
+        "id_mapel": "BIN",
+        "nama_mapel": "B. Indonesia",
+        "unit": "SMP",
+        "ta_mulai": "2026-07-13",
+        "ta_selesai": "2026-12-19"
+      },
+      {
+        "id_jadwal": "J7",
+        "id_guru": "G1",
+        "hari": 4,
+        "jam_ke": "2-3",
+        "id_rombel": "R9B",
+        "nama_rombel": "IX B",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP",
+        "ta_mulai": "2026-07-13",
+        "ta_selesai": "2026-12-19"
+      },
+      {
+        "id_jadwal": "J8",
+        "id_guru": "G1",
+        "hari": 4,
+        "jam_ke": "4",
+        "id_rombel": "R9C",
+        "nama_rombel": "IX C",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP",
+        "ta_mulai": "2026-07-13",
+        "ta_selesai": "2026-12-19"
+      }
+    ],
+    "pengajuan": [
+      {
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal_mulai": "2026-11-09",
+        "tanggal_selesai": "2026-11-12",
+        "jam_mulai_ke": 4,
+        "jam_sampai_ke": 2
+      },
+      {
+        "id_pengajuan": "pgn-2",
+        "id_karyawan": "G2",
+        "nama_guru": "Guru Dua",
+        "tanggal_mulai": "2026-11-09",
+        "tanggal_selesai": "2026-11-09",
+        "jam_mulai_ke": null,
+        "jam_sampai_ke": null
+      }
+    ],
+    "kasus": [
+      {
+        "_": "rentang 3-4 sebagian, hari tengah penuh, libur dilewati, semester lama tidak ikut",
+        "libur": ["2026-11-11"],
+        "dari": "2026-11-01",
+        "sampai": "2026-11-30",
+        "hasil": [
+          {
+            "id_penanganan": "jp:pgn-1:2026-11-09:J1",
+            "id_pengajuan": "pgn-1",
+            "id_karyawan": "G1",
+            "nama_guru": "Guru Satu",
+            "tanggal": "2026-11-09",
+            "id_jadwal": "J1",
+            "jam_ke": "3-4",
+            "id_rombel": "R7A",
+            "nama_rombel": "VII A",
+            "id_mapel": "MTK",
+            "nama_mapel": "Matematika",
+            "unit": "SMP"
+          },
+          {
+            "id_penanganan": "jp:pgn-2:2026-11-09:J6",
+            "id_pengajuan": "pgn-2",
+            "id_karyawan": "G2",
+            "nama_guru": "Guru Dua",
+            "tanggal": "2026-11-09",
+            "id_jadwal": "J6",
+            "jam_ke": "3",
+            "id_rombel": "R7C",
+            "nama_rombel": "VII C",
+            "id_mapel": "BIN",
+            "nama_mapel": "B. Indonesia",
+            "unit": "SMP"
+          },
+          {
+            "id_penanganan": "jp:pgn-1:2026-11-10:J3",
+            "id_pengajuan": "pgn-1",
+            "id_karyawan": "G1",
+            "nama_guru": "Guru Satu",
+            "tanggal": "2026-11-10",
+            "id_jadwal": "J3",
+            "jam_ke": "1-2",
+            "id_rombel": "R8A",
+            "nama_rombel": "VIII A",
+            "id_mapel": "MTK",
+            "nama_mapel": "Matematika",
+            "unit": "SMP"
+          },
+          {
+            "id_penanganan": "jp:pgn-1:2026-11-12:J7",
+            "id_pengajuan": "pgn-1",
+            "id_karyawan": "G1",
+            "nama_guru": "Guru Satu",
+            "tanggal": "2026-11-12",
+            "id_jadwal": "J7",
+            "jam_ke": "2-3",
+            "id_rombel": "R9B",
+            "nama_rombel": "IX B",
+            "id_mapel": "MTK",
+            "nama_mapel": "Matematika",
+            "unit": "SMP"
+          }
+        ]
+      },
+      {
+        "_": "Jam Kosong satu tanggal",
+        "libur": ["2026-11-11"],
+        "dari": "2026-11-10",
+        "sampai": "2026-11-10",
+        "hasil": [
+          {
+            "id_penanganan": "jp:pgn-1:2026-11-10:J3",
+            "id_pengajuan": "pgn-1",
+            "id_karyawan": "G1",
+            "nama_guru": "Guru Satu",
+            "tanggal": "2026-11-10",
+            "id_jadwal": "J3",
+            "jam_ke": "1-2",
+            "id_rombel": "R8A",
+            "nama_rombel": "VIII A",
+            "id_mapel": "MTK",
+            "nama_mapel": "Matematika",
+            "unit": "SMP"
+          }
+        ]
+      },
+      {
+        "_": "tanpa libur, Rabu hari tengah ikut",
+        "libur": [],
+        "dari": "2026-11-11",
+        "sampai": "2026-11-11",
+        "hasil": [
+          {
+            "id_penanganan": "jp:pgn-1:2026-11-11:J4",
+            "id_pengajuan": "pgn-1",
+            "id_karyawan": "G1",
+            "nama_guru": "Guru Satu",
+            "tanggal": "2026-11-11",
+            "id_jadwal": "J4",
+            "jam_ke": "5",
+            "id_rombel": "R8B",
+            "nama_rombel": "VIII B",
+            "id_mapel": "MTK",
+            "nama_mapel": "Matematika",
+            "unit": "SD"
+          }
+        ]
+      }
+    ]
+  },
+  "pengganti_bentrok": {
+    "penanganan": [
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-09:J1",
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "jam_ke": "3-4",
+        "status": "Diganti",
+        "id_guru_pengganti": "G2",
+        "nama_pengganti": "Guru Dua",
+        "catatan": "",
+        "dicatat_oleh": "piket",
+        "waktu_perangkat": "2026-11-09 06:30:00"
+      },
+      {
+        "id_penanganan": "jp:pgn-2:2026-11-09:J6",
+        "id_pengajuan": "pgn-2",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J6",
+        "jam_ke": "3",
+        "status": "Digabung",
+        "id_guru_pengganti": "G3",
+        "nama_pengganti": "Guru Tiga",
+        "catatan": "gabung VII D",
+        "dicatat_oleh": "piket",
+        "waktu_perangkat": "2026-11-09 06:31:00"
+      }
+    ],
+    "kasus": [
+      [["G2", "Diganti", "2026-11-09", "3-4", "jp:pgn-1:2026-11-09:J1"], true],
+      [
+        ["G2", "Digabung", "2026-11-09", "3-4", "jp:pgn-1:2026-11-09:J1"],
+        false
+      ],
+      [["G3", "Diganti", "2026-11-09", "3-4", "x"], true],
+      [["G3", "Digabung", "2026-11-09", "3", "x"], false],
+      [["", "Diganti", "2026-11-09", "3", "x"], false],
+      [["G2", "Tugas Mandiri", "2026-11-09", "3", "x"], false],
+      [["G2", "Diganti", "2026-11-16", "3", "x"], true],
+      [["G1", "Diganti", "2026-11-09", "6", "x"], false],
+      [["G1", "Diganti", "2026-11-09", "1", "x"], true]
+    ]
+  },
+  "susun_jp": {
+    "jp": [
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-09:J1",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "jam_ke": "3-4",
+        "id_rombel": "R7A",
+        "nama_rombel": "VII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP"
+      },
+      {
+        "id_penanganan": "jp:pgn-2:2026-11-09:J6",
+        "id_pengajuan": "pgn-2",
+        "id_karyawan": "G2",
+        "nama_guru": "Guru Dua",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J6",
+        "jam_ke": "3",
+        "id_rombel": "R7C",
+        "nama_rombel": "VII C",
+        "id_mapel": "BIN",
+        "nama_mapel": "B. Indonesia",
+        "unit": "SMP"
+      },
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-10:J3",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-10",
+        "id_jadwal": "J3",
+        "jam_ke": "1-2",
+        "id_rombel": "R8A",
+        "nama_rombel": "VIII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP"
+      },
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-12:J7",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-12",
+        "id_jadwal": "J7",
+        "jam_ke": "2-3",
+        "id_rombel": "R9B",
+        "nama_rombel": "IX B",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP"
+      }
+    ],
+    "penanganan": [
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-09:J1",
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "jam_ke": "3-4",
+        "status": "Diganti",
+        "id_guru_pengganti": "G2",
+        "nama_pengganti": "Guru Dua",
+        "catatan": "",
+        "dicatat_oleh": "piket",
+        "waktu_perangkat": "2026-11-09 06:30:00"
+      },
+      {
+        "id_penanganan": "jp:pgn-2:2026-11-09:J6",
+        "id_pengajuan": "pgn-2",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J6",
+        "jam_ke": "3",
+        "status": "Digabung",
+        "id_guru_pengganti": "G3",
+        "nama_pengganti": "Guru Tiga",
+        "catatan": "gabung VII D",
+        "dicatat_oleh": "piket",
+        "waktu_perangkat": "2026-11-09 06:31:00"
+      }
+    ],
+    "presensi": [
+      {
+        "id_rombel": "R7A",
+        "tanggal": "2026-11-09",
+        "jam_ke": "3-4",
+        "id_guru": "G9"
+      },
+      {
+        "id_rombel": "R7C",
+        "tanggal": "2026-11-09",
+        "jam_ke": "3",
+        "id_guru": "G3"
+      },
+      {
+        "id_rombel": "R8A",
+        "tanggal": "2026-11-10",
+        "jam_ke": "1-2",
+        "id_guru": "G7"
+      }
+    ],
+    "hasil": [
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-09:J1",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "jam_ke": "3-4",
+        "id_rombel": "R7A",
+        "nama_rombel": "VII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP",
+        "penanganan": {
+          "id_penanganan": "jp:pgn-1:2026-11-09:J1",
+          "id_pengajuan": "pgn-1",
+          "tanggal": "2026-11-09",
+          "id_jadwal": "J1",
+          "jam_ke": "3-4",
+          "status": "Diganti",
+          "id_guru_pengganti": "G2",
+          "nama_pengganti": "Guru Dua",
+          "catatan": "",
+          "dicatat_oleh": "piket",
+          "waktu_perangkat": "2026-11-09 06:30:00"
+        },
+        "tanda": ["pengganti_berbeda", "pengganti_bentrok"]
+      },
+      {
+        "id_penanganan": "jp:pgn-2:2026-11-09:J6",
+        "id_pengajuan": "pgn-2",
+        "id_karyawan": "G2",
+        "nama_guru": "Guru Dua",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J6",
+        "jam_ke": "3",
+        "id_rombel": "R7C",
+        "nama_rombel": "VII C",
+        "id_mapel": "BIN",
+        "nama_mapel": "B. Indonesia",
+        "unit": "SMP",
+        "penanganan": {
+          "id_penanganan": "jp:pgn-2:2026-11-09:J6",
+          "id_pengajuan": "pgn-2",
+          "tanggal": "2026-11-09",
+          "id_jadwal": "J6",
+          "jam_ke": "3",
+          "status": "Digabung",
+          "id_guru_pengganti": "G3",
+          "nama_pengganti": "Guru Tiga",
+          "catatan": "gabung VII D",
+          "dicatat_oleh": "piket",
+          "waktu_perangkat": "2026-11-09 06:31:00"
+        },
+        "tanda": []
+      },
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-10:J3",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-10",
+        "id_jadwal": "J3",
+        "jam_ke": "1-2",
+        "id_rombel": "R8A",
+        "nama_rombel": "VIII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP",
+        "penanganan": null,
+        "tanda": []
+      },
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-12:J7",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-12",
+        "id_jadwal": "J7",
+        "jam_ke": "2-3",
+        "id_rombel": "R9B",
+        "nama_rombel": "IX B",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP",
+        "penanganan": null,
+        "tanda": []
+      }
+    ]
+  },
+  "hitung_jp": {
+    "jp": [
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-09:J1",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "jam_ke": "3-4",
+        "id_rombel": "R7A",
+        "nama_rombel": "VII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP"
+      },
+      {
+        "id_penanganan": "jp:pgn-2:2026-11-09:J6",
+        "id_pengajuan": "pgn-2",
+        "id_karyawan": "G2",
+        "nama_guru": "Guru Dua",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J6",
+        "jam_ke": "3",
+        "id_rombel": "R7C",
+        "nama_rombel": "VII C",
+        "id_mapel": "BIN",
+        "nama_mapel": "B. Indonesia",
+        "unit": "SMP"
+      },
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-10:J3",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-10",
+        "id_jadwal": "J3",
+        "jam_ke": "1-2",
+        "id_rombel": "R8A",
+        "nama_rombel": "VIII A",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP"
+      },
+      {
+        "id_penanganan": "jp:pgn-1:2026-11-12:J7",
+        "id_pengajuan": "pgn-1",
+        "id_karyawan": "G1",
+        "nama_guru": "Guru Satu",
+        "tanggal": "2026-11-12",
+        "id_jadwal": "J7",
+        "jam_ke": "2-3",
+        "id_rombel": "R9B",
+        "nama_rombel": "IX B",
+        "id_mapel": "MTK",
+        "nama_mapel": "Matematika",
+        "unit": "SMP"
+      }
+    ],
+    "ditangani": ["jp:pgn-1:2026-11-09:J1"],
+    "hasil": {
+      "pgn-1": {
+        "total": 3,
+        "belum": 2
+      },
+      "pgn-2": {
+        "total": 1,
+        "belum": 1
+      }
+    }
+  },
+  "validasi_penanganan": [
+    {
+      "masuk": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "status": "Diganti",
+        "id_guru_pengganti": " G2 ",
+        "catatan": " kelas tenang "
+      },
+      "galat": null,
+      "hasil": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "status": "Diganti",
+        "id_guru_pengganti": "G2",
+        "catatan": "kelas tenang"
+      }
+    },
+    {
+      "masuk": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "status": "Tugas Mandiri",
+        "id_guru_pengganti": "G2"
+      },
+      "galat": null,
+      "hasil": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "status": "Tugas Mandiri",
+        "id_guru_pengganti": "",
+        "catatan": ""
+      }
+    },
+    {
+      "masuk": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "status": "Digabung"
+      },
+      "galat": "Pilih guru pengganti.",
+      "hasil": null
+    },
+    {
+      "masuk": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "status": "Kosong",
+        "id_guru_pengganti": "G2"
+      },
+      "galat": "Status penanganan tidak dikenal.",
+      "hasil": null
+    },
+    {
+      "masuk": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-02-30",
+        "id_jadwal": "J1",
+        "status": "Diganti"
+      },
+      "galat": "Tanggal tidak valid.",
+      "hasil": null
+    },
+    {
+      "masuk": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": " ",
+        "status": "Diganti"
+      },
+      "galat": "Jam pelajaran yang ditangani tidak dikenal.",
+      "hasil": null
+    },
+    {
+      "masuk": {
+        "id_pengajuan": "pgn-1",
+        "tanggal": "2026-11-09",
+        "id_jadwal": "J1",
+        "status": "Diganti",
+        "id_guru_pengganti": "G2",
+        "catatan": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "galat": "Catatan maksimal 500 karakter.",
+      "hasil": null
+    }
+  ],
+  "periksa_penanganan": [
+    [
+      ["G1", "G2", "G1", true],
+      "Jam pelajaranmu sendiri harus ditangani orang lain."
+    ],
+    [
+      ["G1", "G2", "G1", false],
+      "Jam pelajaranmu sendiri harus ditangani orang lain."
+    ],
+    [["G1", "G2", "", false], "Rombel ini di luar unit yang kamu pegang."],
+    [
+      ["G1", "G1", "G5", true],
+      "Guru pengganti tidak boleh guru yang berhalangan."
+    ],
+    [["G1", "", "G5", true], null],
+    [["G1", "G2", "", true], null]
   ]
 }
