@@ -10,14 +10,22 @@ import {
 } from "react";
 import { AppShell } from "@/components/AppShell";
 import { AturanCutiOrganisasi } from "@/components/kepegawaian/AturanCutiOrganisasi";
+import {
+  DialogCetakSurat,
+  mapelSemesterAktif,
+  type PermintaanSurat,
+  permintaanKeteranganAktif,
+} from "@/components/kepegawaian/DialogCetakSurat";
 import { masaKerja } from "@/components/kepegawaian/gaya";
 import { JenisDokumenOrganisasi } from "@/components/kepegawaian/JenisDokumenOrganisasi";
 import { JenisPengajuanOrganisasi } from "@/components/kepegawaian/JenisPengajuanOrganisasi";
 import { OrganisasiTugasKontrak } from "@/components/kepegawaian/OrganisasiTugasKontrak";
+import { PengaturanSurat } from "@/components/kepegawaian/PengaturanSurat";
 import { RincianPegawai } from "@/components/kepegawaian/RincianPegawai";
 import { TabBebanMengajar } from "@/components/kepegawaian/TabBebanMengajar";
 import { TabKontrak } from "@/components/kepegawaian/TabKontrak";
 import { TabLaporanPtk } from "@/components/kepegawaian/TabLaporanPtk";
+import { TabSurat } from "@/components/kepegawaian/TabSurat";
 import { TabTugas } from "@/components/kepegawaian/TabTugas";
 import { FeedbackBanner } from "@/components/ui/FeedbackBanner";
 import { Modal } from "@/components/ui/Modal";
@@ -45,7 +53,8 @@ type Tab =
   | "tugas"
   | "organisasi"
   | "ptk"
-  | "beban";
+  | "beban"
+  | "surat";
 
 const TAB: { kunci: Tab; label: string }[] = [
   { kunci: "daftar", label: "Daftar" },
@@ -55,10 +64,13 @@ const TAB: { kunci: Tab; label: string }[] = [
   { kunci: "organisasi", label: "Organisasi" },
   { kunci: "ptk", label: "Laporan PTK" },
   { kunci: "beban", label: "Beban Mengajar" },
+  { kunci: "surat", label: "Surat" },
 ];
 
 /** Tab yang hanya untuk pemegang `teachers.view` (area juga lolos lewat `employees.view`). */
 const TAB_GURU: readonly Tab[] = ["ptk", "beban"];
+/** Tab cetak SK dan surat (HRIS Fase 3b, §21.4). */
+const TAB_SURAT: readonly Tab[] = ["surat"];
 
 const INPUT =
   "min-h-10 w-full rounded-xl border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-500";
@@ -121,7 +133,10 @@ export default function KepegawaianPage() {
       >
         {TAB.filter(
           ({ kunci }) =>
-            !TAB_GURU.includes(kunci) || hasPermission(user, "teachers.view"),
+            (!TAB_GURU.includes(kunci) ||
+              hasPermission(user, "teachers.view")) &&
+            (!TAB_SURAT.includes(kunci) ||
+              hasPermission(user, "hr.duty.manage")),
         ).map(({ kunci, label }) => (
           <button
             key={kunci}
@@ -149,13 +164,14 @@ export default function KepegawaianPage() {
         {!org ? (
           <p className="text-sm text-slate-400">Memuat data kepegawaian…</p>
         ) : tab === "daftar" ? (
-          <TabDaftar org={org} />
+          <TabDaftar org={org} onGalat={setGalat} />
         ) : tab === "struktur" ? (
           <TabStruktur org={org} />
         ) : tab === "kontrak" ? (
           <TabKontrak
             org={org}
             bolehUbah={hasPermission(user, "hr.contract.manage")}
+            bolehCetak={hasPermission(user, "hr.duty.manage")}
             onPesan={setPesan}
             onGalat={setGalat}
           />
@@ -170,12 +186,15 @@ export default function KepegawaianPage() {
           <TabLaporanPtk onPesan={setPesan} onGalat={setGalat} />
         ) : tab === "beban" ? (
           <TabBebanMengajar onPesan={setPesan} onGalat={setGalat} />
+        ) : tab === "surat" ? (
+          <TabSurat org={org} onGalat={setGalat} />
         ) : (
           <TabOrganisasi
             org={org}
             bolehUbah={bolehUbah}
             jenisDokumen={bolehUbah || hasPermission(user, "hr.document.view")}
             aturanCuti={bolehUbah || hasPermission(user, "hr.request.view")}
+            pengaturanSurat={hasPermission(user, "hr.duty.manage")}
             onPesan={setPesan}
             onBerhasil={async (teks) => {
               setPesan(teks);
@@ -189,7 +208,15 @@ export default function KepegawaianPage() {
   );
 }
 
-function TabDaftar({ org }: { org: OrgKepegawaian }) {
+function TabDaftar({
+  org,
+  onGalat,
+}: {
+  org: OrgKepegawaian;
+  onGalat: (pesan: string) => void;
+}) {
+  const { user } = useAuth();
+  const [cetak, setCetak] = useState<PermintaanSurat | null>(null);
   const [cari, setCari] = useState("");
   const [unit, setUnit] = useState("");
   const [bagian, setBagian] = useState("");
@@ -346,7 +373,30 @@ function TabDaftar({ org }: { org: OrgKepegawaian }) {
           org={org}
           hariIni={hariIni}
           onClose={() => setRincian(null)}
+          onCetakKeterangan={
+            hasPermission(user, "hr.duty.manage")
+              ? async () => {
+                  const p = rincian;
+                  setRincian(null);
+                  try {
+                    const mapel =
+                      p.kelompok === "Guru" &&
+                      hasPermission(user, "teachers.view")
+                        ? await mapelSemesterAktif(p.id_unik)
+                        : [];
+                    setCetak(
+                      permintaanKeteranganAktif(p.id_unik, p.nama, mapel),
+                    );
+                  } catch (error) {
+                    onGalat(pesanGalat(error));
+                  }
+                }
+              : undefined
+          }
         />
+      ) : null}
+      {cetak ? (
+        <DialogCetakSurat permintaan={cetak} onClose={() => setCetak(null)} />
       ) : null}
     </div>
   );
@@ -436,6 +486,7 @@ function TabOrganisasi({
   bolehUbah,
   jenisDokumen,
   aturanCuti,
+  pengaturanSurat,
   onPesan,
   onBerhasil,
   onGalat,
@@ -444,6 +495,7 @@ function TabOrganisasi({
   bolehUbah: boolean;
   jenisDokumen: boolean;
   aturanCuti: boolean;
+  pengaturanSurat: boolean;
   onPesan: (pesan: string) => void;
   onBerhasil: (pesan: string) => Promise<void>;
   onGalat: (pesan: string) => void;
@@ -690,6 +742,14 @@ function TabOrganisasi({
 
       {jenisDokumen ? (
         <JenisDokumenOrganisasi bolehUbah={bolehUbah} onPesan={onPesan} />
+      ) : null}
+
+      {pengaturanSurat ? (
+        <PengaturanSurat
+          bolehUbah={bolehUbah}
+          onPesan={onPesan}
+          onGalat={onGalat}
+        />
       ) : null}
 
       {sunting?.jenis === "bagian" || sunting?.jenis === "jabatan" ? (

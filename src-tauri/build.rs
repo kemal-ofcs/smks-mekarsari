@@ -251,6 +251,8 @@ const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_hr_document_types_save",
     "desktop_hr_ptk_report",
     "desktop_hr_teaching_load",
+    "desktop_hr_letter_setup",
+    "desktop_hr_letter_settings_save",
     "desktop_hr_requests",
     "desktop_hr_request_save",
     "desktop_hr_request_decide",

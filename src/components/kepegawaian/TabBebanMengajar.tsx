@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { hasPermission } from "@/lib/auth/access";
 import { exportToExcel } from "@/lib/client/excel-export";
+import { useAuth } from "@/lib/context/AuthContext";
 import { muatBebanMengajar, muatLaporanPtk } from "@/lib/gateways/hris";
 import {
   type DataBeban,
@@ -11,6 +13,11 @@ import {
   type RekapBeban,
   susunBebanMengajar,
 } from "@/lib/validations/hr-beban";
+import {
+  DialogCetakSurat,
+  type PermintaanSurat,
+  permintaanPembagianTugas,
+} from "./DialogCetakSurat";
 import { INPUT, LABEL, pesanGalat, TOMBOL, TOMBOL_UTAMA } from "./gaya";
 
 const KOLOM = [
@@ -75,6 +82,8 @@ export function TabBebanMengajar({
   const [galat, setGalat] = useState<string | null>(null);
   const [unit, setUnit] = useState("");
   const [mengunduh, setMengunduh] = useState(false);
+  const [cetak, setCetak] = useState<PermintaanSurat | null>(null);
+  const { user } = useAuth();
 
   const muat = useCallback(async (idTahunAjaran: string) => {
     try {
@@ -239,6 +248,17 @@ export function TabBebanMengajar({
         >
           {mengunduh ? "Menyiapkan…" : "Unduh Excel"}
         </button>
+        {hasPermission(user, "hr.duty.manage") ? (
+          <button
+            type="button"
+            className={TOMBOL}
+            onClick={() =>
+              setCetak(permintaanPembagianTugas(data, baris, unit))
+            }
+          >
+            Cetak SK Pembagian Tugas
+          </button>
+        ) : null}
       </div>
       <p className="text-sm text-slate-400">
         JP tatap muka dari jadwal mengajar; jam yang sama di beberapa rombel
@@ -291,6 +311,9 @@ export function TabBebanMengajar({
           </tbody>
         </table>
       </div>
+      {cetak ? (
+        <DialogCetakSurat permintaan={cetak} onClose={() => setCetak(null)} />
+      ) : null}
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import { requestWebApi } from "@/lib/client/api-client";
 import { isDesktopRuntime } from "@/lib/runtime/app-runtime";
 import { invokeDesktop, kickDesktopSync } from "@/lib/runtime/desktop-commands";
-import type { DataBeban } from "@/lib/validations/hr-beban";
+import type { DataBeban, SetupSurat } from "@/lib/validations/hr-beban";
 import type {
   BerkasDokumenDraft,
   DaftarDokumen,
@@ -388,4 +388,23 @@ export async function muatBebanMengajar(
   return requestWebApi("/api/kepegawaian/teaching-load/query", "POST", {
     id_tahun_ajaran: idTahunAjaran,
   });
+}
+
+/** Bahan cetak SK dan surat pada `tanggal` (`""` = hari ini WIB). */
+export async function muatSetupSurat(tanggal: string): Promise<SetupSurat> {
+  if (isDesktopRuntime())
+    return invokeDesktop("desktop_hr_letter_setup", { tanggal });
+  return requestWebApi("/api/kepegawaian/letters/query", "POST", { tanggal });
+}
+
+/** Kedua belas kunci pengaturan surat sekaligus (`kunciPengaturanSurat`). */
+export function simpanPengaturanSurat(
+  draft: Record<string, string>,
+): Promise<Record<string, string>> {
+  return mutasi(
+    "desktop_hr_letter_settings_save",
+    { draft },
+    "/api/kepegawaian/letters/settings",
+    draft,
+  );
 }

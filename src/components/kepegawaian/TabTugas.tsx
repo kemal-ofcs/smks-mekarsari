@@ -20,6 +20,11 @@ import {
   type TugasDraft,
 } from "@/lib/gateways/hris";
 import { ID_WALI_KELAS } from "@/lib/validations/hris";
+import {
+  DialogCetakSurat,
+  type PermintaanSurat,
+  permintaanTugasTambahan,
+} from "./DialogCetakSurat";
 import { INPUT, LABEL, pesanGalat, TOMBOL, TOMBOL_UTAMA } from "./gaya";
 import { ModalBatal } from "./TabKontrak";
 
@@ -40,6 +45,7 @@ export function TabTugas({
   const [tahun, setTahun] = useState("");
   const [sunting, setSunting] = useState<TugasBaris | "baru" | null>(null);
   const [batal, setBatal] = useState<TugasBaris | null>(null);
+  const [cetak, setCetak] = useState<PermintaanSurat | null>(null);
   const isSubmittingRef = useRef(false);
   const [menyimpan, setMenyimpan] = useState(false);
 
@@ -178,6 +184,15 @@ export function TabTugas({
                     >
                       Batalkan
                     </button>
+                    <button
+                      type="button"
+                      className={TOMBOL}
+                      onClick={() =>
+                        setCetak(permintaanTugasTambahan([t], data, nama))
+                      }
+                    >
+                      Cetak SK
+                    </button>
                   </div>
                 ) : null}
               </li>
@@ -223,6 +238,15 @@ export function TabTugas({
           onSimpan={(draft) =>
             jalankan(() => simpanTugas(draft), "Tugas tambahan disimpan.")
           }
+        />
+      ) : null}
+      {cetak ? (
+        <DialogCetakSurat
+          permintaan={cetak}
+          onClose={() => {
+            setCetak(null);
+            void muat();
+          }}
         />
       ) : null}
       {batal ? (

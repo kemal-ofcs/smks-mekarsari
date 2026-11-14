@@ -1,72 +1,23 @@
 import type {
   BarisDokumen,
   DokumenInventaris,
-  KopSekolah,
 } from "@/lib/validations/inventory";
+import {
+  cetakA4,
+  cetakDiAkar,
+  esc,
+  kop,
+  ROOT_ID,
+  tandaTangan,
+  tanggalPanjang,
+} from "../cetak-a4";
 import { angka } from "./gaya";
 
 /**
- * Berita acara inventaris sebagai HTML A4, dicetak lewat dialog cetak
- * browser/WebView2 ("Simpan sebagai PDF" tersedia di sana). WebView Android
- * tidak punya dialog cetak, jadi pemanggil menyembunyikan tombolnya di Mobile.
- *
- * Huruf serif dipakai karena mengikuti kebiasaan surat resmi sekolah, dan
- * warnanya selalu hitam di atas putih apa pun tema aplikasinya.
+ * Berita acara inventaris sebagai HTML A4 (pembantu cetak di `cetak-a4.ts`,
+ * dipakai juga surat kepegawaian). Pemanggil menyembunyikan tombolnya di
+ * Mobile karena WebView Android tidak punya dialog cetak.
  */
-
-const ROOT_ID = "kos-print-root";
-
-function esc(value: string | number | null | undefined): string {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function tanggalPanjang(tanggal: string | null): string {
-  if (!tanggal) return "";
-  const waktu = new Date(`${tanggal}T00:00:00Z`);
-  if (Number.isNaN(waktu.getTime())) return tanggal;
-  return new Intl.DateTimeFormat("id-ID", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(waktu);
-}
-
-function kop(kopSekolah: KopSekolah): string {
-  const kontak = [kopSekolah.telepon, kopSekolah.email, kopSekolah.website]
-    .filter(Boolean)
-    .map(esc)
-    .join(" · ");
-  return `
-    <header class="kop">
-      ${kopSekolah.logo_url ? `<img src="${esc(kopSekolah.logo_url)}" alt="" class="logo">` : ""}
-      <div>
-        <div class="nama">${esc(kopSekolah.nama || "Nama Sekolah")}</div>
-        ${kopSekolah.cabang ? `<div>${esc(kopSekolah.cabang)}</div>` : ""}
-        ${kopSekolah.alamat ? `<div class="kecil">${esc(kopSekolah.alamat)}</div>` : ""}
-        ${kontak ? `<div class="kecil">${kontak}</div>` : ""}
-      </div>
-    </header>`;
-}
-
-function tandaTangan(
-  label: string,
-  nama: string | null,
-  nip?: string | null,
-): string {
-  return `
-    <div class="ttd">
-      <div>${esc(label)}</div>
-      <div class="ruang"></div>
-      <div class="garis">${nama ? esc(nama) : "&nbsp;"}</div>
-      ${nip ? `<div class="kecil">NIP ${esc(nip)}</div>` : ""}
-    </div>`;
-}
 
 function selisih(baris: BarisDokumen): string {
   return baris.tempat_tujuan
@@ -141,36 +92,9 @@ function isi(dok: DokumenInventaris): {
   };
 }
 
-const GAYA = `
-  @media screen { #${ROOT_ID} { display: none; } }
-  @media print {
-    @page { size: A4 portrait; margin: 15mm; }
-    body > *:not(#${ROOT_ID}) { display: none !important; }
-    #${ROOT_ID} { display: block !important; }
-  }
-  #${ROOT_ID} { color: #000; background: #fff; font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 1.4; }
-  #${ROOT_ID} .kop { display: flex; gap: 12px; align-items: center; border-bottom: 3px double #000; padding-bottom: 8px; margin-bottom: 16px; }
-  #${ROOT_ID} .logo { width: 64px; height: 64px; object-fit: contain; }
-  #${ROOT_ID} .nama { font-size: 16pt; font-weight: bold; text-transform: uppercase; }
-  #${ROOT_ID} .kecil { font-size: 10pt; }
-  #${ROOT_ID} h1 { font-size: 13pt; text-align: center; margin: 0; text-decoration: underline; }
-  #${ROOT_ID} .nomor { text-align: center; margin-bottom: 16px; }
-  #${ROOT_ID} table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 10.5pt; }
-  #${ROOT_ID} th, #${ROOT_ID} td { border: 1px solid #000; padding: 4px 6px; vertical-align: top; text-align: left; }
-  #${ROOT_ID} .angka { text-align: right; }
-  #${ROOT_ID} .tanda { display: flex; justify-content: space-between; gap: 16px; margin-top: 32px; page-break-inside: avoid; }
-  #${ROOT_ID} .ttd { flex: 1; text-align: center; }
-  #${ROOT_ID} .ruang { height: 64px; }
-  #${ROOT_ID} .garis { border-top: 1px solid #000; padding-top: 2px; }
-`;
-
 export function cetakBeritaAcara(dok: DokumenInventaris): void {
   const bagian = isi(dok);
-  document.getElementById(ROOT_ID)?.remove();
-  const root = document.createElement("div");
-  root.id = ROOT_ID;
-  root.innerHTML = `
-    <style>${GAYA}</style>
+  cetakA4(`
     ${kop(dok.kop)}
     <h1>${bagian.judul}</h1>
     <div class="nomor">Nomor: ${esc(dok.nomor_dokumen || "-")}</div>
@@ -179,14 +103,7 @@ export function cetakBeritaAcara(dok: DokumenInventaris): void {
     ${dok.terpotong ? "<p>Hanya 500 baris pertama yang dicetak.</p>" : ""}
     <p>Demikian berita acara ini dibuat untuk dipergunakan sebagaimana mestinya.</p>
     <div class="tanda">${bagian.ttd}</div>
-  `;
-  document.body.appendChild(root);
-  // Beri waktu logo selesai dimuat sebelum dialog cetak dibuka.
-  setTimeout(() => {
-    window.focus();
-    window.print();
-    setTimeout(() => root.remove(), 3000);
-  }, 300);
+  `);
 }
 
 // ── Label QR ────────────────────────────────────────────────────────────────
@@ -254,14 +171,5 @@ export function cetakLabelBarang(
       `<div class="lembar">${label.slice(i, i + LABEL_PER_LEMBAR).join("")}</div>`,
     );
   }
-  document.getElementById(ROOT_ID)?.remove();
-  const root = document.createElement("div");
-  root.id = ROOT_ID;
-  root.innerHTML = `<style>${GAYA_LABEL}</style>${lembar.join("")}`;
-  document.body.appendChild(root);
-  setTimeout(() => {
-    window.focus();
-    window.print();
-    setTimeout(() => root.remove(), 3000);
-  }, 300);
+  cetakDiAkar(`<style>${GAYA_LABEL}</style>${lembar.join("")}`);
 }

@@ -79,3 +79,45 @@ describe("hr-beban: getBebanMengajar (database Web)", () => {
     );
   });
 });
+
+// Pasangan Rust: `hr_beban_letter_setup_kepala_unit` (data kepala yang sama).
+describe("hr-beban: bahan surat (database Web)", () => {
+  test("kepala unit berlaku, cadangan profil sekolah, simpan pengaturan", async () => {
+    await client.batch(
+      [
+        "INSERT OR REPLACE INTO company_profile (id, company_name, leader_name, leader_title, leader_nip, updated_at) VALUES ('default_company', 'Yayasan Contoh', 'Pak Pimpinan', 'Kepala Sekolah', '1970', 'x');",
+        "INSERT INTO master_data (id_unik, kode_karyawan, nama, divisi, id_shift, status_aktif, jenis_personil) VALUES ('K1', 'K1', 'Kepala Lama', 'Guru', 999, 'Aktif', 'GURU'), ('K2', 'K2', 'Kepala Baru', 'Guru', 999, 'Aktif', 'GURU'), ('K3', 'K3', 'Kepala Batal', 'Guru', 999, 'Aktif', 'GURU'), ('K4', 'K4', 'Kepala SD', 'Guru', 999, 'Aktif', 'GURU'), ('K5', 'K5', 'Kepala Selesai', 'Guru', 999, 'Aktif', 'GURU');",
+        "INSERT INTO guru_data (id_guru, nip, gelar, created_at, updated_at) VALUES ('K2', '1980', 'S.Pd.', 'x', 'x');",
+        "INSERT INTO hr_tugas_tambahan (id_tugas, id_karyawan, id_jenis, unit, tahun_ajaran, tanggal_mulai, tanggal_selesai, dibatalkan_pada) VALUES ('k-lama', 'K1', 'tgs-kepsek', 'SMP', '2025/2026', '2025-07-01', NULL, NULL), ('k-baru', 'K2', 'tgs-kepsek', ' smp ', '2026/2027', '2026-07-01', NULL, NULL), ('k-batal', 'K3', 'tgs-kepsek', 'SMP', '2026/2027', '2026-08-01', NULL, '2026-08-02 00:00:00'), ('k-selesai', 'K5', 'tgs-kepsek', 'SD', '2025/2026', '2025-07-01', '2026-06-30', NULL), ('k-sd-nanti', 'K4', 'tgs-kepsek', 'SD', '2026/2027', '2026-12-01', NULL, NULL), ('k-wakasek', 'K4', 'tgs-wakasek', 'SD', '2026/2027', '2026-07-01', NULL, NULL);",
+      ],
+      "write",
+    );
+    const v = await S.getSetupSurat(client, "2026-11-15");
+    expect(v.kepala.map((k) => [k.kunci_unit, k.id_karyawan, k.gelar])).toEqual(
+      [["smp", "K2", "S.Pd."]],
+    );
+    expect(v.kop.kepala_nama).toBe("Pak Pimpinan");
+    expect(v.pegawai.find((p) => p.id_unik === "K2")?.guru).toBe(1);
+    const lalu = await S.getSetupSurat(client, "2026-03-01");
+    expect(lalu.kepala.map((k) => [k.kunci_unit, k.id_karyawan])).toEqual([
+      ["sd", "K5"],
+      ["smp", "K1"],
+    ]);
+    await expect(S.getSetupSurat(client, "15-11-2026")).rejects.toThrow();
+
+    const draft = Object.fromEntries(
+      (await import("@/lib/validations/hr-beban"))
+        .kunciPengaturanSurat()
+        .map((k) => [k, ""]),
+    );
+    const tersimpan = await S.simpanPengaturanSurat(client, {
+      ...draft,
+      hr_surat_kota: " Bandung ",
+    });
+    expect(tersimpan.hr_surat_kota).toBe("Bandung");
+    const { hr_surat_yayasan_ketua: _, ...kurang } = draft;
+    await expect(S.simpanPengaturanSurat(client, kurang)).rejects.toThrow(
+      "Pengaturan surat tidak lengkap: hr_surat_yayasan_ketua.",
+    );
+  });
+});

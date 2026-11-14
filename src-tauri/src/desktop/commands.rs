@@ -3380,6 +3380,28 @@ pub fn desktop_hr_teaching_load(
     hr_beban::teaching_load(&state, id_tahun_ajaran.as_deref().unwrap_or(""))
 }
 
+/// Bahan cetak SK dan surat pada `tanggal` (kosong = hari ini WIB): kop,
+/// pengaturan surat, kepala per unit, identitas guru; dari SQLite lokal.
+#[tauri::command]
+pub fn desktop_hr_letter_setup(
+    state: State<'_, DesktopState>,
+    tanggal: Option<String>,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "hr.duty.manage")?;
+    hr_beban::letter_setup(&state, tanggal.as_deref().unwrap_or(""))
+}
+
+/// Pengaturan surat (pola nomor, Menimbang/Mengingat, kota, yayasan); semua
+/// kunci dalam satu transaksi.
+#[tauri::command]
+pub fn desktop_hr_letter_settings_save(
+    state: State<'_, DesktopState>,
+    draft: Value,
+) -> Result<Value, CommandError> {
+    require_permission(&state, "hr.org.manage")?;
+    hr_beban::letter_settings_save(&state, draft)
+}
+
 /// Pengajuan cuti/izin dalam rentang (+ yang belum diputus siapa pun),
 /// beserta status, tanda, jenis, pegawai, dan unit sesi.
 #[tauri::command]

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as B from "./hr-beban";
+import vektorSurat from "./hr-surat.vektor.json";
 import { TUGAS_BERLAKU_SQL } from "./hris";
 
 // Rekap disusun hanya di TS (Q-65); yang kembar dengan `desktop/hr_beban.rs`
@@ -15,6 +16,9 @@ describe("hr-beban: SQL kembar", () => {
       B.BEBAN_JADWAL_SQL,
       B.BEBAN_TUGAS_SQL,
       B.BEBAN_PENUGASAN_SQL,
+      B.KEPALA_UNIT_SQL,
+      B.IDENTITAS_PEGAWAI_SQL,
+      B.PENGATURAN_SURAT_SQL,
     ];
     let diperiksa = 0;
     for (const dir of ["desktop", "mobile"]) {
@@ -266,5 +270,49 @@ describe("hr-beban: cocokBidang dan unit", () => {
         B.kalimatTandaBeban(t, { min: 24, maks: 40 }).length,
       ).toBeGreaterThan(5);
     }
+  });
+});
+
+// Vektor kembar `hr_beban_vektor_surat` di desktop/hr_beban.rs.
+describe("hr-beban: pengaturan surat (vektor)", () => {
+  test("daftar kunci", () => {
+    expect(B.kunciPengaturanSurat()).toEqual(vektorSurat.kunci);
+  });
+
+  test("satu kunci", () => {
+    for (const k of vektorSurat.setting) {
+      const hasil = B.validasiSettingSurat(k.kunci, k.nilai);
+      expect(hasil).toEqual(
+        k.galat === null
+          ? { ok: true, nilai: k.hasil as string }
+          : { ok: false, galat: k.galat },
+      );
+    }
+  });
+
+  test("draft lengkap", () => {
+    for (const k of vektorSurat.pengaturan) {
+      const hasil = B.validasiPengaturanSurat(
+        k.draft as unknown as Record<string, string>,
+      );
+      expect([k.nama, hasil]).toEqual([
+        k.nama,
+        k.galat === null
+          ? { ok: true, nilai: k.nilai as [string, string][] }
+          : { ok: false, galat: k.galat },
+      ]);
+    }
+  });
+
+  test("skema rute menolak kunci asing dan kunci yang hilang", () => {
+    const lengkap = Object.fromEntries(
+      B.kunciPengaturanSurat().map((k) => [k, ""]),
+    );
+    expect(B.pengaturanSuratSchema.safeParse(lengkap).success).toBe(true);
+    expect(
+      B.pengaturanSuratSchema.safeParse({ ...lengkap, hr_surat_x: "" }).success,
+    ).toBe(false);
+    const { hr_surat_kota: _, ...kurang } = lengkap;
+    expect(B.pengaturanSuratSchema.safeParse(kurang).success).toBe(false);
   });
 });

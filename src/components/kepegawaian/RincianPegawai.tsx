@@ -99,11 +99,14 @@ export function RincianPegawai({
   org,
   hariIni,
   onClose,
+  onCetakKeterangan,
 }: {
   pegawai: PegawaiKepegawaian;
   org: OrgKepegawaian;
   hariIni: string;
   onClose: () => void;
+  /** Surat Keterangan Aktif; hanya bila sesi memegang `hr.duty.manage` (§21.5). */
+  onCetakKeterangan?: () => void;
 }) {
   const { user } = useAuth();
   const boleh = (izin: Parameters<typeof hasPermission>[1]) =>
@@ -258,6 +261,17 @@ export function RincianPegawai({
             panelProfil()
           )}
         </div>
+        {onCetakKeterangan ? (
+          <div className="flex justify-end border-t border-white/10 pt-3">
+            <button
+              type="button"
+              className={TOMBOL}
+              onClick={onCetakKeterangan}
+            >
+              Cetak Surat Keterangan Aktif
+            </button>
+          </div>
+        ) : null}
       </div>
     </Modal>
   );

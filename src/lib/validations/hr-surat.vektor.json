@@ -1,0 +1,274 @@
+{
+  "kunci": [
+    "hr_surat_pola:ptm",
+    "hr_surat_pola:tugas",
+    "hr_surat_pola:angkat",
+    "hr_surat_pola:tugas_luar",
+    "hr_surat_pola:aktif",
+    "hr_surat_dasar:ptm",
+    "hr_surat_dasar:tugas",
+    "hr_surat_dasar:angkat",
+    "hr_surat_kota",
+    "hr_surat_yayasan_nama",
+    "hr_surat_yayasan_ketua",
+    "hr_surat_yayasan_jabatan"
+  ],
+  "setting": [
+    {
+      "kunci": "hr_surat_pola:ptm",
+      "nilai": "",
+      "hasil": "",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_pola:ptm",
+      "nilai": "  {urut}/{kode}/{unit}/{romawi}/{tahun} ",
+      "hasil": "{urut}/{kode}/{unit}/{romawi}/{tahun}",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_pola:aktif",
+      "nilai": "SK/{kode}/2026",
+      "hasil": null,
+      "galat": "Pola nomor wajib memuat {urut}."
+    },
+    {
+      "kunci": "hr_surat_pola:tugas",
+      "nilai": "{urut}/{bulan}",
+      "hasil": null,
+      "galat": "Pola nomor memuat token tak dikenal: {bulan}."
+    },
+    {
+      "kunci": "hr_surat_pola:tugas_luar",
+      "nilai": "{urut}/{{kode}}",
+      "hasil": "{urut}/{{kode}}",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_pola:angkat",
+      "nilai": "{urut}/{ unit }",
+      "hasil": null,
+      "galat": "Pola nomor memuat token tak dikenal: { unit }."
+    },
+    {
+      "kunci": "hr_surat_pola:ptm",
+      "nilai": "{urut}AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "hasil": "{urut}AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_pola:ptm",
+      "nilai": "{urut}/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "hasil": null,
+      "galat": "Pola nomor paling banyak 80 karakter."
+    },
+    {
+      "kunci": "hr_surat_pola:lain",
+      "nilai": "{urut}",
+      "hasil": null,
+      "galat": "Kunci pengaturan surat tidak dikenal: hr_surat_pola:lain."
+    },
+    {
+      "kunci": "hr_surat_dasar:aktif",
+      "nilai": "",
+      "hasil": null,
+      "galat": "Kunci pengaturan surat tidak dikenal: hr_surat_dasar:aktif."
+    },
+    {
+      "kunci": "hr_surat_dasar:ptm",
+      "nilai": "Menimbang\n---\nMengingat",
+      "hasil": "Menimbang\n---\nMengingat",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_dasar:tugas",
+      "nilai": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hasil": null,
+      "galat": "Menimbang dan Mengingat paling banyak 4000 karakter."
+    },
+    {
+      "kunci": "hr_surat_kota",
+      "nilai": "  Bandung ",
+      "hasil": "Bandung",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_kota",
+      "nilai": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "hasil": null,
+      "galat": "Tempat penetapan paling banyak 60 karakter."
+    },
+    {
+      "kunci": "hr_surat_yayasan_nama",
+      "nilai": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+      "hasil": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_yayasan_ketua",
+      "nilai": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+      "hasil": null,
+      "galat": "Nama ketua yayasan paling banyak 120 karakter."
+    },
+    {
+      "kunci": "hr_surat_yayasan_jabatan",
+      "nilai": "  Ketua Pengurus ",
+      "hasil": "Ketua Pengurus",
+      "galat": null
+    },
+    {
+      "kunci": "hr_surat_lain",
+      "nilai": "x",
+      "hasil": null,
+      "galat": "Kunci pengaturan surat tidak dikenal: hr_surat_lain."
+    },
+    {
+      "kunci": "hr_surat_pola:PTM",
+      "nilai": "{urut}",
+      "hasil": null,
+      "galat": "Kunci pengaturan surat tidak dikenal: hr_surat_pola:PTM."
+    }
+  ],
+  "pengaturan": [
+    {
+      "nama": "semua kosong = bawaan",
+      "draft": {
+        "hr_surat_pola:ptm": "",
+        "hr_surat_pola:tugas": "",
+        "hr_surat_pola:angkat": "",
+        "hr_surat_pola:tugas_luar": "",
+        "hr_surat_pola:aktif": "",
+        "hr_surat_dasar:ptm": "",
+        "hr_surat_dasar:tugas": "",
+        "hr_surat_dasar:angkat": "",
+        "hr_surat_kota": "",
+        "hr_surat_yayasan_nama": "",
+        "hr_surat_yayasan_ketua": "",
+        "hr_surat_yayasan_jabatan": ""
+      },
+      "nilai": [
+        ["hr_surat_pola:ptm", ""],
+        ["hr_surat_pola:tugas", ""],
+        ["hr_surat_pola:angkat", ""],
+        ["hr_surat_pola:tugas_luar", ""],
+        ["hr_surat_pola:aktif", ""],
+        ["hr_surat_dasar:ptm", ""],
+        ["hr_surat_dasar:tugas", ""],
+        ["hr_surat_dasar:angkat", ""],
+        ["hr_surat_kota", ""],
+        ["hr_surat_yayasan_nama", ""],
+        ["hr_surat_yayasan_ketua", ""],
+        ["hr_surat_yayasan_jabatan", ""]
+      ],
+      "galat": null
+    },
+    {
+      "nama": "kunci hilang ditolak",
+      "draft": {
+        "hr_surat_pola:ptm": "",
+        "hr_surat_pola:tugas": "",
+        "hr_surat_pola:angkat": "",
+        "hr_surat_pola:tugas_luar": "",
+        "hr_surat_pola:aktif": "",
+        "hr_surat_dasar:ptm": "",
+        "hr_surat_dasar:tugas": "",
+        "hr_surat_dasar:angkat": "",
+        "hr_surat_yayasan_nama": "",
+        "hr_surat_yayasan_ketua": "",
+        "hr_surat_yayasan_jabatan": ""
+      },
+      "nilai": null,
+      "galat": "Pengaturan surat tidak lengkap: hr_surat_kota."
+    },
+    {
+      "nama": "dasar untuk jenis bukan SK ditolak",
+      "draft": {
+        "hr_surat_pola:ptm": "",
+        "hr_surat_pola:tugas": "",
+        "hr_surat_pola:angkat": "",
+        "hr_surat_pola:tugas_luar": "",
+        "hr_surat_pola:aktif": "",
+        "hr_surat_dasar:ptm": "",
+        "hr_surat_dasar:tugas": "",
+        "hr_surat_dasar:angkat": "",
+        "hr_surat_kota": "",
+        "hr_surat_yayasan_nama": "",
+        "hr_surat_yayasan_ketua": "",
+        "hr_surat_yayasan_jabatan": "",
+        "hr_surat_dasar:aktif": ""
+      },
+      "nilai": null,
+      "galat": "Kunci pengaturan surat tidak dikenal: hr_surat_dasar:aktif."
+    },
+    {
+      "nama": "pola tanpa urut",
+      "draft": {
+        "hr_surat_pola:ptm": "SK",
+        "hr_surat_pola:tugas": "",
+        "hr_surat_pola:angkat": "",
+        "hr_surat_pola:tugas_luar": "",
+        "hr_surat_pola:aktif": "",
+        "hr_surat_dasar:ptm": "",
+        "hr_surat_dasar:tugas": "",
+        "hr_surat_dasar:angkat": "",
+        "hr_surat_kota": "",
+        "hr_surat_yayasan_nama": "",
+        "hr_surat_yayasan_ketua": "",
+        "hr_surat_yayasan_jabatan": ""
+      },
+      "nilai": null,
+      "galat": "Pola nomor wajib memuat {urut}."
+    },
+    {
+      "nama": "kunci asing diperiksa sebelum kelengkapan",
+      "draft": {
+        "hr_surat_pola:ptm": "",
+        "hr_surat_pola:tugas": "",
+        "hr_surat_pola:angkat": "",
+        "hr_surat_pola:tugas_luar": "",
+        "hr_surat_pola:aktif": "",
+        "hr_surat_dasar:ptm": "",
+        "hr_surat_dasar:tugas": "",
+        "hr_surat_dasar:angkat": "",
+        "hr_surat_yayasan_nama": "",
+        "hr_surat_yayasan_ketua": "",
+        "hr_surat_yayasan_jabatan": "",
+        "hr_surat_x": "1"
+      },
+      "nilai": null,
+      "galat": "Kunci pengaturan surat tidak dikenal: hr_surat_x."
+    },
+    {
+      "nama": "isi dirapikan, urutan tetap",
+      "draft": {
+        "hr_surat_pola:ptm": "",
+        "hr_surat_pola:tugas": "{urut}/{kode}/{tahun}",
+        "hr_surat_pola:angkat": "",
+        "hr_surat_pola:tugas_luar": "",
+        "hr_surat_pola:aktif": "",
+        "hr_surat_dasar:ptm": "",
+        "hr_surat_dasar:tugas": "",
+        "hr_surat_dasar:angkat": "",
+        "hr_surat_kota": " Bandung ",
+        "hr_surat_yayasan_nama": "",
+        "hr_surat_yayasan_ketua": "",
+        "hr_surat_yayasan_jabatan": ""
+      },
+      "nilai": [
+        ["hr_surat_pola:ptm", ""],
+        ["hr_surat_pola:tugas", "{urut}/{kode}/{tahun}"],
+        ["hr_surat_pola:angkat", ""],
+        ["hr_surat_pola:tugas_luar", ""],
+        ["hr_surat_pola:aktif", ""],
+        ["hr_surat_dasar:ptm", ""],
+        ["hr_surat_dasar:tugas", ""],
+        ["hr_surat_dasar:angkat", ""],
+        ["hr_surat_kota", "Bandung"],
+        ["hr_surat_yayasan_nama", ""],
+        ["hr_surat_yayasan_ketua", ""],
+        ["hr_surat_yayasan_jabatan", ""]
+      ],
+      "galat": null
+    }
+  ]
+}

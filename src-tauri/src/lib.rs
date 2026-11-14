@@ -269,6 +269,8 @@ pub fn run() {
             desktop::commands::desktop_hr_document_types_save,
             desktop::commands::desktop_hr_ptk_report,
             desktop::commands::desktop_hr_teaching_load,
+            desktop::commands::desktop_hr_letter_setup,
+            desktop::commands::desktop_hr_letter_settings_save,
             desktop::commands::desktop_hr_requests,
             desktop::commands::desktop_hr_request_save,
             desktop::commands::desktop_hr_request_decide,

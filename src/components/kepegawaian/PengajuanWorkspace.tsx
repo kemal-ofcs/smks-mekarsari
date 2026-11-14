@@ -36,6 +36,11 @@ import {
   tambahHari,
 } from "@/lib/validations/hr-pengajuan";
 import {
+  DialogCetakSurat,
+  type PermintaanSurat,
+  permintaanTugasLuar,
+} from "./DialogCetakSurat";
+import {
   INPUT,
   LABEL,
   PERINGATAN,
@@ -99,6 +104,7 @@ export function PengajuanWorkspace({ user }: { user: OperatorUser | null }) {
   const [pesan, setPesan] = useState<string | null>(null);
   const [form, setForm] = useState<PengajuanDraft | null>(null);
   const [rincian, setRincian] = useState<PengajuanTersusun | null>(null);
+  const [cetak, setCetak] = useState<PermintaanSurat | null>(null);
 
   const muat = useCallback(async () => {
     try {
@@ -340,7 +346,20 @@ export function PengajuanWorkspace({ user }: { user: OperatorUser | null }) {
             });
           }}
           onSelesai={selesai}
+          onCetakSuratTugas={
+            hasPermission(user, "hr.duty.manage") &&
+            rincian.kelompok === "Dinas Luar" &&
+            statusBerlaku(rincian.status)
+              ? () => {
+                  setRincian(null);
+                  setCetak(permintaanTugasLuar(rincian));
+                }
+              : undefined
+          }
         />
+      ) : null}
+      {cetak ? (
+        <DialogCetakSurat permintaan={cetak} onClose={() => setCetak(null)} />
       ) : null}
     </div>
   );
@@ -798,6 +817,7 @@ function RincianPengajuan({
   onClose,
   onSunting,
   onSelesai,
+  onCetakSuratTugas,
 }: {
   p: PengajuanTersusun;
   data: DaftarPengajuan;
@@ -805,6 +825,8 @@ function RincianPengajuan({
   onClose: () => void;
   onSunting: () => void;
   onSelesai: (pesan: string) => Promise<void>;
+  /** Hanya Dinas Luar berlaku dan pemegang `hr.duty.manage` (§21.5). */
+  onCetakSuratTugas?: () => void;
 }) {
   const [alasan, setAlasan] = useState("");
   const [galat, setGalat] = useState<string | null>(null);
@@ -962,7 +984,16 @@ function RincianPengajuan({
               : "Pegawai ini di luar unitmu."}
           </p>
         ) : null}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
+          {onCetakSuratTugas ? (
+            <button
+              type="button"
+              className={TOMBOL}
+              onClick={onCetakSuratTugas}
+            >
+              Cetak Surat Tugas
+            </button>
+          ) : null}
           {bolehSunting ? (
             <button type="button" className={TOMBOL} onClick={onSunting}>
               Ubah pengajuan

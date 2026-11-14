@@ -20,6 +20,11 @@ import {
 } from "@/lib/gateways/hris";
 import { kontrakSah, STATUS_KONTRAK } from "@/lib/validations/hris";
 import {
+  DialogCetakSurat,
+  type PermintaanSurat,
+  permintaanPengangkatan,
+} from "./DialogCetakSurat";
+import {
   INPUT,
   LABEL,
   PERINGATAN,
@@ -36,11 +41,14 @@ const tgl = (t: string) => (t ? formatTanggalOperasional(t) : "-");
 export function TabKontrak({
   org,
   bolehUbah,
+  bolehCetak,
   onPesan,
   onGalat,
 }: {
   org: OrgKepegawaian;
   bolehUbah: boolean;
+  /** `hr.duty.manage`: SK Pengangkatan untuk kontrak GTY/PTY sah (§21.5). */
+  bolehCetak: boolean;
   onPesan: (pesan: string) => void;
   onGalat: (pesan: string) => void;
 }) {
@@ -49,6 +57,7 @@ export function TabKontrak({
   const [buka, setBuka] = useState<string | null>(null);
   const [tambah, setTambah] = useState<PegawaiKepegawaian | null>(null);
   const [batal, setBatal] = useState<KontrakBaris | null>(null);
+  const [cetak, setCetak] = useState<PermintaanSurat | null>(null);
   const isSubmittingRef = useRef(false);
   const [menyimpan, setMenyimpan] = useState(false);
 
@@ -197,15 +206,31 @@ export function TabKontrak({
                         <span className="text-xs text-slate-400">
                           Dibatalkan: {alasanBatal.get(k.id_kontrak)}
                         </span>
-                      ) : bolehUbah ? (
-                        <button
-                          type="button"
-                          className={TOMBOL}
-                          onClick={() => setBatal(k)}
-                        >
-                          Batalkan
-                        </button>
-                      ) : null}
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {bolehCetak &&
+                          (k.status === "GTY" || k.status === "PTY") ? (
+                            <button
+                              type="button"
+                              className={TOMBOL}
+                              onClick={() =>
+                                setCetak(permintaanPengangkatan(k, p.nama))
+                              }
+                            >
+                              Cetak SK
+                            </button>
+                          ) : null}
+                          {bolehUbah ? (
+                            <button
+                              type="button"
+                              className={TOMBOL}
+                              onClick={() => setBatal(k)}
+                            >
+                              Batalkan
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -236,6 +261,9 @@ export function TabKontrak({
             )
           }
         />
+      ) : null}
+      {cetak ? (
+        <DialogCetakSurat permintaan={cetak} onClose={() => setCetak(null)} />
       ) : null}
       {batal ? (
         <ModalBatal

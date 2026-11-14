@@ -7,6 +7,7 @@
 
 import { z } from "zod";
 import { rentangJamKe } from "./class-attendance";
+import type { KopSekolah } from "./inventory";
 
 /** Body rute; `""` = semester aktif. */
 export const bebanQuerySchema = z
@@ -340,4 +341,170 @@ export function kalimatTandaBeban(
     case "mapel_di_luar_sertifikat":
       return "Mapel di luar bidang sertifikat (periksa)";
   }
+}
+
+// HRIS Fase 3b (§21.2.2, §21.3): bahan cetak SK dan surat. SQL dan aturan
+// kunci/panjang pengaturan kembar `desktop/hr_beban.rs`, vektor
+// `hr-surat.vektor.json`. Surat dirakit di `components/kepegawaian/suratKepegawaian.ts`.
+
+export const KEPALA_UNIT_SQL =
+  "SELECT LOWER(TRIM(COALESCE(t.unit, ''))) AS kunci_unit, COALESCE(t.unit, '') AS unit, t.id_karyawan, m.nama, COALESCE(g.gelar, '') AS gelar, COALESCE(g.nip, '') AS nip FROM hr_tugas_tambahan t JOIN master_data m ON m.id_unik = t.id_karyawan LEFT JOIN guru_data g ON g.id_guru = t.id_karyawan WHERE t.id_jenis = 'tgs-kepsek' AND t.dibatalkan_pada IS NULL AND t.tanggal_mulai <= ?1 AND (COALESCE(t.tanggal_selesai, '') = '' OR t.tanggal_selesai >= ?1) AND NOT EXISTS (SELECT 1 FROM hr_tugas_tambahan b WHERE b.id_jenis = 'tgs-kepsek' AND b.dibatalkan_pada IS NULL AND b.tanggal_mulai <= ?1 AND (COALESCE(b.tanggal_selesai, '') = '' OR b.tanggal_selesai >= ?1) AND LOWER(TRIM(COALESCE(b.unit, ''))) = LOWER(TRIM(COALESCE(t.unit, ''))) AND (b.tanggal_mulai > t.tanggal_mulai OR (b.tanggal_mulai = t.tanggal_mulai AND b.id_tugas > t.id_tugas))) ORDER BY 1\n-- batas: satu kepala per unit sekolah\n;";
+
+/** Identitas pegawai untuk isi surat; tanpa data pribadi (Q-70). */
+export const IDENTITAS_PEGAWAI_SQL =
+  "SELECT m.id_unik, m.nama, COALESCE(g.gelar, '') AS gelar, COALESCE(g.nip, '') AS nip, COALESCE(g.nuptk, '') AS nuptk, COALESCE(m.jabatan_status, '') AS jabatan, COALESCE(m.unit, '') AS unit, COALESCE(m.tanggal_mulai_aktif, '') AS tmt, CASE WHEN g.id_guru IS NOT NULL OR LOWER(TRIM(COALESCE(m.jenis_personil, ''))) = 'guru' THEN 1 ELSE 0 END AS guru FROM master_data m LEFT JOIN guru_data g ON g.id_guru = m.id_unik WHERE LOWER(TRIM(COALESCE(m.jenis_personil, ''))) <> 'siswa' AND NOT EXISTS (SELECT 1 FROM siswa_data sd WHERE sd.id_siswa = m.id_unik) ORDER BY m.id_unik\n-- batas: pegawai sekolah (guru dan tendik), dibatasi jumlah personil lembaga\n;";
+
+export const PENGATURAN_SURAT_SQL =
+  "SELECT key, value FROM setting_gex_system WHERE substr(key, 1, 9) = 'hr_surat_'\n-- batas: dua belas kunci pengaturan surat\n;";
+
+export const JENIS_SURAT = [
+  "ptm",
+  "tugas",
+  "angkat",
+  "tugas_luar",
+  "aktif",
+] as const;
+export type JenisSurat = (typeof JENIS_SURAT)[number];
+export const JENIS_SK = ["ptm", "tugas", "angkat"] as const;
+export type JenisSk = (typeof JENIS_SK)[number];
+export const TOKEN_POLA = ["urut", "kode", "unit", "romawi", "tahun"] as const;
+export const KUNCI_SURAT_KOTA = "hr_surat_kota";
+export const KUNCI_YAYASAN_NAMA = "hr_surat_yayasan_nama";
+export const KUNCI_YAYASAN_KETUA = "hr_surat_yayasan_ketua";
+export const KUNCI_YAYASAN_JABATAN = "hr_surat_yayasan_jabatan";
+
+/** Dua belas kunci dalam urutan tetap; cermin `kunci_pengaturan_surat`. */
+export function kunciPengaturanSurat(): string[] {
+  return [
+    ...JENIS_SURAT.map((j) => `hr_surat_pola:${j}`),
+    ...JENIS_SK.map((j) => `hr_surat_dasar:${j}`),
+    KUNCI_SURAT_KOTA,
+    KUNCI_YAYASAN_NAMA,
+    KUNCI_YAYASAN_KETUA,
+    KUNCI_YAYASAN_JABATAN,
+  ];
+}
+
+type HasilSurat<T> = { ok: true; nilai: T } | { ok: false; galat: string };
+
+const termasuk = (daftar: readonly string[], teks: string) =>
+  daftar.includes(teks);
+
+/** Satu kunci; `""` = bawaan, kunci di luar daftar ditolak. Cermin `validasi_setting_surat`. */
+export function validasiSettingSurat(
+  kunci: string,
+  nilai: string,
+): HasilSurat<string> {
+  const isi = nilai.trim();
+  const batas = (label: string, maks: number): HasilSurat<string> =>
+    [...isi].length > maks
+      ? { ok: false, galat: `${label} paling banyak ${maks} karakter.` }
+      : { ok: true, nilai: isi };
+  const asing: HasilSurat<string> = {
+    ok: false,
+    galat: `Kunci pengaturan surat tidak dikenal: ${kunci}.`,
+  };
+  if (kunci.startsWith("hr_surat_pola:")) {
+    if (!termasuk(JENIS_SURAT, kunci.slice(14))) return asing;
+    if (isi === "") return { ok: true, nilai: "" };
+    const panjang = batas("Pola nomor", 80);
+    if (!panjang.ok) return panjang;
+    if (!isi.includes("{urut}"))
+      return { ok: false, galat: "Pola nomor wajib memuat {urut}." };
+    for (const m of isi.matchAll(/\{([^{}]*)\}/g)) {
+      if (!termasuk(TOKEN_POLA, m[1]))
+        return {
+          ok: false,
+          galat: `Pola nomor memuat token tak dikenal: {${m[1]}}.`,
+        };
+    }
+    return { ok: true, nilai: isi };
+  }
+  if (kunci.startsWith("hr_surat_dasar:")) {
+    if (!termasuk(JENIS_SK, kunci.slice(15))) return asing;
+    return batas("Menimbang dan Mengingat", 4000);
+  }
+  switch (kunci) {
+    case KUNCI_SURAT_KOTA:
+      return batas("Tempat penetapan", 60);
+    case KUNCI_YAYASAN_NAMA:
+      return batas("Nama yayasan", 120);
+    case KUNCI_YAYASAN_KETUA:
+      return batas("Nama ketua yayasan", 120);
+    case KUNCI_YAYASAN_JABATAN:
+      return batas("Jabatan ketua yayasan", 120);
+    default:
+      return asing;
+  }
+}
+
+/**
+ * Draft layar: SEMUA dua belas kunci wajib ada, kunci asing ditolak lebih
+ * dulu (urut nama kunci). Cermin `validasi_pengaturan_surat`.
+ */
+export function validasiPengaturanSurat(
+  draft: Record<string, string>,
+): HasilSurat<[string, string][]> {
+  for (const kunci of Object.keys(draft).sort()) {
+    const hasil = validasiSettingSurat(kunci, draft[kunci]);
+    if (!hasil.ok) return hasil;
+  }
+  const nilai: [string, string][] = [];
+  for (const kunci of kunciPengaturanSurat()) {
+    if (typeof draft[kunci] !== "string")
+      return { ok: false, galat: `Pengaturan surat tidak lengkap: ${kunci}.` };
+    const hasil = validasiSettingSurat(kunci, draft[kunci]);
+    if (!hasil.ok) return hasil;
+    nilai.push([kunci, hasil.nilai]);
+  }
+  return { ok: true, nilai };
+}
+
+/** Body rute `letters/query`; `""` = hari ini WIB. */
+export const suratSetupSchema = z
+  .object({ tanggal: z.string().trim().max(10) })
+  .strict();
+
+/** Body rute `letters/settings`: kedua belas kunci; isinya diperiksa `validasiPengaturanSurat`. */
+export const pengaturanSuratSchema = z
+  .object(
+    Object.fromEntries(
+      kunciPengaturanSurat().map((k) => [k, z.string().max(4100)]),
+    ),
+  )
+  .strict();
+
+/** Kepala unit (`KEPALA_UNIT_SQL`), satu per `kunci_unit`. */
+export interface KepalaUnit {
+  kunci_unit: string;
+  unit: string;
+  id_karyawan: string;
+  nama: string;
+  gelar: string;
+  nip: string;
+}
+
+export interface IdentitasPegawai {
+  id_unik: string;
+  nama: string;
+  gelar: string;
+  nip: string;
+  nuptk: string;
+  jabatan: string;
+  unit: string;
+  tmt: string;
+  guru: number;
+}
+
+/** Kembalian `desktop_hr_letter_setup` / rute `letters/query`. */
+export interface SetupSurat {
+  kop: KopSekolah;
+  /** Kunci `hr_surat_*` apa adanya; tidak ada/kosong = bawaan. */
+  pengaturan: Record<string, string>;
+  kepala: KepalaUnit[];
+  pegawai: IdentitasPegawai[];
+  /** `STATUS_KINI_SQL` pada tanggal surat. */
+  status: { id_unik: string; status: string }[];
+  tanggal: string;
+  hari_ini: string;
 }
